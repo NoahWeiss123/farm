@@ -9,7 +9,11 @@ description = "FARM Edge Agent: local CLI, drivers, safety, recovery, and run re
 requires-python = ">=3.12"
 dependencies = [
     "farm-shared @ {root:uri}/../farm-shared",
+    "click>=8.1",
 ]
+
+[project.scripts]
+farm = "farm_edge_agent.cli.main:main"
 
 [tool.hatch.metadata]
 allow-direct-references = true
