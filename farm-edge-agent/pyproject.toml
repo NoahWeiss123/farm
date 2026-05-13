@@ -13,6 +13,7 @@ dependencies = [
     "pydantic>=2.7",
     "pyyaml>=6.0",
     "pyarrow>=14.0",
+    "websockets>=12",
 ]
 
 [project.optional-dependencies]
