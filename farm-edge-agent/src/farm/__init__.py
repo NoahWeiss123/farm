@@ -1,4 +1,4 @@
-"""FARM Edge Agent package."""
+"""Top-level `farm` shim — `from farm import Client` resolves to farm_edge_agent.Client."""
 
 from farm_edge_agent.client import (
     CapabilityCard,
@@ -9,8 +9,6 @@ from farm_edge_agent.client import (
     RunSummary,
 )
 
-__version__ = "0.0.1"
-
 __all__ = [
     "CapabilityCard",
     "Client",
@@ -18,5 +16,4 @@ __all__ = [
     "FarmError",
     "Run",
     "RunSummary",
-    "__version__",
 ]

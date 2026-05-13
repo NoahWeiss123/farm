@@ -31,7 +31,7 @@ farm = "farm_edge_agent.cli.main:main"
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/farm_edge_agent"]
+packages = ["src/farm_edge_agent", "src/farm"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "../farm-shared/src"]
