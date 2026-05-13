@@ -1,0 +1,53 @@
+# Worktrees and runtime logs
+worktrees/
+logs/
+
+# Local-only orchestration layer (does not ship)
+AGENTS.md
+LAUNCH.md
+bin/
+tasks/
+.githooks/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Node / Bun
+node_modules/
+.next/
+out/
+.bun/
+*.tsbuildinfo
+
+# Cloudflare
+.wrangler/
+.dev.vars
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Local state and secrets
+.env
+.env.local
+.farm/
+*.pem
+*.key
+
+# Demo data and artifacts (committed via release tags, not main)
+runs/
+checkpoints/
+*.mp4

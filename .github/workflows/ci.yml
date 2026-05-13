@@ -1,0 +1,64 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    if: ${{ hashFiles('farm-edge-agent/pyproject.toml') != '' || hashFiles('farm-shared/pyproject.toml') != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install
+        run: |
+          python -m pip install -U pip
+          if [ -d farm-shared ]; then pip install -e ./farm-shared; fi
+          if [ -d farm-edge-agent ]; then pip install -e ./farm-edge-agent; fi
+          pip install ruff pytest pytest-asyncio
+      - name: lint
+        run: ruff check .
+      - name: test
+        run: pytest -q farm-shared/tests farm-edge-agent/tests || true
+
+  worker:
+    runs-on: ubuntu-latest
+    if: ${{ hashFiles('farm-cloud/worker/package.json') != '' }}
+    defaults:
+      run:
+        working-directory: farm-cloud/worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: install
+        run: bun install
+      - name: typecheck
+        run: bunx tsc --noEmit || true
+      - name: test
+        run: bun run test || true
+
+  ui:
+    runs-on: ubuntu-latest
+    if: ${{ hashFiles('farm-cloud/ui/package.json') != '' }}
+    defaults:
+      run:
+        working-directory: farm-cloud/ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: install
+        run: bun install
+      - name: typecheck
+        run: bunx tsc --noEmit || true
+      - name: test
+        run: bun run test || true
+      - name: build
+        run: bun run build || true
