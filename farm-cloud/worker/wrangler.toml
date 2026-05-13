@@ -1,0 +1,18 @@
+name = "farm-worker"
+main = "src/index.ts"
+compatibility_date = "2026-05-13"
+
+# Durable Object bindings for Phase-Product split (task 017 enables).
+# Phase-MVP collapses Planner + Dispatcher + Session into this single Worker.
+#
+# [[durable_objects.bindings]]
+# name = "DISPATCHER"
+# class_name = "Dispatcher"
+#
+# [[durable_objects.bindings]]
+# name = "SESSION"
+# class_name = "Session"
+#
+# [[migrations]]
+# tag = "v1"
+# new_classes = ["Dispatcher", "Session"]
