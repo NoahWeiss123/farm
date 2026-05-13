@@ -1,0 +1,104 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://farm.dev/schemas/capability_card.v1",
+  "title": "FARM Capability Card v1",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "roles",
+    "embodiment",
+    "input_modalities",
+    "skills"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "roles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": ["planner", "controller", "critic"]
+      }
+    },
+    "embodiment": {
+      "type": "object",
+      "required": ["arm", "dof", "action_space"],
+      "additionalProperties": true,
+      "properties": {
+        "arm": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dof": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "action_space": {
+          "type": "string",
+          "enum": [
+            "joint_position_delta",
+            "ee_pose_delta_base_frame",
+            "ee_pose_delta_tool_frame",
+            "ee_velocity"
+          ]
+        },
+        "control_rate_hz": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "input_modalities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "camera_views": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "skills": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "minProperties": 1
+      }
+    },
+    "latency": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "cost_per_chunk_usd": {
+      "type": "number",
+      "minimum": 0
+    },
+    "determinism": {
+      "type": "string",
+      "enum": ["deterministic", "stochastic", "seeded"]
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "fallbacks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}
