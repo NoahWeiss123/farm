@@ -21,6 +21,7 @@ dev = [
     "pytest>=8.0",
     "pandas>=2.0",
 ]
+arm = ["xarm-python-sdk>=1.17"]
 
 [project.scripts]
 farm = "farm_edge_agent.cli.main:main"
