@@ -1,20 +1,39 @@
 # FARM
 
-Foundation for Action-Reasoning Models. A hosted agent harness for robotics foundation models.
+Foundation for Action-Reasoning Models. A self-improving robotics agent
+that decomposes natural-language goals, reasons about how to interact with
+its environment using whatever tools are available, and turns each
+successful run into a reusable skill.
 
 CS153 final project. Solo build.
 
 ## What this is
 
-FARM sits between "user describes a task" and "robot executes it." It exposes a uniform API across multiple VLA backends (π0.5, Gemini Robotics, classical planner), runs an LLM router that picks the right backend per subtask, and streams telemetry to a live dashboard. Inference runs on Cloudflare GPU containers; the control loop runs locally next to the arm via a pip-installable Edge Agent.
+You give the agent a goal in natural language. GPT-5 decomposes it into
+sub-tasks. For each sub-task, the agent first checks its **Skill Library**
+for a matching skill. If found, it runs the skill (cheap). If not, GPT-5V
+describes the scene, the **Affordance Reasoner** lists feasible primitive
+actions given the arm and gripper at hand, and a **Code-as-Policy**
+executor generates Python that calls those primitives. The code runs under
+a deterministic **Safety Enforcer**. On success, the **Skill Compiler**
+distills the run into a reusable skill at three layers:
 
-Demo target: a UFactory 850 6-DOF arm running a fine-tuned π0.5 on a colored-block stacking task, with a classical-planner fallback for graceful recovery.
+1. Plan cache (cheapest, exact replay)
+2. Parameterized code (runs against new initial states)
+3. LoRA-fine-tuned π0.5 policy (after enough demos accumulate)
 
-Full design: [DESIGN.md](DESIGN.md). Deferred work: [TODOS.md](TODOS.md).
+The control loop runs locally on the Edge Agent next to a UFactory 850
+6-DOF arm. Routing, skill storage, and the dashboard run on Cloudflare
+(Workers + R2 + D1 + Pages). Fine-tuning runs on Modal.
 
-## Quickstart (when implemented)
+Hardware constraint: the system is built assuming **no specialized
+grippers**. Whatever the agent has, it has to figure out how to use.
 
-```
+Full design: [DESIGN.md](DESIGN.md). Build plan: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
+
+## Quickstart
+
+```bash
 pip install -e ./farm-edge-agent
 farm quickstart
 ```
@@ -24,15 +43,13 @@ Targets: 3 min sim arm, 30 min real arm.
 ## Repo layout
 
 ```
-farm-edge-agent/   # python package: CLI, drivers, safety, recovery, run records
-farm-cloud/        # cloudflare side: Worker (planner + dispatcher), Pages (UI)
-farm-shared/       # cross-package contracts: schemas, error catalog, protocol versions
-docs/              # config/cli/python-api/errors/hardware/safety/faq reference
-tasks/             # task specs the orchestrator works through
-bin/               # orchestrator scripts
-AGENTS.md          # rules for agents working in this repo
+farm-edge-agent/   # python package: CLI, run loop, drivers, safety, recovery, skills
+farm-cloud/        # cloudflare side: Worker (planner + dispatcher + skill library), Pages (UI)
+farm-shared/       # cross-package contracts: schemas, errors, protocol versions
+docs/              # user-facing reference (config, CLI, errors, hardware, safety, FAQ)
 ```
 
 ## Working on this
 
-Read [AGENTS.md](AGENTS.md) before making changes. The commit-message style is enforced by `.githooks/prepare-commit-msg`.
+Tests: `pytest farm-shared/tests farm-edge-agent/tests` and `bun --cwd farm-cloud/worker test`.
+Dev: `bun --cwd farm-cloud/worker run dev` (worker on :8787) and `bun --cwd farm-cloud/ui run dev` (UI on :3000).
