@@ -92,18 +92,8 @@ def test_stub_subcommands_exit_zero() -> None:
         ["run", "pick the red block"],
         ["run", "--offline", "task"],
         ["run", "--resume", "r_123"],
-        ["export", "r_123"],
         ["calibrate"],
         ["verify", "r_123"],
-        ["config", "init"],
-        ["config", "doctor"],
-        ["config", "show"],
-        ["config", "set", "camera.wrist.device", "/dev/video0"],
-        ["card", "validate", "card.yaml"],
-        ["doctor"],
-        ["doctor", "cameras"],
-        ["doctor", "network"],
-        ["doctor", "real-arm"],
     ]
     for argv in stubs:
         result = runner.invoke(cli, argv)

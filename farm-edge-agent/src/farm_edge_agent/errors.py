@@ -21,6 +21,9 @@ _SEVERITY: dict[ErrorCode, Severity] = {
     ErrorCode.E1005: Severity.RUNTIME,
     ErrorCode.E1006: Severity.CONFIGURATION,
     ErrorCode.E1007: Severity.RUNTIME,
+    ErrorCode.E1008: Severity.CONFIGURATION,
+    ErrorCode.E1009: Severity.CONFIGURATION,
+    ErrorCode.E1010: Severity.CONFIGURATION,
     ErrorCode.E2001: Severity.CONFIGURATION,
     ErrorCode.E3001: Severity.RUNTIME,
     ErrorCode.E3002: Severity.RUNTIME,
@@ -46,6 +49,9 @@ class FarmError(Exception):
     """
 
     def __init__(self, code: ErrorCode, **slots: Any) -> None:
+        for key, value in slots.items():
+            if key not in ("code", "slots", "args"):
+                setattr(self, key, value)
         self.code = code
         self.slots: dict[str, Any] = dict(slots)
         super().__init__(format_error(code, **slots))

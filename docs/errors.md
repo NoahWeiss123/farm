@@ -26,6 +26,9 @@ new codes; existing codes are not renumbered. See
 | [FARM-E1005](#farm-e1005) | CLI + UI | Dispatcher WebSocket dropped |
 | [FARM-E1006](#farm-e1006) | CLI | Wire protocol version mismatch |
 | [FARM-E1007](#farm-e1007) | CLI | Network probe failed |
+| [FARM-E1008](#farm-e1008) | CLI | Driver requires `arm.ip` in config |
+| [FARM-E1009](#farm-e1009) | CLI | Config file not found |
+| [FARM-E1010](#farm-e1010) | CLI | Required env var missing |
 | [FARM-E2001](#farm-e2001) | CLI | Capability card validation failed |
 | [FARM-E3001](#farm-e3001) | Edge Agent | Safety envelope violation |
 | [FARM-E3002](#farm-e3002) | Edge Agent | Watchdog timeout |
@@ -125,3 +128,44 @@ The dispatcher's WebSocket went silent for longer than
 `safety.watchdog_timeout_ms` (default 1000ms). The Edge Agent halted the arm
 in place. The cloud cannot stall the arm in a dangerous configuration. See
 [safety.md](safety.md#watchdog) and [FARM-E1005](#farm-e1005).
+
+## FARM-E1008
+
+> Driver `'<driver>'` requires `arm.ip` in config. fix: `farm config set arm.ip <robot-ip>`
+
+The configured driver (e.g. `xarm`) needs a network address for the arm. The
+mock driver does not. `farm config doctor` surfaces this as a critical
+finding. See [config-reference.md](config-reference.md#arm).
+
+## FARM-E1009
+
+> Config not found at `<path>`. fix: `farm config init`
+
+`farm` looked for `~/.farm/config.yaml` (or `--config`) and found nothing.
+Run `farm config init` to scaffold the template, or pass `--config <path>`.
+
+## FARM-E1010
+
+> Required env var `<name>` is not set. fix: `export <name>=...`
+
+A `${...}` interpolation in `config.yaml` references an env var that is not
+present in the current shell. The Edge Agent will not silently substitute
+an empty string. See [config-reference.md](config-reference.md#env-vars).
+
+## Canonical URLs
+
+Each code has a canonical online page mirrored from this file:
+
+- <https://farm.dev/errors/E1001>
+- <https://farm.dev/errors/E1002>
+- <https://farm.dev/errors/E1003>
+- <https://farm.dev/errors/E1004>
+- <https://farm.dev/errors/E1005>
+- <https://farm.dev/errors/E1006>
+- <https://farm.dev/errors/E1007>
+- <https://farm.dev/errors/E1008>
+- <https://farm.dev/errors/E1009>
+- <https://farm.dev/errors/E1010>
+- <https://farm.dev/errors/E2001>
+- <https://farm.dev/errors/E3001>
+- <https://farm.dev/errors/E3002>
