@@ -1,0 +1,4 @@
+embodiment:
+  control_rate_hz: 30
+camera_views: [wrist]
+determinism: stochastic

@@ -1,0 +1,11 @@
+id: pi05-ufactory-ft-v1
+name: "π0.5 (fine-tuned on UFactory 850)"
+roles: [controller]
+embodiment:
+  arm: ufactory-850
+  dof: 6
+  action_space: ee_pose_delta
+  control_rate_hz: 30
+input_modalities: [rgb_image, joint_state, language]
+skills:
+  - pick: {confidence: 0.8, learned_from: 240}
