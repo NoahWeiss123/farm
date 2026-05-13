@@ -4,10 +4,9 @@ import json
 import re
 
 from click.testing import CliRunner
-
 from farm_edge_agent import __version__ as AGENT_VERSION
-from farm_edge_agent.cli.main import cli
 from farm_edge_agent.cli.commands.version import SUPPORTED_PROTOCOL_VERSIONS
+from farm_edge_agent.cli.main import cli
 
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 

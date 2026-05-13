@@ -3,10 +3,11 @@ from __future__ import annotations
 import glob
 import platform
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import IO, Callable
+from typing import IO
 
 
 @dataclass(frozen=True)
@@ -66,7 +67,7 @@ def default_calibration_lookup(
     candidate = base / f"{sanitized}.yaml"
     if not candidate.exists():
         return None
-    return datetime.fromtimestamp(candidate.stat().st_mtime, tz=timezone.utc)
+    return datetime.fromtimestamp(candidate.stat().st_mtime, tz=UTC)
 
 
 def enumerate_cameras(

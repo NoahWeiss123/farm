@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from farm_edge_agent.errors import FarmError
-from farm_edge_agent.protocol.messages import Ack, Hello
 from farm_shared.errors import ErrorCode
 from farm_shared.protocol import CURRENT_PROTOCOL, ProtocolVersion
+
+from farm_edge_agent.errors import FarmError
+from farm_edge_agent.protocol.messages import Ack, Hello
 
 
 class _AsyncSocket(Protocol):

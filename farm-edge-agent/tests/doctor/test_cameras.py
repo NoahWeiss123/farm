@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import io
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from farm_edge_agent.doctor import cameras
@@ -34,7 +34,7 @@ def test_enumerate_uses_injected_lister_and_prober() -> None:
         return fake_props if path == "/dev/video0" else None
 
     def calib(path: str) -> datetime | None:
-        return datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc) if path == "/dev/video0" else None
+        return datetime(2026, 5, 1, 12, 0, tzinfo=UTC) if path == "/dev/video0" else None
 
     out = cameras.enumerate_cameras(
         lister=lister, prober=prober, calibration_lookup=calib
@@ -43,7 +43,7 @@ def test_enumerate_uses_injected_lister_and_prober() -> None:
     assert len(out) == 2
     assert out[0].path == "/dev/video0"
     assert out[0].properties == fake_props
-    assert out[0].calibration_mtime == datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc)
+    assert out[0].calibration_mtime == datetime(2026, 5, 1, 12, 0, tzinfo=UTC)
     assert out[0].error_code is None
     assert out[1].path == "/dev/video2"
     assert out[1].properties is None
@@ -54,7 +54,7 @@ def test_format_camera_line_open_device_has_resolution_fps_calibration() -> None
     info = cameras.CameraInfo(
         path="/dev/video0",
         properties=cameras.DeviceProperties(width=1920, height=1080, fps=29.97),
-        calibration_mtime=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+        calibration_mtime=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
     )
     line = cameras.format_camera_line(info)
     assert "/dev/video0" in line
@@ -127,4 +127,4 @@ def test_default_calibration_lookup_returns_mtime_when_present(tmp_path: Path) -
     f.write_text("intrinsics: {}\n")
     mtime = cameras.default_calibration_lookup("/dev/video0", calib_dir=tmp_path)
     assert mtime is not None
-    assert mtime.tzinfo is timezone.utc
+    assert mtime.tzinfo is UTC

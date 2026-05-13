@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from farm_edge_agent.run_record import RunRecordWriter
 from farm_edge_agent.run_record.schema import (
     EVENT_TYPES,

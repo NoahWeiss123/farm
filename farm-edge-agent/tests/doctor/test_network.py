@@ -3,7 +3,6 @@ from __future__ import annotations
 import io
 
 import pytest
-
 from farm_edge_agent.doctor import network
 from farm_edge_agent.doctor.network import Finding, Status
 

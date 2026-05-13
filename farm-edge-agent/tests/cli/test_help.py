@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from click.testing import CliRunner
-
 from farm_edge_agent.cli.main import cli
 
 LEAF_COMMANDS: list[list[str]] = [

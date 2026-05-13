@@ -4,7 +4,6 @@ import asyncio
 from collections.abc import Awaitable
 
 import pytest
-
 from farm_edge_agent.safety.watchdog import Watchdog
 
 

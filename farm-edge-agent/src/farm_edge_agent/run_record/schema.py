@@ -11,7 +11,7 @@ here by relative path.
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -175,19 +175,17 @@ class CriticNote(_EventBase):
 
 
 Event = Annotated[
-    Union[
-        RunStarted,
-        PlanEmitted,
-        NodeStarted,
-        ActionChunk,
-        ObsChunk,
-        SafetyEvent,
-        FallbackInvoked,
-        RecoveryInvoked,
-        NodeCompleted,
-        RunCompleted,
-        CriticNote,
-    ],
+    RunStarted
+    | PlanEmitted
+    | NodeStarted
+    | ActionChunk
+    | ObsChunk
+    | SafetyEvent
+    | FallbackInvoked
+    | RecoveryInvoked
+    | NodeCompleted
+    | RunCompleted
+    | CriticNote,
     Field(discriminator="type"),
 ]
 

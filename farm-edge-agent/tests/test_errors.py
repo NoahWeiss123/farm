@@ -6,10 +6,8 @@ import string
 from pathlib import Path
 
 import pytest
-
 from farm_edge_agent.errors import FarmError, Severity, emit_to_cli
 from farm_shared.errors import ErrorCode
-
 
 _DOCS_PATH = Path(__file__).resolve().parents[2] / "docs" / "errors.md"
 

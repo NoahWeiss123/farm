@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from typing import IO, Any, Callable
+from typing import IO, Any
 
 DRIVERS: tuple[str, ...] = ("xarm", "franka", "lerobot-mock", "lerobot-so")
 

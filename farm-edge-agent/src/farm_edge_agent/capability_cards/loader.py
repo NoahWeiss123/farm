@@ -5,10 +5,11 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from farm_edge_agent.capability_cards.validator import validate
-from farm_edge_agent.errors import FarmError
 from farm_shared.capability_card import CapabilityCard
 from farm_shared.errors import ErrorCode
+
+from farm_edge_agent.capability_cards.validator import validate
+from farm_edge_agent.errors import FarmError
 
 
 def parse_file(path: str | Path) -> dict[str, Any]:

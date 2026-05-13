@@ -10,7 +10,6 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-
 from farm_edge_agent.client import (
     CapabilityCard,
     Client,

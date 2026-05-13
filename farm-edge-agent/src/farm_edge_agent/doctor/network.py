@@ -5,10 +5,10 @@ import ssl
 import statistics
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import IO, Any, Callable
+from typing import IO, Any
 
 
 class Status(str, Enum):

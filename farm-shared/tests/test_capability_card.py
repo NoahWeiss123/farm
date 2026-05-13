@@ -1,14 +1,12 @@
 import copy
 
 import pytest
-
 from farm_shared.capability_card import (
     ACTION_SPACES,
     CapabilityCard,
     CapabilityCardError,
     load_schema,
 )
-
 
 VALID_CARD: dict = {
     "id": "pi05-ufactory-ft-v1",

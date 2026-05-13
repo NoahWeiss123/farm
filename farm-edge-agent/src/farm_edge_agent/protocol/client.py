@@ -3,6 +3,11 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 
+from farm_shared.errors import ErrorCode
+from farm_shared.protocol import CURRENT_PROTOCOL, ProtocolVersion
+from websockets.asyncio.client import ClientConnection, connect
+from websockets.exceptions import ConnectionClosed, WebSocketException
+
 from farm_edge_agent.errors import FarmError
 from farm_edge_agent.protocol.handshake import perform_handshake
 from farm_edge_agent.protocol.messages import (
@@ -12,10 +17,6 @@ from farm_edge_agent.protocol.messages import (
     ObsChunk,
     parse_message,
 )
-from farm_shared.errors import ErrorCode
-from farm_shared.protocol import CURRENT_PROTOCOL, ProtocolVersion
-from websockets.asyncio.client import ClientConnection, connect
-from websockets.exceptions import ConnectionClosed, WebSocketException
 
 WATCHDOG_TIMEOUT_S: float = 1.0
 RECONNECT_BACKOFF_S: float = 0.1

@@ -7,7 +7,6 @@ import pandas as pd
 import pyarrow.parquet as pq
 import pytest
 from click.testing import CliRunner
-
 from farm_edge_agent.cli.commands.export import export as export_cmd
 from farm_edge_agent.run_record import (
     FarmError,
