@@ -1,0 +1,6 @@
+{
+  "name": "farm-cloud-worker",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Placeholder. Task 006 wires the Cloudflare Worker."
+}
