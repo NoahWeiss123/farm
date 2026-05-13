@@ -15,7 +15,7 @@ Full design: [DESIGN.md](DESIGN.md). Deferred work: [TODOS.md](TODOS.md).
 ## Quickstart (when implemented)
 
 ```
-pip install farm-edge-agent
+pip install -e ./farm-edge-agent
 farm quickstart
 ```
 

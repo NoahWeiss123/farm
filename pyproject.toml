@@ -1,0 +1,11 @@
+[project]
+name = "farm-workspace"
+version = "0.0.1"
+description = "FARM monorepo workspace root."
+requires-python = ">=3.12"
+
+[tool.uv.workspace]
+members = [
+    "farm-edge-agent",
+    "farm-shared",
+]
