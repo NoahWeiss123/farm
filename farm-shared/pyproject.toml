@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "farm-shared"
+version = "0.0.1"
+description = "Cross-package contracts for FARM: schemas, error catalog, protocol versions."
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/farm_shared"]
