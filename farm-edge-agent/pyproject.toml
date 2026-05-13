@@ -19,6 +19,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "pytest-asyncio>=0.23",
     "pandas>=2.0",
 ]
 arm = ["xarm-python-sdk>=1.17"]
@@ -35,3 +36,4 @@ packages = ["src/farm_edge_agent"]
 [tool.pytest.ini_options]
 pythonpath = ["src", "../farm-shared/src"]
 testpaths = ["tests"]
+asyncio_mode = "auto"
