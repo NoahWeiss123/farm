@@ -7,11 +7,9 @@ export interface RunCardProps {
 
 export function RunCard({ id, status }: RunCardProps) {
   return (
-    <article>
-      <Link href={`/runs/${id}`}>
-        <h3>Run {id}</h3>
-        <p>{status}</p>
-      </Link>
-    </article>
+    <Link href={`/runs/${id}`} className="card">
+      <div className="card-title">Run {id}</div>
+      <div className="card-meta">{status}</div>
+    </Link>
   );
 }

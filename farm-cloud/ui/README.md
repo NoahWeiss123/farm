@@ -11,11 +11,19 @@ bun run build
 bun run test
 ```
 
+## Routes
+
+- `/` — landing page with quickstart CTA.
+- `/runs` — run history list.
+- `/runs/[id]` — run detail with live event stream.
+- `/docs` — index of repo `docs/*.md` files.
+- `/docs/[slug]` — renders `docs/<slug>.md` as HTML via `marked`.
+
 ## Layout
 
-- `app/` — routes. Landing at `/`, run history at `/runs`, run detail at `/runs/[id]`.
-- `components/` — `Nav`, `EmptyState`, `RunCard`.
-- `lib/api.ts` — fetch wrapper. Returns `null` while the cloud surface is being built.
-- `test/` — vitest + jsdom.
-
-The `/runs/[id]` view is the cold-start "warming up..." state from DESIGN.md (Observability). No real data yet.
+```
+app/                # routes
+components/         # Nav, EmptyState, RunCard
+lib/api.ts          # fetch wrapper to the worker
+test/               # vitest + jsdom
+```

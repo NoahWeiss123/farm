@@ -9,10 +9,12 @@ export interface EmptyStateProps {
 
 export function EmptyState({ title, body, ctaHref, ctaLabel }: EmptyStateProps) {
   return (
-    <section aria-labelledby="empty-state-title">
+    <section aria-labelledby="empty-state-title" className="empty">
       <h2 id="empty-state-title">{title}</h2>
       <p>{body}</p>
-      <Link href={ctaHref}>{ctaLabel}</Link>
+      <Link className="cta" href={ctaHref}>
+        {ctaLabel}
+      </Link>
     </section>
   );
 }

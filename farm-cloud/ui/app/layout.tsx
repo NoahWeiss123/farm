@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Nav } from "@/components/nav";
+import "./globals.css";
 
 export const metadata = {
   title: "FARM",
