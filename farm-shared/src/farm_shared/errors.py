@@ -70,6 +70,24 @@ class ErrorCode(Enum):
         ),
         docs_url_slug="E1007",
     )
+    E1008 = _Spec(
+        code=1008,
+        template=(
+            "Driver '{driver}' requires arm.ip in config — fix: "
+            "'farm config set arm.ip <robot-ip>'"
+        ),
+        docs_url_slug="E1008",
+    )
+    E1009 = _Spec(
+        code=1009,
+        template="Config not found at {path} — fix: 'farm config init'",
+        docs_url_slug="E1009",
+    )
+    E1010 = _Spec(
+        code=1010,
+        template="Required env var {name} is not set — fix: 'export {name}=...'",
+        docs_url_slug="E1010",
+    )
     E2001 = _Spec(
         code=2001,
         template=(
@@ -101,6 +119,22 @@ class ErrorCode(Enum):
     @property
     def docs_url_slug(self) -> str:
         return self.value.docs_url_slug
+
+
+# Symbolic aliases for call sites that prefer named codes.
+NO_CAMERA = ErrorCode.E1001
+CALIBRATION_STALE = ErrorCode.E1002
+GPU_COLD_START = ErrorCode.E1003
+API_KEY_REJECTED = ErrorCode.E1004
+WS_DROPPED = ErrorCode.E1005
+VERSION_MISMATCH = ErrorCode.E1006
+NETWORK_BLOCKED = ErrorCode.E1007
+DRIVER_REQUIRES_ARM_IP = ErrorCode.E1008
+CONFIG_NOT_FOUND = ErrorCode.E1009
+ENV_VAR_MISSING = ErrorCode.E1010
+CAPABILITY_CARD_INVALID = ErrorCode.E2001
+SAFETY_ENVELOPE = ErrorCode.E3001
+WATCHDOG_TIMEOUT = ErrorCode.E3002
 
 
 def format_error(code: ErrorCode, **slots: Any) -> str:
