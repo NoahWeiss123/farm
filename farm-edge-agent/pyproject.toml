@@ -9,6 +9,9 @@ description = "FARM Edge Agent: local CLI, drivers, safety, recovery, and run re
 requires-python = ">=3.12"
 dependencies = [
     "farm-shared @ {root:uri}/../farm-shared",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "click>=8.0",
 ]
 
 [tool.hatch.metadata]
@@ -16,3 +19,7 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/farm_edge_agent"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "../farm-shared/src"]
+testpaths = ["tests"]
