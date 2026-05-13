@@ -1,0 +1,8 @@
+{"args":[],"kwargs":{"enable":true},"method":"motion_enable","returns":0}
+{"args":[0],"kwargs":{},"method":"set_mode","returns":0}
+{"args":[0],"kwargs":{},"method":"set_state","returns":0}
+{"args":[],"kwargs":{"is_radian":false},"method":"get_position","returns":[0,[300.0,0.0,300.0,180.0,0.0,0.0]]}
+{"args":[10.0,0.0,0.0,0.0,0.0,0.0],"kwargs":{"relative":true,"speed":100.0,"timeout":10.0,"wait":true},"method":"set_position","returns":0}
+{"args":[0],"kwargs":{"timeout":5.0,"wait":true},"method":"set_gripper_position","returns":0}
+{"args":[200.0,0.0,300.0,180.0,0.0,0.0],"kwargs":{"relative":false,"timeout":30.0,"wait":true},"method":"set_position","returns":0}
+{"args":[],"kwargs":{},"method":"disconnect","returns":null}
