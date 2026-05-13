@@ -1,209 +1,127 @@
-# FARM error catalog
+# Errors
 
-Every error the Edge Agent surfaces is `[FARM-Exxxx] <one-line> — fix: <action>`.
-Each entry below mirrors what the CLI prints, with a longer description, the
-common causes, and fix steps. Canonical online location is
-`https://farm.dev/errors/E<NNNN>`.
+Every error emitted by `farm-edge-agent` follows the same shape:
+
+```
+[FARM-Exxxx] <one-line description> — fix: <command or action>
+```
+
+The structured form is reproduced in JSON output (`--json`) and in
+[run records](python-api.md#run-records). Each code has a long-form page at
+`https://farm.dev/errors/E<NNNN>`; the canonical text and fix steps are in
+this file.
+
+Codes are stable across the Phase-MVP wire protocol. New failure modes get
+new codes; existing codes are not renumbered. See
+[upgrading.md](upgrading.md) for protocol-version compatibility.
+
+## Quick reference
+
+| Code | Surface | One-liner |
+|---|---|---|
+| [FARM-E1001](#farm-e1001) | CLI | Camera device not found |
+| [FARM-E1002](#farm-e1002) | CLI | Calibration is stale |
+| [FARM-E1003](#farm-e1003) | CLI + UI | GPU container cold-starting |
+| [FARM-E1004](#farm-e1004) | CLI | API key rejected |
+| [FARM-E1005](#farm-e1005) | CLI + UI | Dispatcher WebSocket dropped |
+| [FARM-E1006](#farm-e1006) | CLI | Wire protocol version mismatch |
+| [FARM-E1007](#farm-e1007) | CLI | Network probe failed |
+| [FARM-E2001](#farm-e2001) | CLI | Capability card validation failed |
+| [FARM-E3001](#farm-e3001) | Edge Agent | Safety envelope violation |
+| [FARM-E3002](#farm-e3002) | Edge Agent | Watchdog timeout |
 
 ## FARM-E1001
 
-The Edge Agent could not open the configured camera device.
+> No camera found at `<device>`. fix: `farm doctor cameras`, then `farm config set camera.wrist.device /dev/videoN`
 
-**Common causes**
+The configured `camera.<view>.device` path does not enumerate as a video
+device. Most often this is a `/dev/video0` vs `/dev/video2` mistake after a
+USB hub re-enumerated. Run [`farm doctor cameras`](cli-reference.md#farm-doctor-cameras)
+to see the actual list, then update the config.
 
-- The camera is unplugged or powered off.
-- The OS reassigned the device node (`/dev/video0` → `/dev/video2`) after a
-  reboot or hotplug.
-- Another process (a browser tab, OBS, a stale Edge Agent) has the device
-  open exclusively.
-- The user running `farm` is not in the `video` group on Linux.
-
-**Fix**
-
-1. Run `farm doctor cameras` to list every device the OS exposes and what
-   the Edge Agent sees.
-2. If the device moved, point the config at the new node:
-   `farm config set camera.wrist.device /dev/videoN`.
-3. If a stale process holds the camera, kill it
-   (`lsof /dev/video0` on Linux, `ioreg` on macOS).
-
-Docs: <https://farm.dev/errors/E1001>
+Raised as `farm.errors.CameraNotFound` from the Python API.
 
 ## FARM-E1002
 
-The on-disk calibration is older than the freshness window the run requires.
+> Calibration is `<N>` days old. fix: `farm calibrate`, or pass `--accept-calibration`
 
-**Common causes**
-
-- The arm or camera has been re-mounted since the last calibration.
-- The workspace policy requires calibration every N days; the cadence elapsed.
-- A new end effector was swapped in without re-running calibration.
-
-**Fix**
-
-1. Re-run `farm calibrate` end-to-end (camera intrinsics, hand–eye, gripper).
-2. Or, if you accept the risk for this single run, pass
-   `--accept-calibration` to bypass the check.
-
-Docs: <https://farm.dev/errors/E1002>
+The Edge Agent hashes `camera.<view>.intrinsics` at run start. If the file
+is older than 24 hours, the run is refused unless `--accept-calibration` is
+passed on the CLI. Camera-mount bumps are the #1 silent failure mode in
+lab-grade robotics work; this gate makes the regression loud. See
+[safety.md](safety.md#calibration-drift-detection).
 
 ## FARM-E1003
 
-The cloud GPU container that serves the configured backend is cold-starting.
-This is not a failure; the run is held open and will resume the moment the
-container is warm.
+> GPU container cold-starting (typical 8–25s). Holding the run open; arm will move when ready.
 
-**Common causes**
-
-- First request to a workspace's GPU pool after an idle period.
-- The backend image was redeployed and the warm pool was drained.
-- A burst of concurrent runs scaled out a new replica.
-
-**Fix**
-
-1. Wait. Typical cold-start is 8–25 s; the CLI shows a live elapsed counter.
-2. If cold-starts dominate your workflow, consider switching the workspace
-   to a backend with a pinned warm pool (Phase-Product feature).
-
-Docs: <https://farm.dev/errors/E1003>
+Informational, not an error: the cloud inference container had to spin up.
+First-prompt cold-starts are bounded; warm runs are sub-second. The
+quickstart sandbox stays pre-warmed for the first 60 seconds after
+`farm quickstart`. See [faq.md](faq.md#why-is-my-first-run-slow).
 
 ## FARM-E1004
 
-The Dispatcher rejected the API key supplied by this Edge Agent.
+> API key rejected. fix: `farm login`, or check `FARM_API_KEY` env var
 
-**Common causes**
+The dispatcher rejected the workspace key during handshake. Causes:
 
-- `FARM_API_KEY` is unset, empty, or contains stray whitespace.
-- The key was rotated or revoked from the workspace settings.
-- The Edge Agent is pointed at a different workspace than the one the key
-  was issued for.
-
-**Fix**
-
-1. Re-authenticate with `farm login` and follow the device-code flow.
-2. Or verify `echo $FARM_API_KEY` matches what the workspace page shows.
-
-Docs: <https://farm.dev/errors/E1004>
+- The key was rotated and the local copy is stale → re-run `farm login`.
+- `${FARM_API_KEY}` resolves to an empty string → check the env var.
+- The key belongs to a workspace that no longer exists.
 
 ## FARM-E1005
 
-The Dispatcher WebSocket connection dropped mid-run. The arm halts in place
-and the Edge Agent attempts to auto-reconnect.
+> Dispatcher WebSocket dropped after `<N>` s. Auto-reconnecting; arm halted in place. fix: `farm run --resume <run-id>`
 
-**Common causes**
-
-- Transient network glitch (WiFi roam, captive portal re-auth, VPN flap).
-- The Dispatcher rolled to a new revision and closed open sockets.
-- A middlebox idle-timed the WebSocket out.
-
-**Fix**
-
-1. Wait for the auto-reconnect; the CLI shows progress.
-2. If reconnect does not restore the run, resume from where it stopped:
-   `farm run --resume <run-id>`.
-3. If the network is unreliable, try `FARM_RELAY=on` to tunnel over HTTPS
-   long-polling.
-
-Docs: <https://farm.dev/errors/E1005>
+The Edge Agent lost its connection mid-run. The watchdog halted the arm in
+place; the dispatcher persisted state up to the last completed chunk. Use
+[`farm run --resume`](cli-reference.md#farm-run) to continue from there.
 
 ## FARM-E1006
 
-The Edge Agent's protocol version is older than the Dispatcher requires.
+> Edge Agent v`<X>` detected, Dispatcher requires v`<Y>`+. fix: `pip install -U farm-edge-agent`
 
-**Common causes**
+Wire-protocol version mismatch at handshake. The dispatcher refuses the
+connection rather than risking silent action-schema drift. See
+[upgrading.md](upgrading.md) for the protocol version table.
 
-- The Edge Agent was installed months ago and never upgraded.
-- The Dispatcher was rolled forward to a new protocol minor version.
-- The user is on a fork or pre-release build that lags the public protocol.
-
-**Fix**
-
-1. Upgrade in place: `pip install -U farm-edge-agent`.
-2. Or pass `--auto-update` once so future runs upgrade themselves on mismatch.
-
-Docs: <https://farm.dev/errors/E1006>
+`farm start --auto-update` upgrades the package and reconnects automatically;
+off by default for manufacturing users.
 
 ## FARM-E1007
 
-The network probe could not complete a WebSocket upgrade to the Dispatcher.
-The session cannot start until a transport works.
+> Network probe FAILED: WebSocket upgrade blocked. fix: `farm doctor network` for diagnostics; try `FARM_RELAY=on`
 
-**Common causes**
-
-- A corporate proxy strips the `Upgrade: websocket` header.
-- A captive portal is intercepting outbound TLS.
-- A firewall rule blocks outbound 443 to the Dispatcher hostname.
-
-**Fix**
-
-1. Run `farm doctor network` for a layered DNS → TLS → WS → RTT diagnosis.
-2. Set `FARM_RELAY=on` to fall back to HTTPS long-polling.
-3. Or run `farm run --offline` to use the local classical-planner backend.
-
-Docs: <https://farm.dev/errors/E1007>
+DNS resolved but the WebSocket upgrade was blocked, typically by a captive
+portal, corporate proxy, or aggressive firewall.
+[`farm doctor network`](cli-reference.md#farm-doctor-network) emits a
+per-failure fix command. `FARM_RELAY=on` tunnels over HTTPS long-polling at
+the cost of higher latency. See [faq.md](faq.md#my-websocket-wont-connect).
 
 ## FARM-E2001
 
-A capability card's `action_space` field is not in the schema's allowed set.
+> `capability_card.<path>`: `'<value>'` not in allowed set. Did you mean `'<suggestion>'`? Schema: `https://farm.dev/schemas/capability_card.v1`
 
-**Common causes**
-
-- A typo in the YAML (`ee_pose_delta` vs `ee-pose-delta`).
-- The card was written against an older schema version with a different
-  enum.
-- A new action space was proposed but not yet shipped in the schema.
-
-**Fix**
-
-1. Inspect the suggestion the validator printed and update the YAML to
-   match.
-2. Cross-check against the published schema at
-   <https://farm.dev/schemas/capability_card.v1>.
-3. Re-run `farm card validate <file>` until it passes before submitting
-   the card to a run.
-
-Docs: <https://farm.dev/errors/E2001>
+A [capability card](capability-cards.md) failed schema validation. Enum
+mismatches include a `Did you mean` suggestion based on edit distance.
+Common causes: typo in `action_space`, missing `embodiment.arm`, unknown
+value in `roles`.
 
 ## FARM-E3001
 
-The Edge Agent's safety layer rejected a commanded pose because it falls
-outside the configured workspace envelope. The arm is soft-stopped in
-place; no motion was executed.
+> Safety envelope violation: commanded pose outside workspace. Soft-stopped.
 
-**Common causes**
-
-- The model produced a trajectory that drifts outside the envelope.
-- The envelope is mis-configured (too small, wrong frame, stale after a
-  base move).
-- A coordinate-frame mismatch between the camera and the arm shifted the
-  whole plan.
-
-**Fix**
-
-1. Inspect the rejected pose in the run record and compare with the
-   envelope in `~/.farm/config.yaml`.
-2. If the envelope is wrong, widen or re-center it; do not disable it.
-3. If the model is consistently producing out-of-envelope plans, swap
-   backends or fall back to the classical planner.
-
-Docs: <https://farm.dev/errors/E3001>
+A planned chunk would have put the TCP outside the configured
+`safety.workspace_envelope`. The Edge Agent soft-stopped the arm before the
+move executed. The run continues with the next fallback in the chain. See
+[safety.md](safety.md#workspace-envelope).
 
 ## FARM-E3002
 
-The Edge Agent's watchdog tripped because the Dispatcher went silent for
-longer than the 1-second budget. The arm is halted in place.
+> Watchdog timeout (>1s server silence). Arm halted in place.
 
-**Common causes**
-
-- The Dispatcher process is slow or stuck on this run.
-- A network event blocked send-side throughput for >1 s.
-- The local machine is starved for CPU (background job, swap thrash).
-
-**Fix**
-
-1. Check Dispatcher status on the workspace dashboard.
-2. Run `farm doctor network` to look for latency spikes.
-3. If the local box is overloaded, free up resources or move the Edge
-   Agent to a dedicated host.
-
-Docs: <https://farm.dev/errors/E3002>
+The dispatcher's WebSocket went silent for longer than
+`safety.watchdog_timeout_ms` (default 1000ms). The Edge Agent halted the arm
+in place. The cloud cannot stall the arm in a dangerous configuration. See
+[safety.md](safety.md#watchdog) and [FARM-E1005](#farm-e1005).
