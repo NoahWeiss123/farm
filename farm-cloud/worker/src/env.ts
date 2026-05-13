@@ -1,7 +1,5 @@
 export interface Env {
-  // Durable Object namespaces — wired by wrangler.toml in task 017.
-  // DISPATCHER: DurableObjectNamespace;
-  // SESSION: DurableObjectNamespace;
+  DISPATCHER: DurableObjectNamespace;
 }
 
 export const WORKER_VERSION = "0.0.1";
