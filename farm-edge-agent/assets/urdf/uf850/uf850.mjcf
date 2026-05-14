@@ -5,16 +5,26 @@
     <flag warmstart="enable"/>
   </option>
 
+  <!-- Collision groups via contype/conaffinity bitmasks. Pairs collide iff
+       (a.contype & b.conaffinity) | (b.contype & a.conaffinity) is nonzero.
+
+         floor:   contype=1  conaffinity=2   collides with props only
+         arm:     contype=4  conaffinity=2   collides with props only (no floor)
+         prop:    contype=2  conaffinity=7   collides with everything
+  -->
   <default>
     <default class="uf850">
       <joint limited="true" damping="1.0" frictionloss="0.5"/>
-      <geom contype="1" conaffinity="1" group="1"/>
+      <geom contype="4" conaffinity="2" group="1"/>
       <position kp="2000" kv="200"/>
     </default>
-    <default class="finger">
-      <joint limited="true" damping="5.0" frictionloss="0.5"/>
-      <geom contype="1" conaffinity="1" friction="2.5 0.05 0.001" condim="4"/>
-      <position kp="200" kv="40"/>
+    <default class="gripper_drive">
+      <joint limited="true" damping="0.1" frictionloss="0.01" armature="0.01"/>
+      <geom contype="4" conaffinity="2" group="1"
+            friction="2.0 0.05 0.001" condim="4"/>
+      <!-- xArm Gripper datasheet: ~30 N max grip force, 85 mm stroke.
+           kp=20 with forcerange ±30 N·m gives clean position tracking. -->
+      <position kp="20" kv="2" forcerange="-30 30"/>
     </default>
   </default>
 
@@ -26,9 +36,17 @@
     <mesh name="m_link4" file="link4.stl"/>
     <mesh name="m_link5" file="link5.stl"/>
     <mesh name="m_link6" file="link6.stl"/>
+    <mesh name="m_grip_base"  file="../gripper/base_link.stl"/>
+    <mesh name="m_grip_l_ok"  file="../gripper/left_outer_knuckle.stl"/>
+    <mesh name="m_grip_l_ik"  file="../gripper/left_inner_knuckle.stl"/>
+    <mesh name="m_grip_l_fg"  file="../gripper/left_finger.stl"/>
+    <mesh name="m_grip_r_ok"  file="../gripper/right_outer_knuckle.stl"/>
+    <mesh name="m_grip_r_ik"  file="../gripper/right_inner_knuckle.stl"/>
+    <mesh name="m_grip_r_fg"  file="../gripper/right_finger.stl"/>
     <material name="white" rgba="0.95 0.95 0.95 1"/>
     <material name="grey"  rgba="0.35 0.35 0.35 1"/>
-    <material name="orange" rgba="0.95 0.55 0.20 1"/>
+    <material name="silver" rgba="0.78 0.78 0.78 1"/>
+    <material name="black" rgba="0.12 0.12 0.12 1"/>
     <texture name="tex_grid" type="2d" builtin="checker" rgb1="0.85 0.85 0.85" rgb2="0.70 0.70 0.70" width="300" height="300"/>
     <material name="mat_grid" texture="tex_grid" texrepeat="8 8" texuniform="true" reflectance="0.05"/>
   </asset>
@@ -36,21 +54,22 @@
   <worldbody>
     <light directional="true" diffuse="0.6 0.6 0.6" specular="0.2 0.2 0.2" pos="0 0 2" dir="0 0 -1"/>
     <light directional="true" diffuse="0.3 0.3 0.3" pos="-1 -1 2" dir="1 1 -1"/>
-    <geom name="floor" type="plane" size="2 2 0.1" material="mat_grid" friction="1.0 0.1 0.01" contype="1" conaffinity="1"/>
+    <geom name="floor" type="plane" size="2 2 0.1" material="mat_grid"
+          friction="1.0 0.1 0.01" contype="1" conaffinity="2"/>
 
-    <!-- Working table: 0.55 m × 0.45 m, top at z = 0.26 m, centered at y = -0.70 m.
-         Height + standoff chosen so pick poses live in UF850's kinematic
-         sweet spot (z > ~0.27 m, |y| > 0.60 m) — the wrist stays clear of
-         joint5 limit so IK + PD are stable. -->
-    <body name="table" pos="0 -0.70 0.13">
-      <geom name="table_top"   type="box" size="0.275 0.225 0.005" pos="0 0 0.13" rgba="0.78 0.65 0.45 1.0" friction="1.0 0.05 0.001" contype="1" conaffinity="1"/>
-      <geom name="table_leg_a" type="box" size="0.012 0.012 0.065" pos=" 0.25 -0.20 0.065" rgba="0.40 0.30 0.22 1.0"/>
-      <geom name="table_leg_b" type="box" size="0.012 0.012 0.065" pos="-0.25 -0.20 0.065" rgba="0.40 0.30 0.22 1.0"/>
-      <geom name="table_leg_c" type="box" size="0.012 0.012 0.065" pos=" 0.25  0.20 0.065" rgba="0.40 0.30 0.22 1.0"/>
-      <geom name="table_leg_d" type="box" size="0.012 0.012 0.065" pos="-0.25  0.20 0.065" rgba="0.40 0.30 0.22 1.0"/>
+    <!-- Robot mounting pedestal. Real UF850 deployments bolt the arm to a
+         stand or mounting plate; the official mounting kit is ~200 mm tall
+         and ~200 mm wide. The arm's link_base sits on top of this. -->
+    <body name="mount" pos="0 0 0.10">
+      <geom name="mount_top"  type="cylinder" size="0.10 0.005" pos="0 0 0.10"
+            material="grey" contype="4" conaffinity="2"/>
+      <geom name="mount_col"  type="cylinder" size="0.07 0.10"  pos="0 0 0"
+            material="grey" contype="4" conaffinity="2"/>
+      <geom name="mount_base" type="cylinder" size="0.12 0.005" pos="0 0 -0.10"
+            material="grey" contype="4" conaffinity="2"/>
     </body>
 
-    <body name="link_base" pos="0 0 0" childclass="uf850">
+    <body name="link_base" pos="0 0 0.205" childclass="uf850">
       <geom type="mesh" mesh="m_base" material="white"/>
 
       <body name="link1" pos="0 0 0.364">
@@ -83,25 +102,64 @@
                   <joint name="joint6" axis="0 0 1" range="-6.283185 6.283185" damping="3.4" frictionloss="1.1"/>
                   <geom type="mesh" mesh="m_link6" material="grey"/>
 
-                  <!-- Gripper base bolted to the flange -->
-                  <body name="gripper_base" pos="0 0 0">
-                    <inertial pos="0 0 0.025" mass="0.15" diaginertia="0.0001 0.0001 0.0001"/>
-                    <geom type="box" size="0.035 0.020 0.025" pos="0 0 0.025" material="grey"/>
+                  <!-- Real xArm Gripper. base_link.stl + 4-bar linkage with
+                       a single drive joint; all other knuckle/finger joints
+                       mimic it via equality constraints. TCP at the grasp
+                       center, 172 mm from the wrist flange (matches the
+                       real xArm Gripper datasheet). -->
+                  <body name="xarm_gripper_base_link" pos="0 0 0">
+                    <inertial pos="-0.00065489 -0.0018497 0.048028"
+                              mass="0.54156"
+                              diaginertia="0.00047106 0.00033072 0.00025642"/>
+                    <geom type="mesh" mesh="m_grip_base" material="white"/>
 
-                    <body name="finger_left" pos="0 0 0.05" childclass="finger">
-                      <inertial pos="-0.005 0 0.03" mass="0.03" diaginertia="1e-5 1e-5 1e-5"/>
-                      <joint name="finger_left_joint" type="slide" axis="1 0 0" range="-0.040 -0.012"/>
-                      <geom type="box" size="0.005 0.0125 0.030" pos="-0.005 0 0.030" material="orange"/>
-                    </body>
-                    <body name="finger_right" pos="0 0 0.05" childclass="finger">
-                      <inertial pos="0.005 0 0.03" mass="0.03" diaginertia="1e-5 1e-5 1e-5"/>
-                      <joint name="finger_right_joint" type="slide" axis="1 0 0" range="0.012 0.040"/>
-                      <geom type="box" size="0.005 0.0125 0.030" pos="0.005 0 0.030" material="orange"/>
+                    <body name="left_outer_knuckle" pos="0 0.035 0.059098" childclass="gripper_drive">
+                      <inertial pos="0 0.021559 0.015181" mass="0.033618"
+                                diaginertia="1.9111e-05 6.6256e-06 1.3185e-05"/>
+                      <joint name="drive_joint" axis="1 0 0" range="0 0.85"/>
+                      <geom type="mesh" mesh="m_grip_l_ok" material="silver"/>
+
+                      <body name="left_finger" pos="0 0.035465 0.042039">
+                        <inertial pos="0 -0.016413 0.029258" mass="0.048304"
+                                  diaginertia="1.7493e-05 1.7225e-05 5.1466e-06"/>
+                        <joint name="left_finger_joint" axis="-1 0 0" range="0 0.85" damping="0.2"/>
+                        <geom type="mesh" mesh="m_grip_l_fg" material="black"
+                              friction="3.0 0.05 0.001" condim="6"/>
+                      </body>
                     </body>
 
-                    <!-- TCP at the grasp center (between the fingers).
-                         Picking a block at z=block_z puts TCP at block_z. -->
-                    <site name="tcp" pos="0 0 0.08" size="0.005" rgba="1 0 0 0.6"/>
+                    <body name="left_inner_knuckle" pos="0 0.02 0.074098" childclass="gripper_drive">
+                      <inertial pos="0 0.0220467 0.0261334" mass="0.0230126"
+                                diaginertia="6.095e-06 6.020e-06 5.079e-06"/>
+                      <joint name="left_inner_knuckle_joint" axis="1 0 0" range="0 0.85"/>
+                      <geom type="mesh" mesh="m_grip_l_ik" material="silver"/>
+                    </body>
+
+                    <body name="right_outer_knuckle" pos="0 -0.035 0.059098" childclass="gripper_drive">
+                      <inertial pos="0 -0.021559 0.015181" mass="0.033618"
+                                diaginertia="1.9111e-05 6.6256e-06 1.3185e-05"/>
+                      <joint name="right_outer_knuckle_joint" axis="-1 0 0" range="0 0.85"/>
+                      <geom type="mesh" mesh="m_grip_r_ok" material="silver"/>
+
+                      <body name="right_finger" pos="0 -0.035465 0.042039">
+                        <inertial pos="0 0.016413 0.029258" mass="0.048304"
+                                  diaginertia="1.7493e-05 1.7225e-05 5.1466e-06"/>
+                        <joint name="right_finger_joint" axis="1 0 0" range="0 0.85" damping="0.2"/>
+                        <geom type="mesh" mesh="m_grip_r_fg" material="black"
+                              friction="3.0 0.05 0.001" condim="6"/>
+                      </body>
+                    </body>
+
+                    <body name="right_inner_knuckle" pos="0 -0.02 0.074098" childclass="gripper_drive">
+                      <inertial pos="0 -0.0220467 0.0261334" mass="0.0230126"
+                                diaginertia="6.095e-06 6.020e-06 5.079e-06"/>
+                      <joint name="right_inner_knuckle_joint" axis="-1 0 0" range="0 0.85"/>
+                      <geom type="mesh" mesh="m_grip_r_ik" material="silver"/>
+                    </body>
+
+                    <!-- TCP at the grasp center — 172 mm from the flange,
+                         matching the real xArm Gripper datasheet. -->
+                    <site name="tcp" pos="0 0 0.172" size="0.005" rgba="1 0 0 0.6"/>
                   </body>
                 </body>
               </body>
@@ -112,6 +170,25 @@
     </body>
   </worldbody>
 
+  <!-- The xArm Gripper has one motor (the drive_joint) that the other 5
+       finger/knuckle joints mimic. In MJCF we express this with equality
+       constraints — each follower's qpos == drive_joint's qpos.
+       solref="0.001 1" / solimp="0.999 0.999 0.001" make the constraint
+       solver enforce coupling very tightly (otherwise the equality is
+       "soft" and slow contact + low PD lets the mimic joints drift). -->
+  <equality>
+    <joint joint1="left_finger_joint"        joint2="drive_joint" polycoef="0 1 0 0 0"
+           solref="0.001 1" solimp="0.999 0.9999 0.001"/>
+    <joint joint1="left_inner_knuckle_joint" joint2="drive_joint" polycoef="0 1 0 0 0"
+           solref="0.001 1" solimp="0.999 0.9999 0.001"/>
+    <joint joint1="right_outer_knuckle_joint" joint2="drive_joint" polycoef="0 1 0 0 0"
+           solref="0.001 1" solimp="0.999 0.9999 0.001"/>
+    <joint joint1="right_finger_joint"       joint2="drive_joint" polycoef="0 1 0 0 0"
+           solref="0.001 1" solimp="0.999 0.9999 0.001"/>
+    <joint joint1="right_inner_knuckle_joint" joint2="drive_joint" polycoef="0 1 0 0 0"
+           solref="0.001 1" solimp="0.999 0.9999 0.001"/>
+  </equality>
+
   <actuator>
     <position name="a_joint1" joint="joint1" ctrlrange="-6.28 6.28"/>
     <position name="a_joint2" joint="joint2" ctrlrange="-2.30 2.30"/>
@@ -119,7 +196,7 @@
     <position name="a_joint4" joint="joint4" ctrlrange="-6.28 6.28"/>
     <position name="a_joint5" joint="joint5" ctrlrange="-2.16 2.16"/>
     <position name="a_joint6" joint="joint6" ctrlrange="-6.28 6.28"/>
-    <position name="a_finger_left"  joint="finger_left_joint"  ctrlrange="-0.040 -0.012" class="finger"/>
-    <position name="a_finger_right" joint="finger_right_joint" ctrlrange="0.012 0.040"   class="finger"/>
+    <!-- One drive actuator. ctrl=0 → fully open (~85 mm), ctrl=0.85 → closed. -->
+    <position name="a_gripper" joint="drive_joint" ctrlrange="0 0.85" class="gripper_drive"/>
   </actuator>
 </mujoco>

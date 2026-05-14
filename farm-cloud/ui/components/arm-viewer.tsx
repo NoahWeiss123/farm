@@ -23,7 +23,9 @@ import { subscribeSSE } from "@/lib/sse";
 
 const URDF_PATH = "/urdf/uf850/uf850.urdf";
 const ARM_JOINT_NAMES = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"];
-const FINGER_JOINT_NAMES = ["finger_left_joint", "finger_right_joint"];
+// xArm Gripper is one drive joint; the other 5 mimic via the URDF's
+// <mimic> tag which urdf-loader honors automatically.
+const FINGER_JOINT_NAMES = ["drive_joint"];
 
 type LiveState = {
   arm?: number[];
@@ -123,26 +125,8 @@ function SceneProps({
 
   return (
     <group rotation={[-Math.PI / 2, 0, 0]}>
-      {/* Table (matches the static fixture in the MJCF: top at z=0.26 m,
-          centered at y=-0.70 m). */}
-      <mesh position={[0, -0.70, 0.265]} receiveShadow>
-        <boxGeometry args={[0.55, 0.45, 0.01]} />
-        <meshStandardMaterial color="#c6a37a" />
-      </mesh>
-      {/* Legs */}
-      {(
-        [
-          [0.25, -0.90, 0.065],
-          [-0.25, -0.90, 0.065],
-          [0.25, -0.50, 0.065],
-          [-0.25, -0.50, 0.065],
-        ] as [number, number, number][]
-      ).map((p, i) => (
-        <mesh key={i} position={p} receiveShadow>
-          <boxGeometry args={[0.024, 0.024, 0.130]} />
-          <meshStandardMaterial color="#695639" />
-        </mesh>
-      ))}
+      {/* No fake table — just the floor + the props the daemon reports.
+          The robot mount pedestal is part of the URDF itself. */}
       {/* Props */}
       {staticProps.map((p) => {
         const rgba = p.rgba ?? [0.8, 0.8, 0.8, 1];
@@ -200,7 +184,7 @@ export function ArmViewer({
   height = 480,
 }: {
   worldStreamPath?: string;
-  height?: number;
+  height?: number | string;
 }) {
   const liveRef = useRef<LiveState>({});
   const [staticProps, setStaticProps] = useState<SceneProp[]>([]);
@@ -239,13 +223,11 @@ export function ArmViewer({
       style={{
         width: "100%",
         height,
-        borderRadius: 12,
         overflow: "hidden",
         background: "linear-gradient(180deg, #f7f6f3 0%, #e3e0d8 100%)",
-        boxShadow: "0 1px 0 rgba(0,0,0,0.05), 0 8px 24px rgba(0,0,0,0.08)",
       }}
     >
-      <Canvas shadows camera={{ position: [1.5, 1.2, 1.5], fov: 38 }}>
+      <Canvas shadows camera={{ position: [1.5, 1.0, 1.6], fov: 36 }}>
         <Suspense fallback={null}>
           <ambientLight intensity={0.45} />
           <directionalLight
@@ -285,7 +267,7 @@ export function ArmViewer({
           <SceneProps staticProps={staticProps} live={liveRef} />
           <OrbitControls
             makeDefault
-            target={[0, 0.30, 0.55]}
+            target={[0, 0.20, 0.55]}
             enableDamping
             dampingFactor={0.08}
             minDistance={0.6}

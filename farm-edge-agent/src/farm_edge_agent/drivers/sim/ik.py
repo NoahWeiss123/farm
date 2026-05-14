@@ -69,12 +69,24 @@ def _solve_once(
     rot_tol: float,
     damping: float,
     step_scale: float,
+    *,
+    axis_world: np.ndarray | None = None,
 ) -> tuple[float, float, int, bool]:
+    """One IK descent. Three modes:
+
+    * full quaternion (``target_quat`` set, ``axis_world`` None) — 3 pos + 3 rot.
+    * axis-only (``axis_world`` set; ``target_quat`` ignored) — 3 pos + 2
+      orientation, leaving a 1-DoF nullspace (free rotation about the
+      target axis). Right mode for "gripper points down with free yaw".
+    * position-only (``target_quat`` None, ``axis_world`` None) — 3 pos,
+      3-DoF nullspace.
+    """
     jacp = np.zeros((3, model.nv))
     jacr = np.zeros((3, model.nv))
     pos_err_norm = float("inf")
     rot_err_norm = float("inf")
-    use_rot = target_quat is not None
+    use_full_rot = target_quat is not None and axis_world is None
+    axis_only = axis_world is not None
     n = len(arm_joint_ids)
     last_iter = 0
     for it in range(max_iter):
@@ -83,11 +95,20 @@ def _solve_once(
         current_pos = data.site_xpos[site_id].copy()
         pos_err = target_pos - current_pos
         pos_err_norm = float(np.linalg.norm(pos_err))
-        if use_rot:
+        if use_full_rot:
             current_quat = _site_quat(data, site_id)
             rot_err = _quat_err_vec(target_quat, current_quat)
             rot_err_norm = float(np.linalg.norm(rot_err))
             err = np.concatenate([pos_err, rot_err])
+        elif axis_only:
+            mat = data.site_xmat[site_id].reshape(3, 3)
+            current_axis = mat @ np.array([0.0, 0.0, 1.0])
+            # cross product = sin(θ)·axis-of-rotation between current and
+            # target — this is the operational-space rotational residual that
+            # is naturally zero only when current_axis == target_axis.
+            axis_err = np.cross(current_axis, axis_world)
+            rot_err_norm = float(np.linalg.norm(axis_err))
+            err = np.concatenate([pos_err, axis_err])
         else:
             rot_err_norm = 0.0
             err = pos_err
@@ -95,18 +116,28 @@ def _solve_once(
             return pos_err_norm, rot_err_norm, last_iter, True
 
         mujoco.mj_jacSite(model, data, jacp, jacr, site_id)
-        J_full = jacp if not use_rot else np.vstack([jacp, jacr])
+        if use_full_rot:
+            J_full = np.vstack([jacp, jacr])
+        elif axis_only:
+            mat = data.site_xmat[site_id].reshape(3, 3)
+            current_axis = mat @ np.array([0.0, 0.0, 1.0])
+            cx, cy, cz = current_axis
+            # d(axis)/dω = -[axis]× (right-multiply by jacr gives Jacobian
+            # of `current_axis` with respect to the operational angular vel).
+            skew = np.array([[0, -cz, cy], [cz, 0, -cx], [-cy, cx, 0]])
+            axis_jac = -skew @ jacr
+            J_full = np.vstack([jacp, axis_jac])
+        else:
+            J_full = jacp
         J = J_full[:, dof_addr]
         m = J.shape[0]
         JJt = J @ J.T + (damping**2) * np.eye(m)
         dq_primary = J.T @ np.linalg.solve(JJt, err)
-        # Nullspace bias toward joint midrange to avoid limits
         current_q = np.array([data.qpos[a] for a in qpos_addr])
         N = np.eye(n) - np.linalg.pinv(J) @ J
         dq_null = N @ _midrange_bias(model, arm_joint_ids, current_q)
         dq = step_scale * dq_primary + 0.3 * dq_null
 
-        # Clip update so we never take a big leap
         max_dq = 0.2
         norm = np.linalg.norm(dq)
         if norm > max_dq:
@@ -117,7 +148,6 @@ def _solve_once(
             new_val = data.qpos[q_idx] + float(dq[k])
             if model.jnt_limited[j_id]:
                 lo, hi = model.jnt_range[j_id]
-                # Soft clamp with a small safety margin
                 margin = 1e-3
                 new_val = max(lo + margin, min(hi - margin, new_val))
             data.qpos[q_idx] = new_val
@@ -137,12 +167,17 @@ def solve_ik(
     damping: float = 1e-2,
     step_scale: float = 0.5,
     seed_attempts: int = 4,
+    *,
+    axis_world: np.ndarray | None = None,
 ) -> IKResult:
     """Iterative damped-least-squares IK with multi-start.
 
-    Runs up to ``seed_attempts`` retries: the first uses the current qpos,
-    subsequent runs perturb the arm joints by random offsets to escape
-    local minima.
+    ``axis_world`` (when set) puts the IK in **axis-only** mode: instead of
+    matching the full target quaternion, the chain aligns the site's local
+    +Z to the supplied world-frame vector, leaving rotation about that axis
+    unconstrained. Used for "gripper-down with free yaw" — the UF850's
+    wrist hits its joint5 limit at most floor-level workspaces when fully
+    constrained, so the extra DoF is what makes ground grasping reachable.
     """
     if arm_joint_ids is None:
         arm_joint_ids = [
@@ -155,6 +190,9 @@ def solve_ik(
     if target_quat is not None:
         target_quat = np.asarray(target_quat, dtype=np.float64).reshape(4)
         target_quat = target_quat / max(np.linalg.norm(target_quat), 1e-12)
+    if axis_world is not None:
+        axis_world = np.asarray(axis_world, dtype=np.float64).reshape(3)
+        axis_world = axis_world / max(np.linalg.norm(axis_world), 1e-12)
 
     rng = np.random.default_rng(seed=42)
     initial_q = np.array([data.qpos[a] for a in qpos_addr])
@@ -172,10 +210,26 @@ def solve_ik(
         else:
             for k, q_idx in enumerate(qpos_addr):
                 data.qpos[q_idx] = initial_q[k]
+        # When constraining an axis, first burn a small pos-only IK pass to
+        # snap into a reachable basin, then refine with axis alignment. The
+        # two-stage flow is much more reliable than asking pos+axis together
+        # from a singular start: position alone has a 3-DoF nullspace so it
+        # almost always converges, and the axis stage only needs a tiny
+        # rotation tweak from there.
+        if axis_world is not None:
+            _solve_once(
+                model, data, site_id, target_pos, None,
+                arm_joint_ids, qpos_addr, dof_addr,
+                max_iter=max(20, max_iter // 3),
+                pos_tol=pos_tol, rot_tol=rot_tol,
+                damping=damping, step_scale=step_scale,
+                axis_world=None,
+            )
         pos_err, rot_err, iters, converged = _solve_once(
             model, data, site_id, target_pos, target_quat,
             arm_joint_ids, qpos_addr, dof_addr,
             max_iter, pos_tol, rot_tol, damping, step_scale,
+            axis_world=axis_world,
         )
         cur_q = np.array([data.qpos[a] for a in qpos_addr])
         score = pos_err + rot_err

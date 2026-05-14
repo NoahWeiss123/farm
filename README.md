@@ -59,7 +59,7 @@ arm position, action chunks, and safety events synchronized to the same
 
 | Module | Role |
 |---|---|
-| `drivers.sim.SimDriver` | MuJoCo-backed UFactory 850 driver. Cartesian-path IK, parallel-jaw gripper with soft-grasp, headless rendering, world-state snapshot. Drop-in for the future `drivers.xarm.XarmDriver`. |
+| `drivers.sim.SimDriver` | **MuJoCo 3.8** (Google DeepMind) backed UFactory 850 driver. Loads the real UF850 + xArm Gripper URDF/MJCF from UFactory's `xarm_ros2` description package — joint ranges (J1±360°, J2±132°, J3 -242°/+3.5°, J4±360°, J5±124°, J6±360°), max joint speed (180°/s), joint torques (200/200/90/68/19/19 N·m), and 850 mm reach all match the UFactory 850 datasheet exactly. Two-stage axis-only IK with mid-range nullspace, Cartesian-path tracking with real-time pacing, soft-grasp constraint when fingers close on a prop within reach. |
 | `safety` | Workspace envelope, velocity cap, watchdog, e-stop, singularity, calibration. Composed into `SafetyEnforcer` — every action chunk passes through it before reaching the driver. |
 | `recovery.primitives` | `home`, `open_gripper`, `relocalize`, `retry_grasp`, `abort_safely`. Invoked when the safety enforcer fires. |
 | `run_loop.RunLoop` | Orchestrates a single run: prompt → planner → safety gate → driver → JSONL record. Emits every event to a live sink (the SSE pump). |
@@ -67,7 +67,7 @@ arm position, action chunks, and safety events synchronized to the same
 | `skills.gpt_planner` | OpenAI Chat Completions decomposer. Reads the live scene + skill catalog, emits a JSON plan with named skill calls. Layer-1 plan cache (SQLite under `~/.farm/plan_cache.db`) skips the LLM on repeat prompts. |
 | `server` | aiohttp daemon (`farm serve`) — REST + SSE the dashboard talks to. |
 | `run_record` | Append-only JSONL with strict Pydantic schemas. Replayable from disk. |
-| `assets/urdf/uf850/` | UFactory 850 URDF + MJCF + STL meshes for the visual mesh. |
+| `assets/urdf/uf850/` | UFactory 850 URDF + MJCF + STL meshes — pulled from UFactory's official `xarm_ros2` repo. Includes the real xArm Gripper (base + 4-bar finger linkage with mimic joints) and a 205 mm robot mount pedestal. |
 
 ### `farm-cloud/worker/` — planner gateway (Cloudflare Worker, TypeScript)
 

@@ -28,17 +28,22 @@ from farm_edge_agent.drivers.sim.ik import solve_ik
 ASSETS_DIR = Path(__file__).resolve().parents[4] / "assets" / "urdf" / "uf850"
 MJCF_PATH = ASSETS_DIR / "uf850.mjcf"
 
-# Home: gripper hovering above workspace, pointing straight down.
-# These joint angles were chosen so the TCP is at roughly (0, -550, 350)mm
-# (in front of the arm, 350mm above the floor) with z-axis pointing world-down.
-HOME_JOINTS: tuple[float, ...] = (0.0, -0.30, -0.85, 0.0, -math.pi / 2, 0.0)
-HOME_POSE: Pose = (0.0, -668.0, 396.0, math.pi, 0.0, 0.0)
+# Home: arm "ready", flange ~270 mm above the floor, gripper straight down.
+# With the 205 mm robot-mount pedestal in the MJCF, this puts the TCP at
+# roughly (0, -770, 270) mm — well above the workspace but inside the
+# kinematic basin where the IK can reach floor-level grasps reliably.
+HOME_JOINTS: tuple[float, ...] = (0.0, -0.50, -0.50, 0.0, -math.pi / 2, 0.0)
+HOME_POSE: Pose = (0.0, -768.0, 270.0, math.pi, 0.0, 0.0)
 DEFAULT_VELOCITY_CAP = 100.0
 # Quaternion for "gripper +Z = world -Z" (180° rotation around world X).
 GRIPPER_DOWN_QUAT = (0.0, 1.0, 0.0, 0.0)
 
 _ARM_JOINT_NAMES = ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6")
-_FINGER_JOINTS = ("finger_left_joint", "finger_right_joint")
+# Real xArm Gripper has one drive joint; the other 5 finger/knuckle joints
+# mimic it via equality constraints. We only command + read the drive joint.
+_FINGER_JOINTS = ("drive_joint",)
+_GRIPPER_CTRL_OPEN = 0.0
+_GRIPPER_CTRL_CLOSED = 0.69  # ~ closed-on-25mm-block; <0.85 (full close)
 _TCP_SITE = "tcp"
 
 
@@ -85,22 +90,26 @@ def load_scene(path: str | Path) -> Scene:
 
 
 def _prop_to_xml(prop: Prop) -> str:
+    """Render a Prop as a free-floating body with collision groups that let
+    it interact with the floor, the arm/gripper, and other props.
+
+    contype=2, conaffinity=7 (= floor(1) | prop(2) | arm(4))
+    — see the collision-group block at the top of uf850.mjcf.
+    """
     rgba = " ".join(f"{c:.3f}" for c in prop.rgba)
     fric = " ".join(f"{c:.4f}" for c in prop.friction)
+    common = (
+        f'mass="{prop.mass:.4f}" rgba="{rgba}" friction="{fric}" '
+        f'condim="6" contype="2" conaffinity="7"'
+    )
     if prop.shape == "box":
         sx, sy, sz = prop.size
         size = f"{sx:.4f} {sy:.4f} {sz:.4f}"
-        geom = (
-            f'<geom type="box" size="{size}" mass="{prop.mass:.4f}" '
-            f'rgba="{rgba}" friction="{fric}" condim="4"/>'
-        )
+        geom = f'<geom type="box" size="{size}" {common}/>'
     elif prop.shape == "cylinder":
         radius, half_h = prop.size
         size = f"{radius:.4f} {half_h:.4f}"
-        geom = (
-            f'<geom type="cylinder" size="{size}" mass="{prop.mass:.4f}" '
-            f'rgba="{rgba}" friction="{fric}" condim="4"/>'
-        )
+        geom = f'<geom type="cylinder" size="{size}" {common}/>'
     else:
         raise ValueError(f"unsupported prop shape: {prop.shape}")
     pos = " ".join(f"{c:.4f}" for c in prop.pos)
@@ -199,11 +208,8 @@ class SimDriver:
                 mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"a_{n}")
                 for n in _ARM_JOINT_NAMES
             ],
-            "finger_left": mujoco.mj_name2id(
-                self._model, mujoco.mjtObj.mjOBJ_ACTUATOR, "a_finger_left"
-            ),
-            "finger_right": mujoco.mj_name2id(
-                self._model, mujoco.mjtObj.mjOBJ_ACTUATOR, "a_finger_right"
+            "gripper": mujoco.mj_name2id(
+                self._model, mujoco.mjtObj.mjOBJ_ACTUATOR, "a_gripper"
             ),
         }
         self._tcp_site_id = mujoco.mj_name2id(
@@ -243,19 +249,19 @@ class SimDriver:
         """Move TCP to ``pose`` (mm + radians) by linearly interpolating in
         Cartesian space and solving incremental IK at each waypoint.
 
-        Path-tracked IK is far more robust than one-shot IK for far-apart
-        targets — the arm cannot end up in a disconnected joint basin or
-        plough through the table.
+        IK runs in **axis-only** mode: we ask the chain to align the site's
+        +Z axis with the world-frame vector derived from the pose's RPY
+        (which is ``(0,0,-1)`` for the gripper-down convention), and leave
+        rotation about that axis free. The free yaw is what gives the
+        UF850's wrist the room to escape its joint5 limit at floor-level
+        targets.
         """
         target_pos_m = np.array([pose[0], pose[1], pose[2]], dtype=np.float64) / 1000.0
-        target_quat = _rpy_to_quat(pose[3], pose[4], pose[5])
+        rot_mat = _rpy_to_matrix(pose[3], pose[4], pose[5])
+        axis_world = rot_mat @ np.array([0.0, 0.0, 1.0])
         with self._lock:
             mujoco.mj_forward(self._model, self._data)
             start_pos = self._data.site_xpos[self._tcp_site_id].copy()
-            start_quat = np.zeros(4)
-            mujoco.mju_mat2Quat(
-                start_quat, self._data.site_xmat[self._tcp_site_id].flatten()
-            )
             total_pos_err = 0.0
             total_rot_err = 0.0
             total_iters = 0
@@ -263,20 +269,20 @@ class SimDriver:
             for s in range(1, path_steps + 1):
                 t = s / path_steps
                 interp_pos = start_pos + (target_pos_m - start_pos) * t
-                interp_quat = _slerp(start_quat, target_quat, t)
                 # Tight per-step IK — only a small perturbation away
                 result = solve_ik(
                     self._model,
                     self._data,
                     self._tcp_site_id,
                     interp_pos,
-                    target_quat=interp_quat,
+                    target_quat=None,
                     arm_joint_ids=self._arm_joint_ids,
-                    max_iter=40,
+                    max_iter=60,
                     pos_tol=2e-3,
-                    rot_tol=4e-2,
-                    seed_attempts=1,
+                    rot_tol=5e-2,
+                    seed_attempts=2,
                     step_scale=0.6,
+                    axis_world=axis_world,
                 )
                 total_pos_err = result.pos_err
                 total_rot_err = result.rot_err
@@ -329,11 +335,11 @@ class SimDriver:
         attached: str | None = None
         with self._lock:
             if state == "open":
-                self._set_gripper_targets(open_=True)
                 released = self._grasped_prop_id
                 self._grasped_prop_id = None
                 self._grasp_offset_pos = None
                 self._grasp_offset_quat = None
+                self._set_gripper_targets(open_=True)
                 for _ in range(self._sim_rate * 2):
                     mujoco.mj_step(self._model, self._data)
                 self._gripper = state
@@ -341,11 +347,16 @@ class SimDriver:
                     attached = released
                     self._emit("release_prop", {"prop": released})
             else:
+                # Capture the grasp candidate *before* commanding the close,
+                # because the close itself shifts the arm and props enough
+                # that "closest prop" can change by the time the actuator
+                # settles. The carry override then begins the next step.
+                attached = self._try_grasp_closest_prop()
                 self._set_gripper_targets(open_=False)
                 for _ in range(self._sim_rate * 2):
                     mujoco.mj_step(self._model, self._data)
+                    self._carry_grasped_prop()
                 self._gripper = state
-                attached = self._try_grasp_closest_prop()
                 if attached is not None:
                     self._emit("grasp_prop", {"prop": attached})
         self._emit("set_gripper", {"state": state, "attached": attached})
@@ -460,14 +471,13 @@ class SimDriver:
                 mujoco.mj_step(self._model, self._data)
 
     def _set_gripper_targets(self, open_: bool) -> None:
-        if open_:
-            self._data.ctrl[self._actuator_ids["finger_left"]] = -0.040
-            self._data.ctrl[self._actuator_ids["finger_right"]] = 0.040
-        else:
-            # Closed gap: inner faces at ±12 mm → 24 mm clearance, so a 25 mm
-            # block is gripped with light compression.
-            self._data.ctrl[self._actuator_ids["finger_left"]] = -0.012
-            self._data.ctrl[self._actuator_ids["finger_right"]] = 0.012
+        # One actuator on the xArm Gripper drive_joint. 0 rad = fully open
+        # (~85 mm jaw gap), 0.85 rad = fully closed. The 0.69 rad close
+        # target gives a small clamping margin on a 25 mm block.
+        aid = self._actuator_ids["gripper"]
+        self._data.ctrl[aid] = (
+            _GRIPPER_CTRL_OPEN if open_ else _GRIPPER_CTRL_CLOSED
+        )
 
     def _drive_arm_to(
         self,
@@ -601,12 +611,40 @@ class SimDriver:
 
 
 def _make_assets_dict(mjcf_path: Path) -> dict[str, bytes]:
-    """Pre-load mesh assets so from_xml_string can resolve them."""
+    """Pre-load mesh assets so from_xml_string can resolve them.
+
+    The MJCF's compiler ``meshdir`` is ``meshes/visual``. We mount STL files
+    from that directory under their bare filename (e.g. ``link_base.stl``)
+    and also from sibling directories under a relative path (e.g.
+    ``../gripper/base_link.stl``) so the gripper mesh references resolve.
+    """
     assets: dict[str, bytes] = {}
-    mesh_dir = mjcf_path.parent / "meshes" / "visual"
-    for f in mesh_dir.glob("*.stl"):
+    base = mjcf_path.parent / "meshes"
+    visual_dir = base / "visual"
+    for f in visual_dir.glob("*.stl"):
         assets[f.name] = f.read_bytes()
+    # Sibling directories the MJCF references via `../<dir>/<file>`. Only
+    # `gripper/` is referenced today; skip the collision/ alias dir which
+    # repeats filenames found under visual/.
+    for sib in ("gripper",):
+        sib_dir = base / sib
+        if not sib_dir.is_dir():
+            continue
+        for f in sib_dir.glob("*.stl"):
+            assets[f"../{sib}/{f.name}"] = f.read_bytes()
     return assets
+
+
+def _rpy_to_matrix(rx: float, ry: float, rz: float) -> np.ndarray:
+    """XYZ-Euler → 3×3 rotation matrix. Used to derive the gripper-down axis
+    from the public ``(rx, ry, rz)`` Pose parameters."""
+    cx, sx = math.cos(rx), math.sin(rx)
+    cy, sy = math.cos(ry), math.sin(ry)
+    cz, sz = math.cos(rz), math.sin(rz)
+    Rx = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]])
+    Ry = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
+    Rz = np.array([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]])
+    return Rx @ Ry @ Rz
 
 
 def _rpy_to_quat(rx: float, ry: float, rz: float) -> np.ndarray:

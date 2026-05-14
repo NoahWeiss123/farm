@@ -130,32 +130,32 @@ export default function RunDetailPage({
   }, [detail, liveEvents]);
 
   return (
-    <section className="run-detail">
-      <header>
-        <Link href="/runs" className="back">
-          ← all runs
-        </Link>
-        <h1>{status?.task || id}</h1>
-        <div className="meta">
-          <span className={`badge state-${status?.state ?? "queued"}`}>
-            {status?.state ?? "queued"}
-          </span>
-          <span className="run-id">{id}</span>
-          {status?.plan_id && <span className="plan-id">{status.plan_id}</span>}
-          {status?.safety_events !== undefined && (
-            <span>safety: {status.safety_events}</span>
-          )}
+    <section className="full-bleed run-detail">
+      <header className="run-header">
+        <Link href="/runs" className="back">← all runs</Link>
+        <div className="header-main">
+          <h1>{status?.task || id}</h1>
+          <div className="meta">
+            <span className={`badge state-${status?.state ?? "queued"}`}>
+              {status?.state ?? "queued"}
+            </span>
+            <span className="run-id">{id}</span>
+            {status?.plan_id && <span className="plan-id">{status.plan_id}</span>}
+            {status?.safety_events !== undefined && (
+              <span>safety: {status.safety_events}</span>
+            )}
+          </div>
         </div>
       </header>
 
-      <div className="run-grid">
-        <div className="viewer-card">
-          <ArmViewer height={520} />
+      <div className="run-viewport">
+        <div className="viewer-pane">
+          <ArmViewer height="100%" />
         </div>
-        <div className="timeline-card">
+        <aside className="timeline-pane">
           <h2>timeline · {events.length} events</h2>
           <EventList events={events} />
-        </div>
+        </aside>
       </div>
     </section>
   );

@@ -60,3 +60,4 @@ home*.png run_*.png running_*.png
 # Keep checked-in documentation screenshots
 !docs/img/*.png
 !farm-cloud/ui/public/**/*.png
+MUJOCO_LOG.TXT

@@ -79,20 +79,20 @@ class SceneSpec:
         )
 
 
-# Built-in default scene used for the demo when no /v1/scenes call has
-# been made. Mirrors the table+blocks+cup that the pick-and-place
-# integration tests use.
+# Built-in default scene: blocks + cup resting on the floor in front of the
+# arm. No table — just the infinite ground plane defined in the MJCF and
+# whatever objects we drop in. Half-extents are 0.0125 m → 25 mm cubes.
 DEFAULT_SCENE = SceneSpec(
     name="picknplace",
     props=[
         {"id": "red_block", "shape": "box", "size": [0.0125, 0.0125, 0.0125],
-         "pos": [0.00, -0.70, 0.2775], "rgba": [0.9, 0.1, 0.1, 1.0]},
+         "pos": [0.05, -0.55, 0.0125], "rgba": [0.9, 0.1, 0.1, 1.0]},
         {"id": "blue_block", "shape": "box", "size": [0.0125, 0.0125, 0.0125],
-         "pos": [0.10, -0.70, 0.2775], "rgba": [0.1, 0.2, 0.9, 1.0]},
+         "pos": [0.15, -0.55, 0.0125], "rgba": [0.1, 0.2, 0.9, 1.0]},
         {"id": "green_block", "shape": "box", "size": [0.0125, 0.0125, 0.0125],
-         "pos": [-0.10, -0.70, 0.2775], "rgba": [0.1, 0.7, 0.2, 1.0]},
+         "pos": [-0.05, -0.55, 0.0125], "rgba": [0.1, 0.7, 0.2, 1.0]},
         {"id": "cup", "shape": "cylinder", "size": [0.04, 0.04],
-         "pos": [-0.12, -0.78, 0.305], "rgba": [0.85, 0.85, 0.85, 0.9]},
+         "pos": [-0.15, -0.65, 0.04], "rgba": [0.85, 0.85, 0.85, 0.9]},
     ],
 )
 
