@@ -9,8 +9,8 @@ the primary task can't reach tolerance from the current pose.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 import mujoco
 import numpy as np

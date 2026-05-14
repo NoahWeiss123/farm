@@ -84,12 +84,22 @@ def load_scene(path: str | Path) -> Scene:
 
 
 def _prop_to_xml(prop: Prop) -> str:
+    rgba = " ".join(f"{c:.3f}" for c in prop.rgba)
+    fric = " ".join(f"{c:.4f}" for c in prop.friction)
     if prop.shape == "box":
         sx, sy, sz = prop.size
-        geom = f'<geom type="box" size="{sx:.4f} {sy:.4f} {sz:.4f}" mass="{prop.mass:.4f}" rgba="{" ".join(f"{c:.3f}" for c in prop.rgba)}" friction="{" ".join(f"{c:.4f}" for c in prop.friction)}" condim="4"/>'
+        size = f"{sx:.4f} {sy:.4f} {sz:.4f}"
+        geom = (
+            f'<geom type="box" size="{size}" mass="{prop.mass:.4f}" '
+            f'rgba="{rgba}" friction="{fric}" condim="4"/>'
+        )
     elif prop.shape == "cylinder":
         radius, half_h = prop.size
-        geom = f'<geom type="cylinder" size="{radius:.4f} {half_h:.4f}" mass="{prop.mass:.4f}" rgba="{" ".join(f"{c:.3f}" for c in prop.rgba)}" friction="{" ".join(f"{c:.4f}" for c in prop.friction)}" condim="4"/>'
+        size = f"{radius:.4f} {half_h:.4f}"
+        geom = (
+            f'<geom type="cylinder" size="{size}" mass="{prop.mass:.4f}" '
+            f'rgba="{rgba}" friction="{fric}" condim="4"/>'
+        )
     else:
         raise ValueError(f"unsupported prop shape: {prop.shape}")
     pos = " ".join(f"{c:.4f}" for c in prop.pos)
@@ -341,6 +351,46 @@ class SimDriver:
 
     def is_estop_armed(self) -> bool:
         return self._estop_armed
+
+    def check_pose_reachable(self, pose: Pose) -> bool:
+        """Cheap reachability probe — position-only IK on a scratch MjData.
+
+        Accepts both the Driver protocol's millimeter Pose and the safety
+        module's meter Pose: positions with |x|<5 are treated as meters,
+        otherwise millimeters. Orientation is intentionally dropped — many
+        UF850 poses clamp joint5 to its limit but ``move_to`` still
+        succeeds, so the reachability gate should not reject them.
+        """
+        from farm_edge_agent.drivers.sim.ik import solve_ik
+
+        raw = np.array([pose[0], pose[1], pose[2]], dtype=np.float64)
+        target_pos_m = raw if float(np.max(np.abs(raw))) < 5.0 else raw / 1000.0
+        scratch = mujoco.MjData(self._model)
+        scratch.qpos[:] = self._data.qpos
+        scratch.qvel[:] = 0
+        scratch.ctrl[:] = self._data.ctrl
+        mujoco.mj_forward(self._model, scratch)
+        result = solve_ik(
+            self._model,
+            scratch,
+            self._tcp_site_id,
+            target_pos_m,
+            target_quat=None,
+            arm_joint_ids=self._arm_joint_ids,
+            max_iter=120,
+            pos_tol=5e-3,
+            rot_tol=1.0,
+            seed_attempts=3,
+        )
+        return result.pos_err < 0.03  # 30 mm slack
+
+    def check_self_collision(self, pose: Pose) -> bool:
+        """Sim path is permissive — MuJoCo handles contacts in physics.
+
+        Real-arm drivers should implement this against vendor IK + collision
+        primitives.
+        """
+        return False
 
     def home(self) -> None:
         with self._lock:
