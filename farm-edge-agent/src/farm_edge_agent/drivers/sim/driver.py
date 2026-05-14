@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import math
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -146,6 +147,8 @@ class SimDriver:
         render_width: int = 640,
         camera: str | int = -1,
         grasp_radius_m: float = 0.04,
+        realtime: bool = False,
+        realtime_speed: float = 1.0,
     ) -> None:
         self._mjcf_path = Path(mjcf_path)
         self._scene = scene or Scene(name="empty")
@@ -165,6 +168,8 @@ class SimDriver:
         self._grasped_prop_id: str | None = None
         self._grasp_offset_pos: np.ndarray | None = None
         self._grasp_offset_quat: np.ndarray | None = None
+        self._realtime = bool(realtime)
+        self._realtime_speed = max(0.01, float(realtime_speed))
 
         # Compile model with props injected at construction time
         base_xml = self._mjcf_path.read_text()
@@ -484,9 +489,15 @@ class SimDriver:
         budget = settle_steps if settle_steps is not None else self._max_settle_steps
         last_err = float("inf")
         stable_iters = 0
+        step_dt = float(self._model.opt.timestep) / self._realtime_speed
         for step in range(budget):
+            t_step = time.perf_counter()
             mujoco.mj_step(self._model, self._data)
             self._carry_grasped_prop()
+            if self._realtime:
+                elapsed = time.perf_counter() - t_step
+                if elapsed < step_dt:
+                    time.sleep(step_dt - elapsed)
             cur = np.array([self._data.qpos[i] for i in self._arm_qpos_addrs])
             target = np.array(qpos)
             err = float(np.linalg.norm(cur - target))

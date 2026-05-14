@@ -51,3 +51,8 @@ out/
 runs/
 checkpoints/
 *.mp4
+
+# Playwright session artifacts
+.playwright-mcp/
+*.png
+home*.png run_*.png running_*.png

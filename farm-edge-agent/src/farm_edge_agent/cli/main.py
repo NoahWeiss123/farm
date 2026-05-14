@@ -11,6 +11,7 @@ from farm_edge_agent.cli.commands import (
     login,
     quickstart,
     run,
+    serve,
     start,
     verify,
     version,
@@ -65,6 +66,7 @@ cli.add_command(card.card)
 cli.add_command(doctor.doctor)
 cli.add_command(verify.verify)
 cli.add_command(version.version)
+cli.add_command(serve.serve)
 
 
 def main() -> None:
