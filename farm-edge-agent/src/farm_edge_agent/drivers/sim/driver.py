@@ -39,11 +39,11 @@ DEFAULT_VELOCITY_CAP = 100.0
 GRIPPER_DOWN_QUAT = (0.0, 1.0, 0.0, 0.0)
 
 _ARM_JOINT_NAMES = ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6")
-# Real xArm Gripper has one drive joint; the other 5 finger/knuckle joints
-# mimic it via equality constraints. We only command + read the drive joint.
-_FINGER_JOINTS = ("drive_joint",)
-_GRIPPER_CTRL_OPEN = 0.0
-_GRIPPER_CTRL_CLOSED = 0.69  # ~ closed-on-25mm-block; <0.85 (full close)
+# Simplified parallel-jaw: one slider (left_finger_joint); right finger
+# mimics via an equality constraint. ctrl is the half-stroke in metres.
+_FINGER_JOINTS = ("left_finger_joint",)
+_GRIPPER_CTRL_OPEN = 0.0      # fingers retract — 70 mm jaw gap
+_GRIPPER_CTRL_CLOSED = 0.024  # ~22 mm gap → grips a 25 mm block (1.5 mm compression)
 _TCP_SITE = "tcp"
 
 
@@ -244,65 +244,83 @@ class SimDriver:
         self,
         pose: Pose,
         velocity_cap: float = DEFAULT_VELOCITY_CAP,
-        path_steps: int = 24,
+        path_steps: int = 16,
     ) -> None:
-        """Move TCP to ``pose`` (mm + radians) by linearly interpolating in
-        Cartesian space and solving incremental IK at each waypoint.
+        """Move TCP to ``pose`` (mm + radians).
 
-        IK runs in **axis-only** mode: we ask the chain to align the site's
-        +Z axis with the world-frame vector derived from the pose's RPY
-        (which is ``(0,0,-1)`` for the gripper-down convention), and leave
-        rotation about that axis free. The free yaw is what gives the
-        UF850's wrist the room to escape its joint5 limit at floor-level
-        targets.
+        Strategy:
+          1. Solve a single IK against a **scratch copy** of MjData with the
+             *current* qpos as warmstart and ``seed_attempts=1``. This
+             forces the IK to find a target config near the current basin —
+             no flipping to a far-away config that requires the arm to
+             invert itself.
+          2. Joint-space-interpolate from the live qpos to the IK target
+             across ``path_steps`` substeps, with adequate settling.
+          3. Hold the final ctrl so the gripper can act without arm drift.
+
+        Full-quaternion orientation constraint — keeping joint5 inside its
+        comfort zone is up to the home pose + the workspace bounds.
         """
         target_pos_m = np.array([pose[0], pose[1], pose[2]], dtype=np.float64) / 1000.0
-        rot_mat = _rpy_to_matrix(pose[3], pose[4], pose[5])
-        axis_world = rot_mat @ np.array([0.0, 0.0, 1.0])
+        target_quat = _rpy_to_quat(pose[3], pose[4], pose[5])
         with self._lock:
-            mujoco.mj_forward(self._model, self._data)
-            start_pos = self._data.site_xpos[self._tcp_site_id].copy()
-            total_pos_err = 0.0
-            total_rot_err = 0.0
-            total_iters = 0
-            converged_all = True
+            # Solve IK on a scratch MjData so the live state isn't perturbed.
+            scratch = mujoco.MjData(self._model)
+            scratch.qpos[:] = self._data.qpos
+            scratch.qvel[:] = 0
+            mujoco.mj_forward(self._model, scratch)
+            result = solve_ik(
+                self._model,
+                scratch,
+                self._tcp_site_id,
+                target_pos_m,
+                target_quat=target_quat,
+                arm_joint_ids=self._arm_joint_ids,
+                max_iter=200,
+                pos_tol=2e-3,
+                rot_tol=5e-2,
+                seed_attempts=1,        # stay in the current basin
+                step_scale=0.5,
+                damping=2e-2,
+            )
+            target_qpos = result.qpos.tolist()
+            current_qpos = [float(self._data.qpos[i]) for i in self._arm_qpos_addrs]
+            # Joint-space cosine ease-in/out gives a smoother trajectory
+            # than linear at the same step count — less PD chatter at the
+            # acceleration/deceleration boundaries.
             for s in range(1, path_steps + 1):
                 t = s / path_steps
-                interp_pos = start_pos + (target_pos_m - start_pos) * t
-                # Tight per-step IK — only a small perturbation away
-                result = solve_ik(
-                    self._model,
-                    self._data,
-                    self._tcp_site_id,
-                    interp_pos,
-                    target_quat=None,
-                    arm_joint_ids=self._arm_joint_ids,
-                    max_iter=60,
-                    pos_tol=2e-3,
-                    rot_tol=5e-2,
-                    seed_attempts=2,
-                    step_scale=0.6,
-                    axis_world=axis_world,
-                )
-                total_pos_err = result.pos_err
-                total_rot_err = result.rot_err
-                total_iters += result.iterations
-                if not result.converged:
-                    converged_all = False
-                # Drive arm to interpolated waypoint; short settle per step
+                ease = 0.5 - 0.5 * math.cos(math.pi * t)
+                interp = [
+                    current_qpos[k] + (target_qpos[k] - current_qpos[k]) * ease
+                    for k in range(6)
+                ]
+                # Real UF850 caps each joint at 180°/s; with torque-limited
+                # actuators a 90° move takes ~0.5 s wall. settle_steps=200
+                # × 2 ms = 0.4 s sim per substep is enough for the arm to
+                # actually arrive.
                 self._drive_arm_to(
-                    result.qpos.tolist(),
+                    interp,
                     velocity_cap=velocity_cap,
-                    settle_steps=max(8, self._sim_rate // 2),
+                    settle_steps=200,
+                    hold_after=False,
                 )
+            # Extra settle at the final config so subsequent gripper
+            # commands act on a stable arm.
+            self._drive_arm_to(
+                target_qpos,
+                velocity_cap=velocity_cap,
+                settle_steps=400,
+                hold_after=True,
+            )
         self._emit(
             "move_to",
             {
                 "target_pose": list(pose),
-                "ik_pos_err_m": total_pos_err,
-                "ik_rot_err_rad": total_rot_err,
-                "ik_iterations": total_iters,
-                "ik_converged": converged_all,
+                "ik_pos_err_m": result.pos_err,
+                "ik_rot_err_rad": result.rot_err,
+                "ik_iterations": result.iterations,
+                "ik_converged": result.converged,
             },
         )
 
@@ -484,21 +502,21 @@ class SimDriver:
         qpos: list[float],
         velocity_cap: float,
         settle_steps: int | None = None,
+        hold_after: bool = True,
     ) -> None:
-        """Drive arm to target joints with PD via actuators, stepping the sim.
+        """Drive arm to target joints with PD, stepping the sim.
 
-        After settling, ctrl is reset to the actual current qpos so the PD
-        holds whatever pose the arm physically reached, rather than fighting
-        forever against an unreachable IK target (which causes drift during
-        subsequent gripper commands). If a prop is currently grasped, its
-        free-joint qpos is rewritten each step to track the TCP — a sim
-        shortcut around fragile contact-friction grasping.
+        ``hold_after`` controls what happens at the end of the settle:
+          * True  → reset ctrl to the actual settled qpos. Use this at the
+            end of a move so gripper actions don't fight an unreachable
+            commanded target.
+          * False → leave ctrl at the commanded ``qpos`` so a subsequent
+            interpolation step continues from the right reference. Use
+            this in joint-space path tracking.
         """
         for k, aid in enumerate(self._actuator_ids["arm"]):
             self._data.ctrl[aid] = float(qpos[k])
         budget = settle_steps if settle_steps is not None else self._max_settle_steps
-        last_err = float("inf")
-        stable_iters = 0
         step_dt = float(self._model.opt.timestep) / self._realtime_speed
         for step in range(budget):
             t_step = time.perf_counter()
@@ -508,22 +526,15 @@ class SimDriver:
                 elapsed = time.perf_counter() - t_step
                 if elapsed < step_dt:
                     time.sleep(step_dt - elapsed)
-            cur = np.array([self._data.qpos[i] for i in self._arm_qpos_addrs])
-            target = np.array(qpos)
-            err = float(np.linalg.norm(cur - target))
             if step % self._sim_rate == 0:
                 self._emit_joint_state()
-            if err < 1e-3:
+            cur = np.array([self._data.qpos[i] for i in self._arm_qpos_addrs])
+            err = float(np.linalg.norm(cur - np.array(qpos)))
+            if err < 5e-4:
                 break
-            if abs(last_err - err) < 1e-6:
-                stable_iters += 1
-                if stable_iters > 20:
-                    break
-            else:
-                stable_iters = 0
-            last_err = err
-        for k, aid in enumerate(self._actuator_ids["arm"]):
-            self._data.ctrl[aid] = float(self._data.qpos[self._arm_qpos_addrs[k]])
+        if hold_after:
+            for k, aid in enumerate(self._actuator_ids["arm"]):
+                self._data.ctrl[aid] = float(self._data.qpos[self._arm_qpos_addrs[k]])
         self._emit_joint_state()
 
     def _try_grasp_closest_prop(self) -> str | None:

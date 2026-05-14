@@ -40,26 +40,45 @@ function ArmRobot({ live }: { live: React.MutableRefObject<LiveState> }) {
 
   useEffect(() => {
     const loader = new URDFLoader();
-    // urdf-loader resolves mesh paths relative to the URDF; tell it where.
     loader.workingPath = "/urdf/uf850/";
     loader.parseCollision = false;
     loader.parseVisual = true;
+    // React Strict Mode fires the effect mount→unmount→mount in dev. The
+    // URDF load is async — without this `cancelled` flag the first load
+    // finishes after the cleanup ran and orphans a duplicate robot in the
+    // scene (the "two arms" bug).
+    let cancelled = false;
+    let myRobot: URDFRobot | null = null;
+    const dispose = (r: URDFRobot | null) => {
+      if (!r) return;
+      scene.remove(r);
+      r.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (mesh.geometry) mesh.geometry.dispose?.();
+        const mat = mesh.material as THREE.Material | THREE.Material[];
+        if (Array.isArray(mat)) mat.forEach((m) => m.dispose?.());
+        else mat?.dispose?.();
+      });
+    };
     loader.load(URDF_PATH, (robot: URDFRobot) => {
-      robot.rotation.x = -Math.PI / 2; // MuJoCo Z-up → three.js Y-up
+      if (cancelled) {
+        dispose(robot);
+        return;
+      }
+      robot.rotation.x = -Math.PI / 2;
       robot.scale.setScalar(1);
+      // If a previous robot from an earlier effect run is still in the
+      // scene, evict it before we add ours.
+      dispose(robotRef.current);
       scene.add(robot);
+      myRobot = robot;
       robotRef.current = robot;
       setLoaded(true);
     });
     return () => {
-      const r = robotRef.current;
-      if (r) {
-        scene.remove(r);
-        r.traverse((o) => {
-          if ((o as THREE.Mesh).geometry)
-            (o as THREE.Mesh).geometry.dispose?.();
-        });
-      }
+      cancelled = true;
+      dispose(myRobot);
+      if (robotRef.current === myRobot) robotRef.current = null;
     };
   }, [scene]);
 
