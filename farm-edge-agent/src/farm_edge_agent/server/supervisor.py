@@ -27,8 +27,9 @@ from farm_edge_agent.run_loop import RunLoop, RunSummary
 from farm_edge_agent.run_record.writer import DEFAULT_RUNS_ROOT
 from farm_edge_agent.safety.factory import make_sim_enforcer
 from farm_edge_agent.server.bus import EventBus
-from farm_edge_agent.skills import PickPlaceExecutor, StubPlanner
-from farm_edge_agent.skills.executor import HardcodedWorldState
+from farm_edge_agent.skills import StubPlanner
+from farm_edge_agent.skills.gpt_planner import GptPlanner
+from farm_edge_agent.skills.library import LiveSimWorldState, SkillExecutor
 
 
 def _runs_root() -> Path:
@@ -199,6 +200,40 @@ class RunSupervisor:
             "props": [dict(p) for p in self._scene_spec.props],
         }
 
+    def _planner_context(self) -> dict[str, Any]:
+        """Snapshot of scene + live prop positions for the GPT planner."""
+        snap = self._driver.snapshot()
+        live_props = []
+        for p in self._scene_spec.props:
+            pid = p["id"]
+            entry = snap.get("props", {}).get(pid)
+            live_props.append(
+                {
+                    "id": pid,
+                    "shape": p["shape"],
+                    "size_m": list(p["size"]),
+                    "pos_m": (
+                        list(entry["pos"]) if entry else list(p["pos"])
+                    ),
+                    "rgba": list(p.get("rgba", [0.8, 0.8, 0.8, 1.0])),
+                }
+            )
+        return {
+            "scene_name": self._scene_spec.name,
+            "workspace_envelope_m": {
+                "x": [-0.40, 0.40],
+                "y": [-1.05, -0.10],
+                "z": [0.265, 0.80],
+            },
+            "props": live_props,
+            "arm": {
+                "model": "ufactory_850",
+                "gripper": "parallel_jaw",
+                "tcp_pose_m": list(snap["tcp_pos_m"]),
+                "gripper_state": snap["gripper"],
+            },
+        }
+
     # ── worker thread ────────────────────────────────────────────────────────
 
     def _run_worker(self) -> None:
@@ -211,11 +246,15 @@ class RunSupervisor:
         status.state = "running"
         status.started_at = time.time()
         self._bus.publish("runs", {"type": "run_state", "data": status.__dict__.copy()})
-        world = HardcodedWorldState(
-            props={p["id"]: tuple(p["pos"]) for p in self._scene_spec.props}
-        )
-        planner = StubPlanner()
-        executor = PickPlaceExecutor(world)
+        world = LiveSimWorldState(self._driver)
+        # GPT decomposer with on-disk plan cache (Layer-1 skill compiler).
+        # Falls back to the english parser on OPENAI_API_KEY-less runs.
+        planner: Any
+        if os.environ.get("OPENAI_API_KEY"):
+            planner = GptPlanner(scene_provider=self._planner_context)
+        else:
+            planner = StubPlanner()
+        executor = SkillExecutor(world)
         safety = make_sim_enforcer(self._driver)
         loop = RunLoop(
             driver=self._driver,
