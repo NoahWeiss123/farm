@@ -87,7 +87,7 @@ describe("handlePlan", () => {
 
   it("returns 502 when the router throws", async () => {
     const router: LLMRouter = async () => {
-      throw new Error("anthropic 503");
+      throw new Error("openai 503");
     };
     const res = await handlePlan(
       { task: "pick", capability_cards: [PI05] },
@@ -152,6 +152,65 @@ describe("handlePlan", () => {
     const out = res.body as PlanResponseBody;
     expect(out.plan.nodes[0]!.chosen_backend).toBe(CLASSICAL_BACKEND_ID);
     expect(out.plan.nodes[0]!.fallback_chain).toEqual([]);
+  });
+});
+
+describe("default OpenAI router", () => {
+  it("uses fetch with bearer auth and chat completions URL when no gateway is bound", async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const fakeFetch = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: JSON.stringify({ plan_id: "p", nodes: [] }) } }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fakeFetch;
+    try {
+      const { defaultRouterForTests } = await import("../src/planner");
+      const out = await defaultRouterForTests("hello", { OPENAI_API_KEY: "sk-test" });
+      expect(typeof out.raw).toBe("string");
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.url).toBe("https://api.openai.com/v1/chat/completions");
+      const headers = calls[0]!.init.headers as Record<string, string>;
+      expect(headers.authorization).toBe("Bearer sk-test");
+      const body = JSON.parse(calls[0]!.init.body as string);
+      expect(body.model).toBe("gpt-4o");
+      expect(body.response_format).toEqual({ type: "json_object" });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("throws when no api key is configured", async () => {
+    const { defaultRouterForTests } = await import("../src/planner");
+    await expect(defaultRouterForTests("p", {})).rejects.toThrow(/OPENAI_API_KEY/);
+  });
+
+  it("honors OPENAI_MODEL override", async () => {
+    const calls: { init: RequestInit }[] = [];
+    const fakeFetch = (async (_url: string, init: RequestInit) => {
+      calls.push({ init });
+      return new Response(JSON.stringify({ choices: [{ message: { content: "{}" } }] }), {
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fakeFetch;
+    try {
+      const { defaultRouterForTests } = await import("../src/planner");
+      await defaultRouterForTests("p", {
+        OPENAI_API_KEY: "sk-test",
+        OPENAI_MODEL: "gpt-5",
+      });
+      const body = JSON.parse(calls[0]!.init.body as string);
+      expect(body.model).toBe("gpt-5");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 

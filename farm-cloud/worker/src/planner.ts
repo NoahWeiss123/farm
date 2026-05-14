@@ -1,10 +1,10 @@
 // POST /v1/plans handler. Builds a router prompt from capability cards, calls
-// Claude Sonnet 4.6 via the AI Gateway binding (falling back to a direct
-// Anthropic call when the binding is missing), parses the response into a
-// PlanDAG, and decorates each node with a default fallback chain.
+// OpenAI Chat Completions (via the AI Gateway binding when available, falling
+// back to api.openai.com directly), parses the response into a PlanDAG, and
+// decorates each node with a default fallback chain.
 //
-// The LLM call is funnelled through `routeWithLLM`, a single interface the
-// test suite swaps for a fixture so no real network calls happen in CI.
+// The LLM call is funnelled through `LLMRouter`, a single interface the test
+// suite swaps for a fixture so no real network calls happen in CI.
 
 import { Hono } from "hono";
 import {
@@ -22,10 +22,11 @@ import {
   CLASSICAL_BACKEND_ID,
 } from "./router/fallback_chain";
 
-export const ROUTER_MODEL = "claude-sonnet-4-6";
+export const ROUTER_MODEL_DEFAULT = "gpt-4o";
 
 export interface PlannerEnv {
-  ANTHROPIC_API_KEY?: string;
+  OPENAI_API_KEY?: string;
+  OPENAI_MODEL?: string;
   "ai-gateway"?: Fetcher;
 }
 
@@ -135,20 +136,31 @@ async function defaultRouter(
   prompt: string,
   env: PlannerEnv,
 ): Promise<RouterResponse> {
+  if (!env.OPENAI_API_KEY) {
+    throw new Error("router LLM call failed: OPENAI_API_KEY not configured");
+  }
+  const model = env.OPENAI_MODEL || ROUTER_MODEL_DEFAULT;
   const payload = {
-    model: ROUTER_MODEL,
+    model,
     max_tokens: 1024,
-    messages: [{ role: "user", content: prompt }],
+    response_format: { type: "json_object" as const },
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a robot task planner. Return only a JSON object matching the PlanDAG schema described in the user message — no prose, no markdown fences.",
+      },
+      { role: "user", content: prompt },
+    ],
   };
   const headers: Record<string, string> = {
     "content-type": "application/json",
-    "anthropic-version": "2023-06-01",
+    authorization: `Bearer ${env.OPENAI_API_KEY}`,
   };
-  if (env.ANTHROPIC_API_KEY) headers["x-api-key"] = env.ANTHROPIC_API_KEY;
   const gateway = env["ai-gateway"];
   const url = gateway
-    ? "https://gateway/anthropic/v1/messages"
-    : "https://api.anthropic.com/v1/messages";
+    ? "https://gateway/openai/v1/chat/completions"
+    : "https://api.openai.com/v1/chat/completions";
   const init: RequestInit = {
     method: "POST",
     headers,
@@ -161,9 +173,9 @@ async function defaultRouter(
     throw new Error(`router LLM call failed: ${res.status}`);
   }
   const data = (await res.json()) as {
-    content?: { text?: string }[];
+    choices?: { message?: { content?: string } }[];
   };
-  const text = data.content?.[0]?.text ?? "";
+  const text = data.choices?.[0]?.message?.content ?? "";
   return { raw: text };
 }
 
@@ -220,6 +232,10 @@ export async function handlePlan(
     },
   };
 }
+
+// Exported for tests so the network-side router can be exercised behind a fake
+// global fetch without going through the handler.
+export const defaultRouterForTests: LLMRouter = defaultRouter;
 
 export function plannerApp(opts: HandlerOptions = {}): Hono<{
   Bindings: PlannerEnv;
