@@ -86,7 +86,9 @@
   </link>
   <joint name="joint2" type="revolute">
     <parent link="link1"/><child link="link2"/>
-    <origin xyz="0 0 0" rpy="1.5708 -1.5708 0"/>
+    <!-- rpy converted from MJCF intrinsic-XYZ (1.5708, -1.5708, 0) to URDF
+         extrinsic-XYZ so both renderers produce the same orientation. -->
+    <origin xyz="0 0 0" rpy="1.5708 0 -1.5708"/>
     <axis xyz="0 0 1"/>
     <limit lower="-2.3038346" upper="2.3038346" effort="200" velocity="3.14"/>
     <dynamics damping="12.5" friction="12.1"/>
@@ -105,7 +107,9 @@
   </link>
   <joint name="joint3" type="revolute">
     <parent link="link2"/><child link="link3"/>
-    <origin xyz="0.39 0 0" rpy="-3.1416 0 -1.5708"/>
+    <!-- rpy converted from MJCF intrinsic-XYZ (-3.1416, 0, -1.5708) to URDF
+         extrinsic-XYZ. -->
+    <origin xyz="0.39 0 0" rpy="-3.1416 0 1.5708"/>
     <axis xyz="0 0 1"/>
     <limit lower="-4.2236968" upper="0.061087" effort="90" velocity="3.14"/>
     <dynamics damping="4.0" friction="5.5"/>
@@ -168,18 +172,19 @@
     <dynamics damping="3.4" friction="1.1"/>
   </joint>
 
-  <!-- Real xArm Gripper — base + 4-bar linkage with mimic joints. -->
+  <!-- xArm Gripper visual + simplified 2-slider physics matching MJCF.
+       The decorative knuckle meshes are fixed at the open configuration
+       so the gripper LOOKS right while only the two fingers articulate. -->
   <link name="xarm_gripper_base_link">
-    <visual>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry><mesh filename="meshes/gripper/base_link.stl"/></geometry>
-      <material name="white"/>
-    </visual>
+    <visual><origin xyz="0 0 0"/><geometry><mesh filename="meshes/gripper/base_link.stl"/></geometry><material name="white"/></visual>
+    <visual><origin xyz="0 0.035 0.059098"/><geometry><mesh filename="meshes/gripper/left_outer_knuckle.stl"/></geometry><material name="silver"/></visual>
+    <visual><origin xyz="0 0.02 0.074098"/><geometry><mesh filename="meshes/gripper/left_inner_knuckle.stl"/></geometry><material name="silver"/></visual>
+    <visual><origin xyz="0 -0.035 0.059098"/><geometry><mesh filename="meshes/gripper/right_outer_knuckle.stl"/></geometry><material name="silver"/></visual>
+    <visual><origin xyz="0 -0.02 0.074098"/><geometry><mesh filename="meshes/gripper/right_inner_knuckle.stl"/></geometry><material name="silver"/></visual>
     <inertial>
       <origin xyz="-0.00065489 -0.0018497 0.048028"/>
       <mass value="0.54156"/>
-      <inertia ixx="0.00047106" ixy="3.9292e-07" ixz="2.6537e-06"
-               iyy="0.00033072" iyz="-1.0975e-05" izz="0.00025642"/>
+      <inertia ixx="0.00047106" ixy="0" ixz="0" iyy="0.00033072" iyz="0" izz="0.00025642"/>
     </inertial>
   </link>
   <joint name="xarm_gripper_fix" type="fixed">
@@ -187,75 +192,27 @@
     <origin xyz="0 0 0"/>
   </joint>
 
-  <link name="left_outer_knuckle">
-    <visual><origin xyz="0 0 0"/><geometry><mesh filename="meshes/gripper/left_outer_knuckle.stl"/></geometry><material name="silver"/></visual>
-    <inertial><origin xyz="0 0.021559 0.015181"/><mass value="0.033618"/><inertia ixx="1.9111e-05" ixy="0" ixz="0" iyy="6.6256e-06" iyz="0" izz="1.3185e-05"/></inertial>
-  </link>
-  <joint name="drive_joint" type="revolute">
-    <parent link="xarm_gripper_base_link"/><child link="left_outer_knuckle"/>
-    <origin xyz="0 0.035 0.059098" rpy="0 0 0"/>
-    <axis xyz="1 0 0"/>
-    <limit lower="0" upper="0.85" effort="50" velocity="2"/>
-  </joint>
-
   <link name="left_finger">
     <visual><origin xyz="0 0 0"/><geometry><mesh filename="meshes/gripper/left_finger.stl"/></geometry><material name="black"/></visual>
-    <inertial><origin xyz="0 -0.016413 0.029258"/><mass value="0.048304"/><inertia ixx="1.7493e-05" ixy="0" ixz="0" iyy="1.7225e-05" iyz="0" izz="5.1466e-06"/></inertial>
+    <inertial><origin xyz="0 0 0.03"/><mass value="0.05"/><inertia ixx="2e-5" ixy="0" ixz="0" iyy="2e-5" iyz="0" izz="1e-5"/></inertial>
   </link>
-  <joint name="left_finger_joint" type="revolute">
-    <parent link="left_outer_knuckle"/><child link="left_finger"/>
-    <origin xyz="0 0.035465 0.042039" rpy="0 0 0"/>
-    <axis xyz="-1 0 0"/>
-    <limit lower="0" upper="0.85" effort="50" velocity="2"/>
-    <mimic joint="drive_joint" multiplier="1" offset="0"/>
-  </joint>
-
-  <link name="left_inner_knuckle">
-    <visual><origin xyz="0 0 0"/><geometry><mesh filename="meshes/gripper/left_inner_knuckle.stl"/></geometry><material name="silver"/></visual>
-    <inertial><origin xyz="0 0.022047 0.026133"/><mass value="0.023013"/><inertia ixx="6.095e-06" ixy="0" ixz="0" iyy="6.020e-06" iyz="0" izz="5.079e-06"/></inertial>
-  </link>
-  <joint name="left_inner_knuckle_joint" type="revolute">
-    <parent link="xarm_gripper_base_link"/><child link="left_inner_knuckle"/>
-    <origin xyz="0 0.02 0.074098" rpy="0 0 0"/>
-    <axis xyz="1 0 0"/>
-    <limit lower="0" upper="0.85" effort="50" velocity="2"/>
-    <mimic joint="drive_joint" multiplier="1" offset="0"/>
-  </joint>
-
-  <link name="right_outer_knuckle">
-    <visual><origin xyz="0 0 0"/><geometry><mesh filename="meshes/gripper/right_outer_knuckle.stl"/></geometry><material name="silver"/></visual>
-    <inertial><origin xyz="0 -0.021559 0.015181"/><mass value="0.033618"/><inertia ixx="1.9111e-05" ixy="0" ixz="0" iyy="6.6256e-06" iyz="0" izz="1.3185e-05"/></inertial>
-  </link>
-  <joint name="right_outer_knuckle_joint" type="revolute">
-    <parent link="xarm_gripper_base_link"/><child link="right_outer_knuckle"/>
-    <origin xyz="0 -0.035 0.059098" rpy="0 0 0"/>
-    <axis xyz="-1 0 0"/>
-    <limit lower="0" upper="0.85" effort="50" velocity="2"/>
-    <mimic joint="drive_joint" multiplier="1" offset="0"/>
+  <joint name="left_finger_joint" type="prismatic">
+    <parent link="xarm_gripper_base_link"/><child link="left_finger"/>
+    <origin xyz="0 0.035 0.100" rpy="0 0 0"/>
+    <axis xyz="0 -1 0"/>
+    <limit lower="0" upper="0.035" effort="50" velocity="0.5"/>
   </joint>
 
   <link name="right_finger">
     <visual><origin xyz="0 0 0"/><geometry><mesh filename="meshes/gripper/right_finger.stl"/></geometry><material name="black"/></visual>
-    <inertial><origin xyz="0 0.016413 0.029258"/><mass value="0.048304"/><inertia ixx="1.7493e-05" ixy="0" ixz="0" iyy="1.7225e-05" iyz="0" izz="5.1466e-06"/></inertial>
+    <inertial><origin xyz="0 0 0.03"/><mass value="0.05"/><inertia ixx="2e-5" ixy="0" ixz="0" iyy="2e-5" iyz="0" izz="1e-5"/></inertial>
   </link>
-  <joint name="right_finger_joint" type="revolute">
-    <parent link="right_outer_knuckle"/><child link="right_finger"/>
-    <origin xyz="0 -0.035465 0.042039" rpy="0 0 0"/>
-    <axis xyz="1 0 0"/>
-    <limit lower="0" upper="0.85" effort="50" velocity="2"/>
-    <mimic joint="drive_joint" multiplier="1" offset="0"/>
-  </joint>
-
-  <link name="right_inner_knuckle">
-    <visual><origin xyz="0 0 0"/><geometry><mesh filename="meshes/gripper/right_inner_knuckle.stl"/></geometry><material name="silver"/></visual>
-    <inertial><origin xyz="0 -0.022047 0.026133"/><mass value="0.023013"/><inertia ixx="6.095e-06" ixy="0" ixz="0" iyy="6.020e-06" iyz="0" izz="5.079e-06"/></inertial>
-  </link>
-  <joint name="right_inner_knuckle_joint" type="revolute">
-    <parent link="xarm_gripper_base_link"/><child link="right_inner_knuckle"/>
-    <origin xyz="0 -0.02 0.074098" rpy="0 0 0"/>
-    <axis xyz="-1 0 0"/>
-    <limit lower="0" upper="0.85" effort="50" velocity="2"/>
-    <mimic joint="drive_joint" multiplier="1" offset="0"/>
+  <joint name="right_finger_joint" type="prismatic">
+    <parent link="xarm_gripper_base_link"/><child link="right_finger"/>
+    <origin xyz="0 -0.035 0.100" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="0" upper="0.035" effort="50" velocity="0.5"/>
+    <mimic joint="left_finger_joint" multiplier="1" offset="0"/>
   </joint>
 
   <!-- TCP at the grasp center, 172 mm from the wrist flange. -->

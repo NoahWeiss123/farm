@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Any
 
 from farm_edge_agent.drivers.sim import Prop, Scene, SimDriver
+from farm_edge_agent.policies import Pi05Policy
+from farm_edge_agent.policies.pi05 import run_pi05_loop
 from farm_edge_agent.run_loop import RunLoop, RunSummary
 from farm_edge_agent.run_record.writer import DEFAULT_RUNS_ROOT
 from farm_edge_agent.safety.factory import make_sim_enforcer
@@ -245,9 +247,17 @@ class RunSupervisor:
         status.state = "running"
         status.started_at = time.time()
         self._bus.publish("runs", {"type": "run_state", "data": status.__dict__.copy()})
+        # Pick a policy backend. π0.5 runs on Modal (24 GB+ GPU); when its
+        # endpoint isn't configured, fall back to the GPT decomposer +
+        # hand-coded skill library. ``FARM_POLICY=pi05`` forces π0.5 and
+        # fails loudly if the endpoint is unset.
+        backend = os.environ.get("FARM_POLICY", "auto").lower()
+        pi05 = Pi05Policy()
+        use_pi05 = backend == "pi05" or (backend == "auto" and pi05.configured())
+        if use_pi05:
+            self._execute_pi05(pending, pi05)
+            return
         world = LiveSimWorldState(self._driver)
-        # GPT decomposer with on-disk plan cache (Layer-1 skill compiler).
-        # Falls back to the english parser on OPENAI_API_KEY-less runs.
         planner: Any
         if os.environ.get("OPENAI_API_KEY"):
             planner = GptPlanner(scene_provider=self._planner_context)
@@ -276,6 +286,110 @@ class RunSupervisor:
             status.error = f"{type(e).__name__}: {e}"
         status.completed_at = time.time()
         self._bus.publish("runs", {"type": "run_state", "data": status.__dict__.copy()})
+
+    def _execute_pi05(self, pending: _PendingRun, policy: Pi05Policy) -> None:
+        """Run a closed-loop π0.5 inference session on the sim driver.
+
+        Writes a run record with one ``action_chunk`` event per executed
+        action so the dashboard timeline + 3D viewer light up the same way
+        as a GPT-planned run.
+        """
+        import uuid
+        from farm_edge_agent.run_record.writer import RunRecordWriter
+
+        status = pending.status
+        rid = pending.run_id
+        start = time.time()
+        record = RunRecordWriter(rid, root=self._runs_root)
+        action_idx = 0
+        try:
+            self._record_and_publish(record, rid, {
+                "ts": time.time(), "type": "run_started",
+                "data": {
+                    "run_id": rid, "task": pending.task, "workspace": "local",
+                    "agent_version": "0.0.1", "protocol_version": "1.2.0",
+                    "calibration_hash": "unknown",
+                    "config_snapshot": {"policy": "pi05",
+                                        "endpoint": policy.endpoint},
+                },
+            })
+            self._record_and_publish(record, rid, {
+                "ts": time.time(), "type": "plan_emitted",
+                "data": {
+                    "plan_id": f"plan_pi05_{uuid.uuid4().hex[:8]}",
+                    "nodes": [{"id": "n1", "instruction": pending.task,
+                               "backend": "pi05"}],
+                    "router_reason": (
+                        "π0.5 VLA model — observation: dual-camera RGB + "
+                        "7-DoF joint state + gripper position; action: "
+                        "joint deltas + gripper target at 20 Hz."
+                    ),
+                },
+            })
+            self._record_and_publish(record, rid, {
+                "ts": time.time(), "type": "node_started",
+                "data": {"node_id": "n1", "backend": "pi05"},
+            })
+
+            def on_step(ev: dict[str, Any]) -> None:
+                nonlocal action_idx
+                if ev.get("type") == "pi05_infer":
+                    self._record_and_publish(record, rid, {
+                        "ts": time.time(), "type": "critic_note",
+                        "data": {
+                            "node_id": "n1",
+                            "text": (
+                                f"π0.5 chunk: horizon={ev['chunk_len']}, "
+                                f"latency={ev['latency_s']*1000:.0f}ms"
+                            ),
+                        },
+                    })
+
+            run_pi05_loop(
+                self._driver, policy, pending.task,
+                max_steps=int(os.environ.get("FARM_PI05_MAX_STEPS", "300")),
+                chunks_per_call=int(os.environ.get("FARM_PI05_CHUNK", "10")),
+                on_step=on_step,
+            )
+
+            self._record_and_publish(record, rid, {
+                "ts": time.time(), "type": "node_completed",
+                "data": {"node_id": "n1", "outcome": "succeeded"},
+            })
+            status.outcome = "succeeded"
+            status.state = "succeeded"
+            status.plan_id = "plan_pi05"
+            self._record_and_publish(record, rid, {
+                "ts": time.time(), "type": "run_completed",
+                "data": {"run_id": rid, "outcome": "succeeded",
+                         "wall_clock_s": time.time() - start},
+            })
+        except Exception as e:
+            status.state = "failed"
+            status.outcome = "failed"
+            status.error = f"{type(e).__name__}: {e}"
+            try:
+                self._record_and_publish(record, rid, {
+                    "ts": time.time(), "type": "run_completed",
+                    "data": {"run_id": rid, "outcome": "failed",
+                             "wall_clock_s": time.time() - start},
+                })
+            except Exception:
+                pass
+        finally:
+            record.close()
+            status.completed_at = time.time()
+            self._bus.publish("runs", {"type": "run_state",
+                                       "data": status.__dict__.copy()})
+
+    def _record_and_publish(
+        self, rec: Any, run_id: str, event: dict[str, Any]
+    ) -> None:
+        rec.write(event)
+        ev = dict(event)
+        ev["run_id"] = run_id
+        self._bus.publish(f"run:{run_id}", ev)
+        self._bus.publish("runs:all", ev)
 
     def _on_run_event(self, run_id: str, event: dict[str, Any]) -> None:
         # Re-stamp with run_id so SSE clients can demux a unified stream.

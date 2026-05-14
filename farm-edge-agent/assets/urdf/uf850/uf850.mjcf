@@ -1,4 +1,9 @@
 <mujoco model="uf850">
+  <!-- Default eulerseq="xyz" = intrinsic XYZ. The arm link offsets in
+       this file were authored with intrinsic interpretation; the URDF
+       sibling has rpy values rewritten via Python (compute the same
+       matrix, decompose as extrinsic XYZ) so both files render the
+       same robot. -->
   <compiler angle="radian" meshdir="meshes/visual" autolimits="true"/>
 
   <option timestep="0.002" iterations="50" solver="Newton" gravity="0 0 -9.81">
@@ -59,6 +64,13 @@
     <light directional="true" diffuse="0.3 0.3 0.3" pos="-1 -1 2" dir="1 1 -1"/>
     <geom name="floor" type="plane" size="2 2 0.1" material="mat_grid"
           friction="1.0 0.1 0.01" contype="1" conaffinity="2"/>
+
+    <!-- Exterior camera for the π0.5 observation pipeline. Mounted on
+         a stationary body so it can use ``mode="targetbody"`` to keep
+         the arm base (and thus the workspace) framed. -->
+    <body name="exterior_cam_mount" pos="0.7 -0.20 0.9">
+      <camera name="exterior" mode="targetbody" target="link_base" fovy="55"/>
+    </body>
 
     <!-- Robot mounting pedestal. Real UF850 deployments bolt the arm to a
          stand or mounting plate; the official mounting kit is ~200 mm tall
@@ -155,6 +167,15 @@
 
                     <!-- TCP at the grasp center, 172 mm from the flange. -->
                     <site name="tcp" pos="0 0 0.172" size="0.005" rgba="1 0 0 0.6"/>
+
+                    <!-- Wrist camera mounted to the side of the gripper
+                         base, ``mode="targetbody"`` pointing at the TCP.
+                         When the gripper moves, the camera tracks the
+                         grasp center automatically — what π0.5 expects
+                         from a real DROID wrist camera. -->
+                    <body name="wrist_cam_mount" pos="0.08 0 0.05">
+                      <camera name="wrist" mode="targetbody" target="xarm_gripper_base_link" fovy="60"/>
+                    </body>
                   </body>
                 </body>
               </body>

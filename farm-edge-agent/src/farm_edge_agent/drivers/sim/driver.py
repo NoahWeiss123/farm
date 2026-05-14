@@ -223,7 +223,7 @@ class SimDriver:
         self._set_gripper_targets(open_=True)
         mujoco.mj_forward(self._model, self._data)
 
-        self._renderer: mujoco.Renderer | None = None
+        self._renderers: dict[tuple[int, int], mujoco.Renderer] = {}
 
     # ── connection lifecycle ─────────────────────────────────────────────────
 
@@ -233,9 +233,9 @@ class SimDriver:
 
     def disconnect(self) -> None:
         self._connected = False
-        if self._renderer is not None:
-            self._renderer.close()
-            self._renderer = None
+        for r in self._renderers.values():
+            r.close()
+        self._renderers.clear()
         self._emit("disconnected", {})
 
     # ── motion primitives ────────────────────────────────────────────────────
@@ -437,19 +437,113 @@ class SimDriver:
 
     # ── observation ──────────────────────────────────────────────────────────
 
-    def render_rgb(self, camera: str | int | None = None) -> np.ndarray:
-        """Render an RGB observation. Lazy-creates a Renderer per driver."""
-        if self._renderer is None:
-            self._renderer = mujoco.Renderer(
-                self._model, height=self._render_height, width=self._render_width
-            )
+    def render_rgb(
+        self,
+        camera: str | int | None = None,
+        height: int | None = None,
+        width: int | None = None,
+    ) -> np.ndarray:
+        """Render an RGB observation. Lazy-caches renderers keyed by size."""
+        h = height if height is not None else self._render_height
+        w = width if width is not None else self._render_width
+        key = (h, w)
+        renderer = self._renderers.get(key)
+        if renderer is None:
+            renderer = mujoco.Renderer(self._model, height=h, width=w)
+            self._renderers[key] = renderer
         with self._lock:
             mujoco.mj_forward(self._model, self._data)
-            self._renderer.update_scene(
+            renderer.update_scene(
                 self._data, camera=camera if camera is not None else self._camera
             )
-            img = self._renderer.render()
+            img = renderer.render()
         return img
+
+    def pi05_observation(
+        self,
+        image_size: int = 224,
+    ) -> dict:
+        """Render the observation π0.5 (and openpi DROID policies in general)
+        expects:
+
+            {
+              "observation/exterior_image_1_left": uint8 (H, W, 3),
+              "observation/wrist_image_left":      uint8 (H, W, 3),
+              "observation/joint_position":        float (7,),
+              "observation/gripper_position":      float (1,),
+            }
+
+        We pad our 6-DoF joints with a trailing zero to fit the 7-vector
+        the model was trained on, and report ``gripper_position`` as 0 (open)
+        → 1 (closed) by mapping the live drive-joint qpos.
+        """
+        ext = self.render_rgb(camera="exterior", height=image_size, width=image_size)
+        wrist = self.render_rgb(camera="wrist", height=image_size, width=image_size)
+        with self._lock:
+            joints = [float(self._data.qpos[i]) for i in self._arm_qpos_addrs]
+            # 6 -> 7 padding so the model input layer matches DROID's 7-DoF.
+            joint7 = joints + [0.0]
+            # Normalize finger position to [0, 1]:
+            finger = float(self._data.qpos[self._finger_qpos_addrs[0]])
+            grip01 = max(0.0, min(1.0, finger / 0.035))
+        return {
+            "observation/exterior_image_1_left": ext,
+            "observation/wrist_image_left": wrist,
+            "observation/joint_position": np.asarray(joint7, dtype=np.float32),
+            "observation/gripper_position": np.asarray([grip01], dtype=np.float32),
+        }
+
+    def apply_joint_action(
+        self,
+        action: list[float] | np.ndarray,
+        *,
+        is_delta: bool = True,
+        gripper_target: float | None = None,
+        steps: int | None = None,
+    ) -> None:
+        """Apply a single VLA action step. ``action`` is 7 joint values
+        (delta-radians by default, or absolute if ``is_delta=False``).
+        The 7th element is dropped (we have 6 arm DoFs). ``gripper_target``,
+        when given, is the open(0)/closed(1) gripper command from the
+        model's 8th action dim.
+
+        Steps the sim for ``steps`` mj_step calls (default = sim_rate, i.e.
+        the model's control period at sim_rate × timestep wall time).
+        """
+        action = np.asarray(action, dtype=np.float64).reshape(-1)
+        if action.shape[0] < 6:
+            raise ValueError(f"action must have >=6 dims, got {action.shape[0]}")
+        with self._lock:
+            current_qpos = np.array(
+                [self._data.qpos[i] for i in self._arm_qpos_addrs]
+            )
+            if is_delta:
+                target = current_qpos + action[:6]
+            else:
+                target = action[:6].copy()
+            # Clamp to joint limits with a small safety margin.
+            for k, j_id in enumerate(self._arm_joint_ids):
+                lo, hi = self._model.jnt_range[j_id]
+                target[k] = max(lo + 1e-3, min(hi - 1e-3, float(target[k])))
+            for k, aid in enumerate(self._actuator_ids["arm"]):
+                self._data.ctrl[aid] = float(target[k])
+            if gripper_target is not None:
+                g = max(0.0, min(1.0, float(gripper_target)))
+                self._data.ctrl[self._actuator_ids["gripper"]] = (
+                    _GRIPPER_CTRL_OPEN
+                    + (_GRIPPER_CTRL_CLOSED - _GRIPPER_CTRL_OPEN) * g
+                )
+            budget = steps if steps is not None else self._sim_rate
+            step_dt = float(self._model.opt.timestep) / self._realtime_speed
+            for _ in range(budget):
+                t_step = time.perf_counter()
+                mujoco.mj_step(self._model, self._data)
+                self._carry_grasped_prop()
+                if self._realtime:
+                    elapsed = time.perf_counter() - t_step
+                    if elapsed < step_dt:
+                        time.sleep(step_dt - elapsed)
+            self._emit_joint_state()
 
     def snapshot(self) -> dict:
         """Return a JSON-serializable observation: joints + tcp + prop poses."""

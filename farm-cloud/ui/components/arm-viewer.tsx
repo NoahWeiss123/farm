@@ -23,9 +23,8 @@ import { subscribeSSE } from "@/lib/sse";
 
 const URDF_PATH = "/urdf/uf850/uf850.urdf";
 const ARM_JOINT_NAMES = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"];
-// xArm Gripper is one drive joint; the other 5 mimic via the URDF's
-// <mimic> tag which urdf-loader honors automatically.
-const FINGER_JOINT_NAMES = ["drive_joint"];
+// Simplified gripper: one prismatic slider; the right finger mimics.
+const FINGER_JOINT_NAMES = ["left_finger_joint"];
 
 type LiveState = {
   arm?: number[];
