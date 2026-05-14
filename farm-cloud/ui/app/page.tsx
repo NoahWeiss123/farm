@@ -6,14 +6,15 @@ import Link from "next/link";
 import { ArmViewer } from "@/components/arm-viewer";
 import { submitRun, fetchRuns, type RunSummary } from "@/lib/api";
 
-const EXAMPLES = [
+const EXAMPLES: string[] = [
   "pick the red block and place it on the cup",
   "pick the blue block and place it on the cup",
   "pick the green block and place it on the cup",
+  "stack the red block on the blue block",
 ];
 
 export default function LandingPage() {
-  const [task, setTask] = useState(EXAMPLES[0]);
+  const [task, setTask] = useState<string>(EXAMPLES[0] ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recent, setRecent] = useState<RunSummary[]>([]);

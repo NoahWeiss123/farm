@@ -66,20 +66,22 @@ function ArmRobot({ live }: { live: React.MutableRefObject<LiveState> }) {
     const arm = live.current.arm;
     if (!robot || !arm) return;
     for (let i = 0; i < ARM_JOINT_NAMES.length; i++) {
-      const j = robot.joints[ARM_JOINT_NAMES[i]];
-      if (j && typeof arm[i] === "number") {
-        // urdf-loader joint.setJointValue takes radians for revolute joints.
-        // Cast around its untyped jointValue setter.
-        (j as unknown as { setJointValue(v: number): void }).setJointValue(arm[i]);
-      }
+      const name = ARM_JOINT_NAMES[i];
+      const value = arm[i];
+      if (name == null || typeof value !== "number") continue;
+      const j = robot.joints[name];
+      if (!j) continue;
+      (j as unknown as { setJointValue(v: number): void }).setJointValue(value);
     }
     const f = live.current.fingers;
     if (f) {
       for (let i = 0; i < FINGER_JOINT_NAMES.length; i++) {
-        const j = robot.joints[FINGER_JOINT_NAMES[i]];
-        if (j && typeof f[i] === "number") {
-          (j as unknown as { setJointValue(v: number): void }).setJointValue(f[i]);
-        }
+        const name = FINGER_JOINT_NAMES[i];
+        const value = f[i];
+        if (name == null || typeof value !== "number") continue;
+        const j = robot.joints[name];
+        if (!j) continue;
+        (j as unknown as { setJointValue(v: number): void }).setJointValue(value);
       }
     }
   });
@@ -128,13 +130,15 @@ function SceneProps({
         <meshStandardMaterial color="#c6a37a" />
       </mesh>
       {/* Legs */}
-      {[
-        [0.25, -0.90, 0.065],
-        [-0.25, -0.90, 0.065],
-        [0.25, -0.50, 0.065],
-        [-0.25, -0.50, 0.065],
-      ].map(([x, y, z], i) => (
-        <mesh key={i} position={[x, y, z]} receiveShadow>
+      {(
+        [
+          [0.25, -0.90, 0.065],
+          [-0.25, -0.90, 0.065],
+          [0.25, -0.50, 0.065],
+          [-0.25, -0.50, 0.065],
+        ] as [number, number, number][]
+      ).map((p, i) => (
+        <mesh key={i} position={p} receiveShadow>
           <boxGeometry args={[0.024, 0.024, 0.130]} />
           <meshStandardMaterial color="#695639" />
         </mesh>
@@ -154,7 +158,13 @@ function SceneProps({
           >
             {p.shape === "box" ? (
               <mesh castShadow receiveShadow>
-                <boxGeometry args={[p.size[0] * 2, p.size[1] * 2, p.size[2] * 2]} />
+                <boxGeometry
+                  args={[
+                    (p.size[0] ?? 0.0125) * 2,
+                    (p.size[1] ?? 0.0125) * 2,
+                    (p.size[2] ?? 0.0125) * 2,
+                  ]}
+                />
                 <meshStandardMaterial
                   color={color}
                   transparent={opacity < 1}
@@ -164,7 +174,12 @@ function SceneProps({
             ) : p.shape === "cylinder" ? (
               <mesh castShadow receiveShadow>
                 <cylinderGeometry
-                  args={[p.size[0], p.size[0], p.size[1] * 2, 32]}
+                  args={[
+                    p.size[0] ?? 0.04,
+                    p.size[0] ?? 0.04,
+                    (p.size[1] ?? 0.04) * 2,
+                    32,
+                  ]}
                 />
                 <meshStandardMaterial
                   color={color}

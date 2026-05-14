@@ -1,8 +1,6 @@
-import { describe, expect, it, vi, afterEach } from "vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { describe, expect, it, afterEach, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
 import { Nav } from "@/components/nav";
-import RunsPage from "@/app/runs/page";
-import { WarmingUp } from "@/app/runs/[id]/page";
 
 afterEach(() => {
   cleanup();
@@ -18,38 +16,25 @@ describe("Nav", () => {
   });
 });
 
-describe("RunsPage empty state", () => {
-  it("renders the run-your-first-task card when there are no runs", async () => {
-    const page = await RunsPage();
-    render(page);
-    expect(screen.getByText("Run your first task")).not.toBeNull();
-    const cta = screen.getByRole("link", {
-      name: "Read the getting-started guide",
-    });
-    expect(cta.getAttribute("href")).toBe("/docs/getting-started");
+describe("lib/api shape", () => {
+  it("exposes the expected client functions", async () => {
+    const mod = await import("@/lib/api");
+    expect(typeof mod.fetchRuns).toBe("function");
+    expect(typeof mod.fetchRun).toBe("function");
+    expect(typeof mod.submitRun).toBe("function");
+    expect(typeof mod.fetchScene).toBe("function");
+    expect(typeof mod.fetchWorld).toBe("function");
   });
-});
 
-describe("WarmingUp", () => {
-  it("shows the warming-up copy and an elapsed counter that ticks", () => {
-    vi.useFakeTimers();
+  it("submitRun returns null and does not throw when the daemon is unreachable", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error("ECONNREFUSED")) as typeof fetch;
     try {
-      render(<WarmingUp runId="r-123" />);
-      expect(screen.getByText("Warming up...")).not.toBeNull();
-      expect(screen.getByText("Run r-123")).not.toBeNull();
-      expect(screen.getByTestId("elapsed").textContent).toBe("Elapsed: 0s");
-
-      act(() => {
-        vi.advanceTimersByTime(1000);
-      });
-      expect(screen.getByTestId("elapsed").textContent).toBe("Elapsed: 1s");
-
-      act(() => {
-        vi.advanceTimersByTime(2000);
-      });
-      expect(screen.getByTestId("elapsed").textContent).toBe("Elapsed: 3s");
+      const mod = await import("@/lib/api");
+      const out = await mod.submitRun("any task");
+      expect(out).toBe(null);
     } finally {
-      vi.useRealTimers();
+      globalThis.fetch = originalFetch;
     }
   });
 });

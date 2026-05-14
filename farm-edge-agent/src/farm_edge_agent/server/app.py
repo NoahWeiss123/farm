@@ -21,7 +21,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from pathlib import Path
 from typing import Any
 
 import aiohttp_cors
@@ -77,7 +76,7 @@ async def stream_world(request: web.Request) -> web.StreamResponse:
             try:
                 event = await asyncio.wait_for(q.get(), timeout=15.0)
                 await resp.write(_sse_format(event))
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # SSE heartbeat keeps the connection alive through proxies.
                 await resp.write(b": ping\n\n")
     finally:
@@ -162,7 +161,7 @@ async def stream_run_events(request: web.Request) -> web.StreamResponse:
                 await resp.write(_sse_format(event))
                 if event.get("type") == "run_completed":
                     break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 await resp.write(b": ping\n\n")
     finally:
         bus.unsubscribe(f"run:{rid}", q)
@@ -189,7 +188,7 @@ async def stream_runs_list(request: web.Request) -> web.StreamResponse:
             try:
                 event = await asyncio.wait_for(q.get(), timeout=15.0)
                 await resp.write(_sse_format(event))
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 await resp.write(b": ping\n\n")
     finally:
         bus.unsubscribe("runs", q)
