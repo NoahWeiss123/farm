@@ -1,10 +1,6 @@
 # Config reference
 
-The Edge Agent reads `~/.farm/config.yaml` on every CLI invocation. Override
-the path with `FARM_CONFIG=/path/to/config.yaml` or the global
-`--config <path>` flag. `farm config init` scaffolds a fresh file;
-`farm config doctor` validates it and prints fix commands; `farm config show`
-prints the effective config with secrets redacted.
+The Edge Agent reads `~/.farm/config.yaml`. Override the path with `FARM_CONFIG=/path/to/config.yaml` or the global `--config <path>` flag. The Pydantic schema lives in `farm_edge_agent.config.schema`.
 
 ## Precedence
 
@@ -15,9 +11,7 @@ For any given key, the value used is the first that resolves:
 3. Inline value in `~/.farm/config.yaml`
 4. Compiled-in default
 
-Env-var references inside the config file (`${FARM_API_KEY}`) are resolved at
-load time. Missing env vars in `${}` references are a fatal config error
-([FARM-E1004](errors.md#farm-e1004)).
+Env-var references inside the config (`${FARM_API_KEY}`) are resolved at load time. Missing env vars in `${}` references are a fatal config error ([FARM-E1010](errors.md#farm-e1010)).
 
 ## Full example
 
@@ -28,7 +22,7 @@ workspace: my-lab
 driver: lerobot-mock          # xarm | franka | lerobot-mock
 
 arm:
-  ip: 192.168.1.213           # xarm/franka only; required when driver != lerobot-mock
+  ip: 192.168.1.213           # xarm/franka only
 
 camera:
   wrist:
@@ -47,25 +41,19 @@ telemetry:
   upload_frames: true
 ```
 
-## Key reference
+## Keys
 
 ### `api_key` *(string, required)*
 
-Workspace-scoped API key issued by `farm login` or `farm quickstart`. Inline
-or via `${FARM_API_KEY}`. Env-var form is preferred on shared machines.
-Rejected keys raise [FARM-E1004](errors.md#farm-e1004).
+Workspace-scoped API key. Inline or via `${FARM_API_KEY}`. Env-var form is preferred on shared machines.
 
 ### `workspace` *(string, optional)*
 
-Workspace name. Defaults to the first workspace bound to the key. In
-Phase-MVP this is a single hardcoded constant per key; the field exists so
-the Phase-Product split is mechanical.
+Workspace name. Reserved for the multi-tenant split; the local daemon ignores it.
 
 ### `driver` *(enum, default `lerobot-mock`)*
 
-Arm driver. One of `xarm`, `franka`, `lerobot-mock`. See
-[hardware.md](hardware.md) for the compatibility matrix. Drivers other than
-the three listed are rejected at config-load time.
+Arm driver. One of `xarm`, `franka`, `lerobot-mock`. Drivers other than these are rejected at config load.
 
 ### `arm.ip` *(string, required for `xarm` and `franka`)*
 
@@ -73,45 +61,31 @@ IPv4 address of the arm controller. Ignored for `lerobot-mock`.
 
 ### `camera.wrist.device` *(string, required when a real arm is configured)*
 
-V4L2 device path on Linux (`/dev/video0`), AVFoundation index on macOS
-(`0`), or DirectShow device name on Windows. `farm doctor cameras` lists
-what the host actually has.
+V4L2 device path on Linux, AVFoundation index on macOS, DirectShow device name on Windows.
 
 ### `camera.wrist.intrinsics` *(path, required when a real arm is configured)*
 
-Path to a YAML calibration file. Written by `farm calibrate`. The Edge Agent
-hashes this file at run start and refuses to start if its mtime is older
-than 24 hours unless `--accept-calibration` is passed
-([FARM-E1002](errors.md#farm-e1002)).
+Path to a YAML calibration file. The Edge Agent hashes this at run start and refuses to start if its mtime is older than 24 hours unless `--accept-calibration` is passed ([FARM-E1002](errors.md#farm-e1002)).
 
 ### `camera.overhead.*` *(object, optional)*
 
-Second camera viewpoint. Same fields as `camera.wrist`. Omit the block if
-you only have one camera.
+Second camera viewpoint. Same fields as `camera.wrist`.
 
 ### `safety.workspace_envelope` *(path, default = conservative cube)*
 
-Axis-aligned bounding box of allowed TCP poses. If omitted, a 40 cm cube
-centered in front of the arm is used. Out-of-envelope poses are soft-stopped
-and surfaced as [FARM-E3001](errors.md#farm-e3001). See
-[safety.md](safety.md#workspace-envelope).
+Axis-aligned bounding box of allowed TCP poses. If omitted, a 40 cm cube centered in front of the arm is used. See [safety.md](safety.md#workspace-envelope).
 
 ### `safety.velocity_cap_mps` *(float, default 0.25)*
 
-Hard ceiling on TCP linear velocity, in metres per second. Joint-space
-chunks that imply motion above this cap are clamped and logged.
+Hard ceiling on TCP linear velocity, m/s.
 
 ### `safety.watchdog_timeout_ms` *(int, default 1000)*
 
-Maximum time the dispatcher's WebSocket may be silent before the Edge Agent
-halts the arm in place ([FARM-E3002](errors.md#farm-e3002)). Lower this if
-your network is fast and steady; raise it if you live behind a flaky tunnel.
+Max dispatcher silence before the Edge Agent halts the arm. Do not set below 250.
 
 ### `telemetry.upload_frames` *(bool, default `true`)*
 
-When `true`, camera frames are streamed to the dispatcher for live
-rendering and storage. Set to `false` in camera-privacy-sensitive
-environments; the run record still captures joint state and action chunks.
+When `true`, camera frames stream to the dispatcher for live rendering. Set `false` in privacy-sensitive environments; the run record still captures joint state and action chunks.
 
 ## Environment variables
 
@@ -119,5 +93,6 @@ environments; the run record still captures joint state and action chunks.
 |---|---|
 | `FARM_CONFIG` | Override the config-file path. |
 | `FARM_API_KEY` | Workspace API key. Resolves `${FARM_API_KEY}` in the config. |
-| `FARM_RELAY` | `on` tunnels the WebSocket over HTTPS long-polling. See [faq.md](faq.md#my-websocket-wont-connect). |
-| `FARM_LOG_LEVEL` | One of `debug`, `info`, `warn`, `error`. Defaults to `info`. |
+| `OPENAI_API_KEY` | Required by the GPT planner. |
+| `FARM_RELAY` | `on` tunnels the WebSocket over HTTPS long-polling. |
+| `FARM_LOG_LEVEL` | One of `debug`, `info`, `warn`, `error`. Default `info`. |
