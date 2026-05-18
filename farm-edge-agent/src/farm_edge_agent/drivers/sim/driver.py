@@ -244,22 +244,16 @@ class SimDriver:
         self,
         pose: Pose,
         velocity_cap: float = DEFAULT_VELOCITY_CAP,
-        path_steps: int = 16,
+        path_steps: int = 32,
     ) -> None:
         """Move TCP to ``pose`` (mm + radians).
 
-        Strategy:
-          1. Solve a single IK against a **scratch copy** of MjData with the
-             *current* qpos as warmstart and ``seed_attempts=1``. This
-             forces the IK to find a target config near the current basin —
-             no flipping to a far-away config that requires the arm to
-             invert itself.
-          2. Joint-space-interpolate from the live qpos to the IK target
-             across ``path_steps`` substeps, with adequate settling.
-          3. Hold the final ctrl so the gripper can act without arm drift.
-
-        Full-quaternion orientation constraint — keeping joint5 inside its
-        comfort zone is up to the home pose + the workspace bounds.
+        Generates a continuous joint-space trajectory (cosine ease) and
+        feeds each interpolated waypoint to the PD controller for a *tiny*
+        number of physics substeps (≈ 1 control period each). The result
+        is the PD ref moves smoothly over time rather than snapping to
+        the final target and oscillating, which was the source of the
+        visible jitter.
         """
         target_pos_m = np.array([pose[0], pose[1], pose[2]], dtype=np.float64) / 1000.0
         target_quat = _rpy_to_quat(pose[3], pose[4], pose[5])
@@ -285,9 +279,9 @@ class SimDriver:
             )
             target_qpos = result.qpos.tolist()
             current_qpos = [float(self._data.qpos[i]) for i in self._arm_qpos_addrs]
-            # Joint-space cosine ease-in/out gives a smoother trajectory
-            # than linear at the same step count — less PD chatter at the
-            # acceleration/deceleration boundaries.
+            # 32 micro-steps × 25 substeps (1 control period) = 800 sim
+            # steps = 1.6 s wall at realtime_speed=1. Cosine ease keeps
+            # joint velocity bounded so PD doesn't chase a step.
             for s in range(1, path_steps + 1):
                 t = s / path_steps
                 ease = 0.5 - 0.5 * math.cos(math.pi * t)
@@ -295,22 +289,19 @@ class SimDriver:
                     current_qpos[k] + (target_qpos[k] - current_qpos[k]) * ease
                     for k in range(6)
                 ]
-                # Real UF850 caps each joint at 180°/s; with torque-limited
-                # actuators a 90° move takes ~0.5 s wall. settle_steps=200
-                # × 2 ms = 0.4 s sim per substep is enough for the arm to
-                # actually arrive.
                 self._drive_arm_to(
                     interp,
                     velocity_cap=velocity_cap,
-                    settle_steps=200,
+                    settle_steps=self._sim_rate,
                     hold_after=False,
+                    converge_tol=0.0,  # don't early-exit micro-segments
                 )
-            # Extra settle at the final config so subsequent gripper
-            # commands act on a stable arm.
+            # Final settle so the arm actually arrives before the next
+            # primitive (gripper close / new move).
             self._drive_arm_to(
                 target_qpos,
                 velocity_cap=velocity_cap,
-                settle_steps=400,
+                settle_steps=180,
                 hold_after=True,
             )
         self._emit(
@@ -446,7 +437,7 @@ class SimDriver:
         """Render an RGB observation. Lazy-caches renderers keyed by size."""
         h = height if height is not None else self._render_height
         w = width if width is not None else self._render_width
-        key = (h, w)
+        key = ("rgb", h, w)
         renderer = self._renderers.get(key)
         if renderer is None:
             renderer = mujoco.Renderer(self._model, height=h, width=w)
@@ -458,6 +449,30 @@ class SimDriver:
             )
             img = renderer.render()
         return img
+
+    def render_depth(
+        self,
+        camera: str | int | None = None,
+        height: int | None = None,
+        width: int | None = None,
+    ) -> np.ndarray:
+        """Render a depth map (metric, in metres) — used by the dashboard's
+        "what π0.5 doesn't see" interpretability panel."""
+        h = height if height is not None else self._render_height
+        w = width if width is not None else self._render_width
+        key = ("depth", h, w)
+        renderer = self._renderers.get(key)
+        if renderer is None:
+            renderer = mujoco.Renderer(self._model, height=h, width=w)
+            renderer.enable_depth_rendering()
+            self._renderers[key] = renderer
+        with self._lock:
+            mujoco.mj_forward(self._model, self._data)
+            renderer.update_scene(
+                self._data, camera=camera if camera is not None else self._camera
+            )
+            depth = renderer.render()
+        return depth
 
     def pi05_observation(
         self,
@@ -597,6 +612,7 @@ class SimDriver:
         velocity_cap: float,
         settle_steps: int | None = None,
         hold_after: bool = True,
+        converge_tol: float = 5e-4,
     ) -> None:
         """Drive arm to target joints with PD, stepping the sim.
 
@@ -607,11 +623,16 @@ class SimDriver:
           * False → leave ctrl at the commanded ``qpos`` so a subsequent
             interpolation step continues from the right reference. Use
             this in joint-space path tracking.
+
+        ``converge_tol`` of 0 disables early-exit, which is what we want
+        during path tracking so each micro-segment runs for exactly the
+        scheduled number of substeps and the trajectory stays smooth.
         """
         for k, aid in enumerate(self._actuator_ids["arm"]):
             self._data.ctrl[aid] = float(qpos[k])
         budget = settle_steps if settle_steps is not None else self._max_settle_steps
         step_dt = float(self._model.opt.timestep) / self._realtime_speed
+        emit_every = max(1, self._sim_rate // 2)
         for step in range(budget):
             t_step = time.perf_counter()
             mujoco.mj_step(self._model, self._data)
@@ -620,12 +641,13 @@ class SimDriver:
                 elapsed = time.perf_counter() - t_step
                 if elapsed < step_dt:
                     time.sleep(step_dt - elapsed)
-            if step % self._sim_rate == 0:
+            if step % emit_every == 0:
                 self._emit_joint_state()
-            cur = np.array([self._data.qpos[i] for i in self._arm_qpos_addrs])
-            err = float(np.linalg.norm(cur - np.array(qpos)))
-            if err < 5e-4:
-                break
+            if converge_tol > 0:
+                cur = np.array([self._data.qpos[i] for i in self._arm_qpos_addrs])
+                err = float(np.linalg.norm(cur - np.array(qpos)))
+                if err < converge_tol:
+                    break
         if hold_after:
             for k, aid in enumerate(self._actuator_ids["arm"]):
                 self._data.ctrl[aid] = float(self._data.qpos[self._arm_qpos_addrs[k]])
@@ -665,6 +687,15 @@ class SimDriver:
         return prop_id
 
     def _carry_grasped_prop(self) -> None:
+        """Soft kinematic carry — pulls the prop toward the TCP-relative
+        target pose with a fast time constant rather than snapping it.
+
+        The blend keeps the prop's freejoint velocity non-zero so it can
+        still register collisions with other props (e.g. the cup), and
+        makes the grasp visually indistinguishable from a real friction
+        clamp: there's a touch of lag, the block isn't glued rigidly,
+        and physics still gets the final say on intermediate steps.
+        """
         if (
             self._grasped_prop_id is None
             or self._grasp_offset_pos is None
@@ -676,24 +707,31 @@ class SimDriver:
         )
         if bid < 0:
             return
-        # Find the prop's freejoint qpos addr (first joint in the body chain)
         jadr = int(self._model.body_jntadr[bid])
         if jadr < 0:
             return
         qpos_addr = int(self._model.jnt_qposadr[jadr])
+        dofadr = int(self._model.jnt_dofadr[jadr])
         tcp_pos = self._data.site_xpos[self._tcp_site_id]
         tcp_mat = self._data.site_xmat[self._tcp_site_id].reshape(3, 3)
-        new_pos = tcp_pos + tcp_mat @ self._grasp_offset_pos
+        target_pos = tcp_pos + tcp_mat @ self._grasp_offset_pos
         tcp_quat = np.zeros(4)
         mujoco.mju_mat2Quat(tcp_quat, tcp_mat.flatten())
-        new_quat = np.zeros(4)
-        mujoco.mju_mulQuat(new_quat, tcp_quat, self._grasp_offset_quat)
-        # freejoint qpos layout: [px, py, pz, qw, qx, qy, qz]
+        target_quat = np.zeros(4)
+        mujoco.mju_mulQuat(target_quat, tcp_quat, self._grasp_offset_quat)
+
+        # Fast first-order blend (α≈0.55 ⇒ reaches target in ~3 steps).
+        alpha_pos = 0.55
+        alpha_quat = 0.45
+        cur_pos = np.array(self._data.qpos[qpos_addr : qpos_addr + 3])
+        cur_quat = np.array(self._data.qpos[qpos_addr + 3 : qpos_addr + 7])
+        new_pos = cur_pos + alpha_pos * (target_pos - cur_pos)
+        new_quat = _slerp(cur_quat, target_quat, alpha_quat)
         self._data.qpos[qpos_addr : qpos_addr + 3] = new_pos
         self._data.qpos[qpos_addr + 3 : qpos_addr + 7] = new_quat
-        # Zero out velocity so it doesn't fight the kinematic override
-        dofadr = int(self._model.jnt_dofadr[jadr])
-        self._data.qvel[dofadr : dofadr + 6] = 0.0
+        # Damp residual velocity instead of zeroing — preserves a small
+        # amount of physics inertia so collisions look natural.
+        self._data.qvel[dofadr : dofadr + 6] *= 0.6
 
     def _emit_joint_state(self) -> None:
         if self._event_sink is None:

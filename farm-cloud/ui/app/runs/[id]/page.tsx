@@ -3,6 +3,7 @@
 import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ArmViewer } from "@/components/arm-viewer";
+import { MindPanel } from "@/components/mind-panel";
 import { fetchRun, type RunDetail, type RunEvent } from "@/lib/api";
 import { subscribeSSE } from "@/lib/sse";
 
@@ -29,7 +30,9 @@ function EventList({ events }: EventListProps) {
           case "action_chunk": {
             const action = (e.data.action ?? []) as number[];
             const space = (e.data.action_space ?? "") as string;
-            summary = `${space} [${action.map((a) => a.toFixed(1)).join(", ")}]`;
+            const label = (e.data.label as string) || "";
+            const head = label ? `${label} · ` : "";
+            summary = `${head}${space} [${action.map((a) => a.toFixed(1)).join(", ")}]`;
             break;
           }
           case "obs_chunk":
@@ -91,7 +94,6 @@ export default function RunDetailPage({
   }, [id]);
 
   const events = useMemo(() => {
-    // The SSE replay re-sends prior events; dedupe by (ts, type) approximation.
     const seen = new Set<string>();
     const all: RunEvent[] = [];
     for (const e of liveEvents) {
@@ -104,7 +106,6 @@ export default function RunDetailPage({
     return detail?.events ?? [];
   }, [liveEvents, detail]);
 
-  // Project a live status by overlaying state changes from the event stream.
   const status = useMemo(() => {
     const base = detail?.status;
     if (!base) return base;
@@ -118,12 +119,7 @@ export default function RunDetailPage({
         merged = { ...merged, safety_events: (merged.safety_events ?? 0) + 1 };
       } else if (ev.type === "run_completed") {
         const outcome = (ev.data.outcome as string) ?? "succeeded";
-        merged = {
-          ...merged,
-          state: outcome,
-          outcome,
-          completed_at: ev.ts,
-        };
+        merged = { ...merged, state: outcome, outcome, completed_at: ev.ts };
       }
     }
     return merged;
@@ -148,10 +144,13 @@ export default function RunDetailPage({
         </div>
       </header>
 
-      <div className="run-viewport">
+      <div className="run-viewport run-viewport-3col">
         <div className="viewer-pane">
           <ArmViewer height="100%" />
         </div>
+        <aside className="mind-pane">
+          <MindPanel />
+        </aside>
         <aside className="timeline-pane">
           <h2>timeline · {events.length} events</h2>
           <EventList events={events} />

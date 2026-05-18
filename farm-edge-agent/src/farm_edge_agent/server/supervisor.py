@@ -88,13 +88,22 @@ DEFAULT_SCENE = SceneSpec(
     name="picknplace",
     props=[
         {"id": "red_block", "shape": "box", "size": [0.0125, 0.0125, 0.0125],
-         "pos": [0.05, -0.55, 0.0125], "rgba": [0.9, 0.1, 0.1, 1.0]},
+         "pos": [0.05, -0.55, 0.0125], "rgba": [0.9, 0.1, 0.1, 1.0],
+         "mass": 0.04},
         {"id": "blue_block", "shape": "box", "size": [0.0125, 0.0125, 0.0125],
-         "pos": [0.15, -0.55, 0.0125], "rgba": [0.1, 0.2, 0.9, 1.0]},
+         "pos": [0.15, -0.55, 0.0125], "rgba": [0.1, 0.2, 0.9, 1.0],
+         "mass": 0.04},
         {"id": "green_block", "shape": "box", "size": [0.0125, 0.0125, 0.0125],
-         "pos": [-0.05, -0.55, 0.0125], "rgba": [0.1, 0.7, 0.2, 1.0]},
-        {"id": "cup", "shape": "cylinder", "size": [0.04, 0.04],
-         "pos": [-0.15, -0.65, 0.04], "rgba": [0.85, 0.85, 0.85, 0.9]},
+         "pos": [-0.05, -0.55, 0.0125], "rgba": [0.1, 0.7, 0.2, 1.0],
+         "mass": 0.04},
+        # Wide, squat, *heavy* cup: 70 mm diameter, 50 mm tall, 1.2 kg.
+        # The high mass + low CoM means a glancing bump from the gripper
+        # or the elbow translates into a tiny slide rather than a tip.
+        # Pushed back in Y so the arm's sweep between blocks doesn't
+        # graze it.
+        {"id": "cup", "shape": "cylinder", "size": [0.035, 0.025],
+         "pos": [-0.20, -0.78, 0.025], "rgba": [0.92, 0.90, 0.86, 0.9],
+         "mass": 1.2},
     ],
 )
 
@@ -114,14 +123,23 @@ class RunSupervisor:
             scene=self._scene_spec.to_scene(),
             event_sink=self._on_driver_event,
             realtime=True,
-            # Wall-clock pacing so the dashboard's 3D viewer can keep up.
-            # Bump to 2.0 if demos feel too slow.
-            realtime_speed=1.0,
+            realtime_speed=1.5,
         )
         self._driver.connect()
         self._statuses: dict[str, RunStatus] = {}
         self._queue: queue.Queue[_PendingRun] = queue.Queue()
         self._lock = threading.Lock()
+        # Inspect state — the rolling "what is the arm thinking" snapshot.
+        self._inspect_state: dict[str, Any] = {
+            "run_id": None,
+            "task": None,
+            "plan": None,           # {plan_id, reasoning, nodes}
+            "active_node_id": None,
+            "active_node_index": None,
+            "last_action": None,    # {label, action_space, action, t}
+            "last_critic": None,    # latest critic_note text
+            "policy": "auto",       # "gpt+skills" or "pi05"
+        }
         self._worker = threading.Thread(target=self._run_worker, daemon=True)
         self._worker.start()
         self._world_thread = threading.Thread(target=self._world_pump, daemon=True)
@@ -194,6 +212,43 @@ class RunSupervisor:
             "props": snap["props"],
             "scene": self._scene_spec.name,
         }
+
+    def render_camera(self, name: str, *, width: int, height: int):
+        """Render a named MuJoCo camera as a (H, W, 3) uint8 array."""
+        return self._driver.render_rgb(camera=name, height=height, width=width)
+
+    def render_camera_depth(self, name: str, *, width: int, height: int):
+        return self._driver.render_depth(camera=name, height=height, width=width)
+
+    def inspect(self) -> dict[str, Any]:
+        """Snapshot of the current high-level agent state, plus the
+        live π0.5-shaped observation summary."""
+        snap = self._driver.snapshot()
+        # Summarize the observation tensor without serializing megapixels.
+        obs_summary = {
+            "joint_position_7": [*snap["joints"], 0.0],
+            "gripper_position": _grip_to_unit(self._driver),
+            "tcp_pos_mm": [v * 1000.0 for v in snap["tcp_pos_m"]],
+            "tcp_quat": snap["tcp_quat"],
+            "image_urls": {
+                "exterior": "/v1/cameras/exterior.jpg",
+                "wrist": "/v1/cameras/wrist.jpg",
+                "topdown": "/v1/cameras/topdown.jpg",
+                "exterior_depth": "/v1/cameras/exterior.depth.png",
+                "wrist_depth": "/v1/cameras/wrist.depth.png",
+                "topdown_depth": "/v1/cameras/topdown.depth.png",
+            },
+        }
+        with self._lock:
+            state = dict(self._inspect_state)
+        state["observation"] = obs_summary
+        state["world"] = {
+            "joints": snap["joints"],
+            "tcp_pos_m": snap["tcp_pos_m"],
+            "gripper": snap["gripper"],
+            "props": snap["props"],
+        }
+        return state
 
     def scene_spec(self) -> dict[str, Any]:
         return {
@@ -397,6 +452,61 @@ class RunSupervisor:
         event.setdefault("run_id", run_id)
         self._bus.publish(f"run:{run_id}", event)
         self._bus.publish("runs:all", event)
+        self._update_inspect_from_event(run_id, event)
+
+    def _update_inspect_from_event(
+        self, run_id: str, event: dict[str, Any]
+    ) -> None:
+        kind = event.get("type")
+        data = event.get("data", {}) or {}
+        with self._lock:
+            state = self._inspect_state
+            if kind == "run_started":
+                state["run_id"] = run_id
+                state["task"] = data.get("task")
+                state["plan"] = None
+                state["active_node_id"] = None
+                state["active_node_index"] = None
+                state["last_action"] = None
+                state["last_critic"] = None
+                state["policy"] = "pi05" if (
+                    isinstance(data.get("config_snapshot"), dict)
+                    and data["config_snapshot"].get("policy") == "pi05"
+                ) else "gpt+skills"
+            elif kind == "plan_emitted":
+                state["plan"] = {
+                    "plan_id": data.get("plan_id"),
+                    "reasoning": data.get("router_reason"),
+                    "nodes": data.get("nodes", []),
+                }
+            elif kind == "node_started":
+                nid = data.get("node_id")
+                state["active_node_id"] = nid
+                nodes = (state.get("plan") or {}).get("nodes") or []
+                for idx, n in enumerate(nodes):
+                    if n.get("id") == nid:
+                        state["active_node_index"] = idx
+                        break
+            elif kind == "node_completed":
+                # Keep active_node_id pointing at the last completed node
+                # so the UI can show "done with step X" — the next
+                # node_started will overwrite this.
+                pass
+            elif kind == "action_chunk":
+                state["last_action"] = {
+                    "node_id": data.get("node_id"),
+                    "action": data.get("action"),
+                    "action_space": data.get("action_space"),
+                    "label": data.get("label"),
+                    "t": event.get("ts"),
+                }
+            elif kind == "critic_note":
+                state["last_critic"] = data.get("text")
+            elif kind == "run_completed":
+                state["active_node_id"] = None
+            snapshot = dict(state)
+        # Push to subscribers (outside lock).
+        self._bus.publish("inspect", {"type": "inspect", **snapshot})
 
     def _on_driver_event(self, event: dict[str, Any]) -> None:
         # Broadcast joint states + grip events to world subscribers.
@@ -416,6 +526,15 @@ class RunSupervisor:
             except Exception:
                 pass
             time.sleep(0.2)
+
+
+def _grip_to_unit(driver: Any) -> float:
+    """0=open, 1=closed — same convention as π0.5 's gripper_position."""
+    try:
+        snap = driver.snapshot()
+    except Exception:
+        return 0.0
+    return 1.0 if snap.get("gripper") == "closed" else 0.0
 
 
 def _peek_record(path: Path) -> tuple[str, str | None]:

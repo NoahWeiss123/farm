@@ -320,6 +320,7 @@ class RunLoop:
                             "step_index": counter.action,
                             "action": encoded,
                             "action_space": chunk.get("action_space", "tcp_xyzrpy_mm"),
+                            "label": chunk.get("label"),
                         },
                     },
                 )

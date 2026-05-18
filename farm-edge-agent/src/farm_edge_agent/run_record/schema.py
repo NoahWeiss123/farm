@@ -75,6 +75,10 @@ class ActionChunkData(BaseModel):
     step_index: int
     action: list[float]
     action_space: str
+    # Human-readable label for the chunk (e.g. "above_red_block",
+    # "grasp_red_block"). Used by the dashboard's "what's it doing now"
+    # surface. Optional so older records (pre-skill-labels) still parse.
+    label: str | None = None
 
 
 class ActionChunk(_EventBase):

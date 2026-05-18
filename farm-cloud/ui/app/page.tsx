@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArmViewer } from "@/components/arm-viewer";
+import { MindPanel } from "@/components/mind-panel";
 import { submitRun, fetchRuns, type RunSummary } from "@/lib/api";
 
 const EXAMPLES: string[] = [
@@ -18,13 +19,14 @@ export default function LandingPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recent, setRecent] = useState<RunSummary[]>([]);
+  const [showDepth, setShowDepth] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
     let live = true;
     const tick = async () => {
       const r = await fetchRuns();
-      if (live && r) setRecent(r.slice(0, 6));
+      if (live && r) setRecent(r.slice(0, 5));
     };
     void tick();
     const id = setInterval(tick, 3000);
@@ -51,56 +53,66 @@ export default function LandingPage() {
   };
 
   return (
-    <section className="full-bleed home">
-      <div className="home-viewport">
+    <section className="full-bleed dash">
+      <div className="dash-viewer">
         <ArmViewer height="100%" />
         <div className="viewer-overlay">
           <div className="overlay-top">
             <h1>FARM</h1>
             <p className="tagline">
-              UFactory 850 · MuJoCo physics · GPT-decomposed tasks
+              UFactory 850 · MuJoCo physics · interpretable agent
             </p>
           </div>
           <div className="overlay-bottom">
             <span className="pulse" /> live world stream
+            <button
+              type="button"
+              className="overlay-toggle"
+              onClick={() => setShowDepth((v) => !v)}
+              aria-pressed={showDepth}
+            >
+              {showDepth ? "depth: on" : "depth: off"}
+            </button>
           </div>
         </div>
       </div>
 
-      <aside className="home-side">
+      <aside className="dash-side">
         <form className="prompt-form" onSubmit={onSubmit}>
-          <label htmlFor="task">Ask the arm</label>
+          <label htmlFor="task">ask the arm</label>
           <textarea
             id="task"
             value={task}
             onChange={(e) => setTask(e.target.value)}
-            rows={3}
+            rows={2}
             placeholder="pick the red block and place it on the cup"
           />
-          <button type="submit" disabled={submitting || !task.trim()}>
-            {submitting ? "submitting..." : "run task"}
-          </button>
-          {error && <p className="error">{error}</p>}
-          <div className="examples">
-            <span>examples</span>
-            {EXAMPLES.map((ex) => (
-              <button
-                type="button"
-                key={ex}
-                className="chip"
-                onClick={() => setTask(ex)}
-              >
-                {ex}
-              </button>
-            ))}
+          <div className="prompt-row">
+            <button type="submit" disabled={submitting || !task.trim()}>
+              {submitting ? "submitting…" : "run task"}
+            </button>
+            <div className="examples">
+              {EXAMPLES.map((ex) => (
+                <button
+                  type="button"
+                  key={ex}
+                  className="chip"
+                  onClick={() => setTask(ex)}
+                  title={ex}
+                >
+                  {ex}
+                </button>
+              ))}
+            </div>
           </div>
+          {error && <p className="error">{error}</p>}
         </form>
 
-        <section className="recent">
-          <h3>recent runs</h3>
-          {recent.length === 0 ? (
-            <p className="dim">none yet — kick one off above.</p>
-          ) : (
+        <MindPanel showDepth={showDepth} />
+
+        {recent.length > 0 && (
+          <section className="recent">
+            <h3>recent runs</h3>
             <ul>
               {recent.map((r) => (
                 <li key={r.id}>
@@ -111,8 +123,8 @@ export default function LandingPage() {
                 </li>
               ))}
             </ul>
-          )}
-        </section>
+          </section>
+        )}
       </aside>
     </section>
   );

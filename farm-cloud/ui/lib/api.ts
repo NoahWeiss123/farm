@@ -126,3 +126,52 @@ export async function fetchWorld(): Promise<WorldSnapshot | null> {
     return null;
   }
 }
+
+/** Snapshot of "what the arm is thinking". Mirrors the daemon's `/v1/inspect`. */
+export interface InspectPlanNode {
+  id: string;
+  instruction: string;
+  backend?: string;
+}
+export interface InspectPlan {
+  plan_id: string | null;
+  reasoning: string | null;
+  nodes: InspectPlanNode[];
+}
+export interface InspectLastAction {
+  node_id: string | null;
+  action: number[] | null;
+  action_space: string | null;
+  label: string | null;
+  t: number | null;
+}
+export interface InspectObservation {
+  joint_position_7: number[];
+  gripper_position: number;
+  tcp_pos_mm: number[];
+  tcp_quat: number[];
+  image_urls: Record<string, string>;
+}
+export interface InspectSnapshot {
+  run_id: string | null;
+  task: string | null;
+  plan: InspectPlan | null;
+  active_node_id: string | null;
+  active_node_index: number | null;
+  last_action: InspectLastAction | null;
+  last_critic: string | null;
+  policy: string;
+  observation: InspectObservation;
+  world: {
+    joints: number[];
+    tcp_pos_m: [number, number, number];
+    gripper: string;
+    props: Record<string, { pos: [number, number, number]; quat: number[] }>;
+  };
+}
+
+export const CAMERA_URL = (name: "exterior" | "wrist" | "topdown") =>
+  `${FARM_API}/v1/cameras/${name}.jpg`;
+export const CAMERA_DEPTH_URL = (
+  name: "exterior" | "wrist" | "topdown",
+) => `${FARM_API}/v1/cameras/${name}.depth.png`;

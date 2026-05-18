@@ -31,8 +31,11 @@
     <default class="gripper_drive">
       <joint limited="true" damping="0.5" frictionloss="0.05" armature="0.01"/>
       <geom contype="4" conaffinity="2" group="1"
-            friction="2.0 0.05 0.001" condim="4"/>
-      <position kp="200" kv="10" forcerange="-50 50"/>
+            friction="5.0 0.10 0.002" condim="6"/>
+      <!-- Stiffer position loop on the gripper so the fingers physically
+           clamp a 25 mm block (≈ 1.5 mm pre-compression) with enough
+           normal force that friction holds the block on its own. -->
+      <position kp="600" kv="20" forcerange="-150 150"/>
     </default>
   </default>
 
@@ -70,6 +73,14 @@
          the arm base (and thus the workspace) framed. -->
     <body name="exterior_cam_mount" pos="0.7 -0.20 0.9">
       <camera name="exterior" mode="targetbody" target="link_base" fovy="55"/>
+    </body>
+
+    <!-- Top-down camera for the "point map" view in the dashboard. Fixed
+         above the workspace looking straight down — useful for showing
+         where the props are and where the gripper is heading without
+         the 3D perspective ambiguity. -->
+    <body name="topdown_cam_mount" pos="0 -0.55 1.4">
+      <camera name="topdown" pos="0 0 0" euler="0 0 0" fovy="42"/>
     </body>
 
     <!-- Robot mounting pedestal. Real UF850 deployments bolt the arm to a
@@ -148,33 +159,44 @@
                     <geom type="mesh" mesh="m_grip_r_ik" material="silver"
                           pos="0 -0.02 0.074098" contype="0" conaffinity="0" group="2"/>
 
-                    <!-- Simple parallel-jaw fingers — physics-only. -->
+                    <!-- Simple parallel-jaw fingers — physics-only. The
+                         pads are taller (60 mm) and slightly thicker to
+                         match the real xArm Gripper jaw envelope, and to
+                         give the constraint solver more contact patch
+                         area when clamping a 25 mm block. -->
                     <body name="left_finger" pos="0 0.035 0.100" childclass="gripper_drive">
                       <inertial pos="0 0 0.03" mass="0.05" diaginertia="2e-5 2e-5 1e-5"/>
                       <joint name="left_finger_joint" type="slide"
                              axis="0 -1 0" range="0 0.035" damping="0.5"/>
-                      <!-- Slim collision box approximating the finger pad. -->
-                      <geom type="box" size="0.008 0.005 0.030" pos="0 -0.005 0.030"
-                            material="black" friction="3.0 0.05 0.001" condim="6"/>
+                      <geom type="box" size="0.010 0.005 0.030" pos="0 -0.005 0.030"
+                            material="black" friction="5.0 0.10 0.002" condim="6"/>
                     </body>
                     <body name="right_finger" pos="0 -0.035 0.100" childclass="gripper_drive">
                       <inertial pos="0 0 0.03" mass="0.05" diaginertia="2e-5 2e-5 1e-5"/>
                       <joint name="right_finger_joint" type="slide"
                              axis="0 1 0" range="0 0.035" damping="0.5"/>
-                      <geom type="box" size="0.008 0.005 0.030" pos="0 0.005 0.030"
-                            material="black" friction="3.0 0.05 0.001" condim="6"/>
+                      <geom type="box" size="0.010 0.005 0.030" pos="0 0.005 0.030"
+                            material="black" friction="5.0 0.10 0.002" condim="6"/>
                     </body>
 
                     <!-- TCP at the grasp center, 172 mm from the flange. -->
                     <site name="tcp" pos="0 0 0.172" size="0.005" rgba="1 0 0 0.6"/>
 
-                    <!-- Wrist camera mounted to the side of the gripper
-                         base, ``mode="targetbody"`` pointing at the TCP.
-                         When the gripper moves, the camera tracks the
-                         grasp center automatically — what π0.5 expects
-                         from a real DROID wrist camera. -->
-                    <body name="wrist_cam_mount" pos="0.08 0 0.05">
-                      <camera name="wrist" mode="targetbody" target="xarm_gripper_base_link" fovy="60"/>
+                    <!-- Wrist camera. Mounted on a short "boom" extending
+                         out the side of the gripper (clear of all
+                         visual meshes), with mode="targetbody" pointed
+                         at the left finger — its body center is right
+                         at the grasp zone, so the camera always frames
+                         the area between the fingers no matter how the
+                         arm is oriented. Fingers appear at one edge of
+                         the frame and the workspace fills the rest —
+                         the framing π0.5 / DROID wrist cams are
+                         trained on. -->
+                    <body name="wrist_cam_mount" pos="0 0.13 0.13">
+                      <camera name="wrist"
+                              mode="targetbody"
+                              target="left_finger"
+                              fovy="55"/>
                     </body>
                   </body>
                 </body>

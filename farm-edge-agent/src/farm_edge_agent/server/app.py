@@ -12,6 +12,15 @@ GET  /v1/runs/{id}              — run status + buffered events
 GET  /v1/runs/{id}/events       — SSE stream of run events (replay + live)
 GET  /v1/runs:stream            — SSE stream of run-state changes for the
                                   dashboard's runs list
+GET  /v1/cameras/{name}.jpg     — live JPEG from a MuJoCo camera (exterior,
+                                  wrist, topdown). Always serves the latest
+                                  frame; UI polls or sets <img> refresh.
+GET  /v1/cameras/{name}.depth.png — false-color depth render of the same
+                                  camera (showing what π0.5 *could* see if
+                                  it had depth — purely interpretability).
+GET  /v1/inspect                — current plan + active node + last action +
+                                  π0.5 observation summary. JSON snapshot.
+GET  /v1/inspect/stream         — SSE feed of inspect events.
 
 CORS is wide-open so the Next.js dev server on :3000 can reach us.
 """
@@ -19,6 +28,7 @@ CORS is wide-open so the Next.js dev server on :3000 can reach us.
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 from typing import Any
@@ -200,6 +210,92 @@ def _status_dict(status: object) -> dict[str, Any]:
     return d
 
 
+_VALID_CAMS = {"exterior", "wrist", "topdown"}
+
+
+async def get_camera_jpeg(request: web.Request) -> web.Response:
+    """Render one MuJoCo camera and return it as a JPEG.
+
+    The render path runs synchronously on the asyncio thread; it's fast
+    (<10 ms for a 480p frame on Mac M-series) and avoids the complexity
+    of shipping render state to a worker. We compress at quality=82 — a
+    sensible sweet spot between bandwidth and visual fidelity.
+    """
+    name = request.match_info["name"]
+    if name not in _VALID_CAMS:
+        return web.json_response({"error": f"unknown camera {name!r}"}, status=404)
+    supervisor: RunSupervisor = request.app["supervisor"]
+    try:
+        from PIL import Image  # local import — heavy dep, only needed here
+        img = supervisor.render_camera(name, width=480, height=360)
+    except Exception as e:
+        return web.json_response({"error": f"render failed: {e}"}, status=500)
+    buf = io.BytesIO()
+    Image.fromarray(img).save(buf, format="JPEG", quality=82)
+    return web.Response(
+        body=buf.getvalue(),
+        content_type="image/jpeg",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+async def get_camera_depth(request: web.Request) -> web.Response:
+    name = request.match_info["name"]
+    if name not in _VALID_CAMS:
+        return web.json_response({"error": f"unknown camera {name!r}"}, status=404)
+    supervisor: RunSupervisor = request.app["supervisor"]
+    try:
+        import numpy as np
+        from PIL import Image
+        depth = supervisor.render_camera_depth(name, width=320, height=240)
+        # Far values clipped; near=blue, far=red — gradient lets the eye
+        # parse depth without needing a colorbar.
+        d = np.clip(depth, 0.3, 1.6)
+        norm = (d - d.min()) / max(1e-6, d.max() - d.min())
+        # turbo-ish ramp via three channel polynomials
+        r = (255 * (0.13 + 4.1 * norm - 4.5 * norm**2 + norm**3)).clip(0, 255).astype("uint8")
+        g = (255 * (0.05 + 1.8 * norm - 0.8 * norm**2)).clip(0, 255).astype("uint8")
+        b = (255 * (0.85 - 1.6 * norm + 0.7 * norm**2)).clip(0, 255).astype("uint8")
+        rgb = np.stack([r, g, b], axis=-1)
+    except Exception as e:
+        return web.json_response({"error": f"depth render failed: {e}"}, status=500)
+    buf = io.BytesIO()
+    Image.fromarray(rgb).save(buf, format="PNG")
+    return web.Response(
+        body=buf.getvalue(),
+        content_type="image/png",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+async def get_inspect(request: web.Request) -> web.Response:
+    supervisor: RunSupervisor = request.app["supervisor"]
+    return web.json_response(supervisor.inspect())
+
+
+async def stream_inspect(request: web.Request) -> web.StreamResponse:
+    supervisor: RunSupervisor = request.app["supervisor"]
+    bus: EventBus = request.app["bus"]
+    resp = web.StreamResponse(headers=SSE_HEADERS)
+    await resp.prepare(request)
+    await resp.write(_sse_format({"type": "inspect", **supervisor.inspect()}))
+    q = await bus.subscribe("inspect")
+    try:
+        while not request.transport.is_closing():
+            try:
+                event = await asyncio.wait_for(q.get(), timeout=2.0)
+                await resp.write(_sse_format(event))
+            except TimeoutError:
+                # 2 s heartbeat doubles as a periodic re-publish of the
+                # inspect snapshot, so the UI never goes stale.
+                await resp.write(
+                    _sse_format({"type": "inspect", **supervisor.inspect()})
+                )
+    finally:
+        bus.unsubscribe("inspect", q)
+    return resp
+
+
 def build_app() -> web.Application:
     app = web.Application(client_max_size=2_000_000)
     bus = EventBus(history=400)
@@ -222,6 +318,10 @@ def build_app() -> web.Application:
         web.get("/v1/runs:stream", stream_runs_list),
         web.get("/v1/runs/{run_id}", get_run),
         web.get("/v1/runs/{run_id}/events", stream_run_events),
+        web.get("/v1/cameras/{name}.jpg", get_camera_jpeg),
+        web.get("/v1/cameras/{name}.depth.png", get_camera_depth),
+        web.get("/v1/inspect", get_inspect),
+        web.get("/v1/inspect/stream", stream_inspect),
     ]
     for route in routes:
         app.router.add_route(route.method, route.path, route.handler)

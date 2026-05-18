@@ -174,21 +174,93 @@ function SceneProps({
                 />
               </mesh>
             ) : p.shape === "cylinder" ? (
-              <mesh castShadow receiveShadow>
-                <cylinderGeometry
-                  args={[
-                    p.size[0] ?? 0.04,
-                    p.size[0] ?? 0.04,
-                    (p.size[1] ?? 0.04) * 2,
-                    32,
-                  ]}
-                />
-                <meshStandardMaterial
-                  color={color}
-                  transparent={opacity < 1}
-                  opacity={opacity}
-                />
-              </mesh>
+              // MuJoCo cylinders have their long axis along the body's
+              // local Z. three.js cylinderGeometry's axis is its local
+              // Y, so we rotate the mesh +π/2 about X to align with the
+              // prop's Z. Without this, an upright MuJoCo cup renders
+              // lying on its side.
+              <group rotation={[Math.PI / 2, 0, 0]}>
+                {p.id === "cup" ? (
+                  // Hollow cup: outer shell + thin floor inside.
+                  <>
+                    <mesh castShadow receiveShadow>
+                      <cylinderGeometry
+                        args={[
+                          (p.size[0] ?? 0.04),
+                          (p.size[0] ?? 0.04) * 0.95,
+                          (p.size[1] ?? 0.04) * 2,
+                          48,
+                          1,
+                          true, // open-ended — see-through walls give the
+                                // cup its characteristic look without
+                                // requiring an STL.
+                        ]}
+                      />
+                      <meshStandardMaterial
+                        color={color}
+                        transparent
+                        opacity={Math.min(0.85, opacity)}
+                        side={THREE.DoubleSide}
+                        roughness={0.35}
+                        metalness={0.05}
+                      />
+                    </mesh>
+                    {/* Inner base disc — sits a hair above the prop floor
+                        so it's visible looking down into the cup. */}
+                    <mesh
+                      castShadow
+                      receiveShadow
+                      position={[0, -(p.size[1] ?? 0.04) * 0.85, 0]}
+                    >
+                      <cylinderGeometry
+                        args={[
+                          (p.size[0] ?? 0.04) * 0.9,
+                          (p.size[0] ?? 0.04) * 0.9,
+                          0.004,
+                          48,
+                        ]}
+                      />
+                      <meshStandardMaterial
+                        color={color}
+                        roughness={0.6}
+                      />
+                    </mesh>
+                    {/* Rim ring on top for definition. */}
+                    <mesh
+                      position={[0, (p.size[1] ?? 0.04), 0]}
+                    >
+                      <torusGeometry
+                        args={[
+                          (p.size[0] ?? 0.04) * 0.98,
+                          0.003,
+                          12,
+                          48,
+                        ]}
+                      />
+                      <meshStandardMaterial
+                        color={color}
+                        roughness={0.4}
+                      />
+                    </mesh>
+                  </>
+                ) : (
+                  <mesh castShadow receiveShadow>
+                    <cylinderGeometry
+                      args={[
+                        p.size[0] ?? 0.04,
+                        p.size[0] ?? 0.04,
+                        (p.size[1] ?? 0.04) * 2,
+                        32,
+                      ]}
+                    />
+                    <meshStandardMaterial
+                      color={color}
+                      transparent={opacity < 1}
+                      opacity={opacity}
+                    />
+                  </mesh>
+                )}
+              </group>
             ) : null}
           </group>
         );
