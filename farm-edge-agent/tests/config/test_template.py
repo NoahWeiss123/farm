@@ -20,7 +20,7 @@ def test_template_parses_as_yaml() -> None:
     parsed = yaml.safe_load(read_template())
     assert parsed["driver"] in ("xarm", "franka", "lerobot-mock")
     assert parsed["camera"]["wrist"]["device"]
-    assert parsed["safety"]["velocity_cap_mps"]
+    assert parsed["telemetry"]["upload_frames"] is True
     assert "${FARM_API_KEY}" in parsed["api_key"]
 
 
@@ -93,9 +93,9 @@ def test_set_coerces_numbers(
     monkeypatch.setenv("FARM_API_KEY", "sk-test")
     runner = CliRunner()
     runner.invoke(config, ["init"])
-    runner.invoke(config, ["set", "safety.velocity_cap_mps", "0.5"])
+    runner.invoke(config, ["set", "telemetry.upload_frames", "false"])
     raw = yaml.safe_load((tmp_home / ".farm" / "config.yaml").read_text())
-    assert raw["safety"]["velocity_cap_mps"] == 0.5
+    assert raw["telemetry"]["upload_frames"] is False
 
 
 def test_set_refuses_when_no_config(tmp_home: Path) -> None:

@@ -1,19 +1,17 @@
-"""aiohttp app — the local edge daemon's HTTP/SSE surface.
+"""aiohttp app — local edge daemon serving the dashboard + control API.
 
 Routes
 ------
+GET  /                          — webviz-style dashboard (static)
 GET  /healthz                   — liveness probe
-GET  /v1/scene                  — current scene spec
-GET  /v1/world                  — current world snapshot
+GET  /v1/world                  — current backend snapshot (joints, TCP, gripper)
 GET  /v1/world/stream           — SSE stream of world snapshots
-POST /v1/runs                   — submit a new run (body: {"task": "..."})
-GET  /v1/runs                   — list runs (in-memory)
-GET  /v1/runs/{id}              — run status
-GET  /v1/runs:stream            — SSE stream of run-state changes
-GET  /v1/cameras/{name}.jpg     — live JPEG from a MuJoCo camera
-GET  /v1/cameras/{name}.depth.png — false-color depth render
-GET  /v1/inspect                — current plan + active node + last action
-GET  /v1/inspect/stream         — SSE feed of inspect events
+POST /v1/teleop/jog             — {axis, sign, step_mm?, step_rad?}
+POST /v1/teleop/home            — drive arm to backend home pose
+POST /v1/teleop/gripper         — {state: "open"|"closed"}
+POST /v1/teleop/estop           — software emergency stop
+POST /v1/teleop/estop/clear     — re-arm after e-stop
+GET  /v1/cameras/{name}.jpg     — live JPEG from a backend camera (placeholder for xarm)
 """
 
 from __future__ import annotations
@@ -22,13 +20,16 @@ import asyncio
 import io
 import json
 import logging
+import math
+from pathlib import Path
 from typing import Any
 
 import aiohttp_cors
 from aiohttp import web
 
+from farm_edge_agent.backends.base import RobotBackend
 from farm_edge_agent.server.bus import EventBus
-from farm_edge_agent.server.supervisor import RunSupervisor
+from farm_edge_agent.server.supervisor import Supervisor
 
 log = logging.getLogger("farm.server")
 
@@ -39,43 +40,41 @@ SSE_HEADERS = {
     "X-Accel-Buffering": "no",
 }
 
-
-def _sse_format(event: dict[str, Any], event_type: str | None = None) -> bytes:
-    lines = []
-    if event_type:
-        lines.append(f"event: {event_type}")
-    lines.append(f"data: {json.dumps(event, separators=(',', ':'))}")
-    lines.append("")
-    lines.append("")
-    return "\n".join(lines).encode("utf-8")
+WEB_DIR = Path(__file__).resolve().parents[1] / "web"
+# parents: server → farm_edge_agent → src → farm-edge-agent (project root)
+ASSETS_DIR = Path(__file__).resolve().parents[3] / "assets"
+_VALID_AXES = {"x", "y", "z", "rx", "ry", "rz"}
+DEFAULT_STEP_MM = 5.0
+DEFAULT_STEP_RAD = math.radians(2.0)
 
 
-async def healthz(request: web.Request) -> web.Response:
+def _sse(event: dict[str, Any]) -> bytes:
+    return f"data: {json.dumps(event, separators=(',', ':'))}\n\n".encode()
+
+
+# ── routes ──────────────────────────────────────────────────────────────────
+
+
+async def healthz(_: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
-async def get_scene(request: web.Request) -> web.Response:
-    supervisor: RunSupervisor = request.app["supervisor"]
-    return web.json_response(supervisor.scene_spec())
-
-
 async def get_world(request: web.Request) -> web.Response:
-    supervisor: RunSupervisor = request.app["supervisor"]
-    return web.json_response(supervisor.snapshot_world())
+    return web.json_response(request.app["supervisor"].snapshot())
 
 
 async def stream_world(request: web.Request) -> web.StreamResponse:
     bus: EventBus = request.app["bus"]
-    supervisor: RunSupervisor = request.app["supervisor"]
+    supervisor: Supervisor = request.app["supervisor"]
     resp = web.StreamResponse(headers=SSE_HEADERS)
     await resp.prepare(request)
-    await resp.write(_sse_format({"type": "world_snapshot", **supervisor.snapshot_world()}))
+    await resp.write(_sse({"type": "world_snapshot", **supervisor.snapshot()}))
     q = await bus.subscribe("world")
     try:
         while not request.transport.is_closing():
             try:
                 event = await asyncio.wait_for(q.get(), timeout=15.0)
-                await resp.write(_sse_format(event))
+                await resp.write(_sse(event))
             except TimeoutError:
                 await resp.write(b": ping\n\n")
     finally:
@@ -83,69 +82,108 @@ async def stream_world(request: web.Request) -> web.StreamResponse:
     return resp
 
 
-async def post_run(request: web.Request) -> web.Response:
+async def post_jog(request: web.Request) -> web.Response:
     body = await request.json()
-    if not isinstance(body, dict) or "task" not in body:
-        return web.json_response({"error": "body must include 'task'"}, status=400)
-    task = str(body["task"]).strip()
-    if not task:
-        return web.json_response({"error": "task is empty"}, status=400)
-    supervisor: RunSupervisor = request.app["supervisor"]
-    status = supervisor.submit_run(task)
-    return web.json_response(status.__dict__, status=202)
-
-
-async def list_runs(request: web.Request) -> web.Response:
-    supervisor: RunSupervisor = request.app["supervisor"]
-    runs = supervisor.list_runs()
-    runs.sort(key=lambda r: r.submitted_at, reverse=True)
-    return web.json_response({"runs": [r.__dict__ for r in runs]})
-
-
-async def get_run(request: web.Request) -> web.Response:
-    rid = request.match_info["run_id"]
-    supervisor: RunSupervisor = request.app["supervisor"]
-    status = supervisor.get_run(rid)
-    if status is None:
-        return web.json_response({"error": "not found"}, status=404)
-    return web.json_response(status.__dict__)
-
-
-async def stream_runs_list(request: web.Request) -> web.StreamResponse:
-    supervisor: RunSupervisor = request.app["supervisor"]
-    bus: EventBus = request.app["bus"]
-    resp = web.StreamResponse(headers=SSE_HEADERS)
-    await resp.prepare(request)
-    await resp.write(_sse_format({
-        "type": "runs_snapshot",
-        "runs": [r.__dict__ for r in supervisor.list_runs()],
-    }))
-    q = await bus.subscribe("runs")
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be a JSON object"}, status=400)
+    axis = str(body.get("axis", "")).lower()
+    if axis not in _VALID_AXES:
+        return web.json_response(
+            {"error": f"axis must be one of {sorted(_VALID_AXES)}; got {axis!r}"},
+            status=400,
+        )
+    sign = body.get("sign")
+    if sign not in (-1, 1):
+        return web.json_response({"error": "sign must be -1 or +1"}, status=400)
+    step_mm = float(body.get("step_mm", DEFAULT_STEP_MM))
+    step_rad = float(body.get("step_rad", DEFAULT_STEP_RAD))
+    supervisor: Supervisor = request.app["supervisor"]
     try:
-        while not request.transport.is_closing():
-            try:
-                event = await asyncio.wait_for(q.get(), timeout=15.0)
-                await resp.write(_sse_format(event))
-            except TimeoutError:
-                await resp.write(b": ping\n\n")
-    finally:
-        bus.unsubscribe("runs", q)
-    return resp
+        result = await asyncio.to_thread(
+            supervisor.jog, axis, sign, step_mm=step_mm, step_rad=step_rad
+        )
+    except Exception as exc:
+        log.warning("jog rejected: %s", exc)
+        return web.json_response({"error": str(exc)}, status=409)
+    return web.json_response(result)
 
 
-_VALID_CAMS = {"exterior", "wrist", "topdown"}
+async def post_home(request: web.Request) -> web.Response:
+    supervisor: Supervisor = request.app["supervisor"]
+    try:
+        snap = await asyncio.to_thread(supervisor.home)
+    except Exception as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    return web.json_response(snap)
+
+
+async def post_gripper(request: web.Request) -> web.Response:
+    body = await request.json()
+    if not isinstance(body, dict) or "state" not in body:
+        return web.json_response({"error": "body must include 'state'"}, status=400)
+    state = str(body["state"]).lower()
+    if state not in ("open", "closed"):
+        return web.json_response({"error": "state must be 'open' or 'closed'"}, status=400)
+    supervisor: Supervisor = request.app["supervisor"]
+    try:
+        snap = await asyncio.to_thread(supervisor.set_gripper, state)
+    except Exception as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    return web.json_response(snap)
+
+
+async def post_estop(request: web.Request) -> web.Response:
+    supervisor: Supervisor = request.app["supervisor"]
+    result = await asyncio.to_thread(supervisor.estop)
+    return web.json_response(result)
+
+
+async def post_estop_clear(request: web.Request) -> web.Response:
+    supervisor: Supervisor = request.app["supervisor"]
+    result = await asyncio.to_thread(supervisor.estop_clear)
+    return web.json_response(result)
+
+
+async def post_cameras_swap(request: web.Request) -> web.Response:
+    supervisor: Supervisor = request.app["supervisor"]
+    result = await asyncio.to_thread(supervisor.swap_cameras)
+    return web.json_response(result)
 
 
 async def get_camera_jpeg(request: web.Request) -> web.Response:
     name = request.match_info["name"]
-    if name not in _VALID_CAMS:
-        return web.json_response({"error": f"unknown camera {name!r}"}, status=404)
-    supervisor: RunSupervisor = request.app["supervisor"]
+    supervisor: Supervisor = request.app["supervisor"]
+    valid = supervisor.cameras() or ["exterior", "wrist", "topdown", "base"]
+    if name not in valid:
+        return web.json_response(
+            {"error": f"unknown camera {name!r}; backend has {valid}"}, status=404,
+        )
+
+    # Fast path: if the backend can hand us pre-encoded JPEG bytes
+    # (XArmBackend's cam subprocess is already emitting them), proxy
+    # them straight to the browser. Avoids a decode → resize → re-encode
+    # round-trip per request, which at 10 Hz × 2 cams adds real CPU.
+    backend = getattr(supervisor, "_backend", None)
+    fast = getattr(backend, "camera_jpeg", None)
+    if callable(fast):
+        try:
+            blob = await asyncio.to_thread(fast, name)
+        except Exception as exc:
+            return web.json_response({"error": f"camera fetch failed: {exc}"}, status=500)
+        if blob is not None:
+            return web.Response(
+                body=blob, content_type="image/jpeg",
+                headers={"Cache-Control": "no-store"},
+            )
+
+    # Generic path: render → PIL encode (used by the sim backend).
     try:
         from PIL import Image
-        img = supervisor.render_camera(name, width=480, height=360)
-    except Exception as e:
-        return web.json_response({"error": f"render failed: {e}"}, status=500)
+        img = await asyncio.to_thread(
+            supervisor.render_camera, name, width=480, height=360
+        )
+    except Exception as exc:
+        return web.json_response({"error": f"render failed: {exc}"}, status=500)
     buf = io.BytesIO()
     Image.fromarray(img).save(buf, format="JPEG", quality=82)
     return web.Response(
@@ -154,85 +192,62 @@ async def get_camera_jpeg(request: web.Request) -> web.Response:
     )
 
 
-async def get_camera_depth(request: web.Request) -> web.Response:
-    name = request.match_info["name"]
-    if name not in _VALID_CAMS:
-        return web.json_response({"error": f"unknown camera {name!r}"}, status=404)
-    supervisor: RunSupervisor = request.app["supervisor"]
-    try:
-        import numpy as np
-        from PIL import Image
-        depth = supervisor.render_camera_depth(name, width=320, height=240)
-        d = np.clip(depth, 0.3, 1.6)
-        norm = (d - d.min()) / max(1e-6, d.max() - d.min())
-        r = (255 * (0.13 + 4.1 * norm - 4.5 * norm**2 + norm**3)).clip(0, 255).astype("uint8")
-        g = (255 * (0.05 + 1.8 * norm - 0.8 * norm**2)).clip(0, 255).astype("uint8")
-        b = (255 * (0.85 - 1.6 * norm + 0.7 * norm**2)).clip(0, 255).astype("uint8")
-        rgb = np.stack([r, g, b], axis=-1)
-    except Exception as e:
-        return web.json_response({"error": f"depth render failed: {e}"}, status=500)
-    buf = io.BytesIO()
-    Image.fromarray(rgb).save(buf, format="PNG")
-    return web.Response(
-        body=buf.getvalue(), content_type="image/png",
-        headers={"Cache-Control": "no-store"},
-    )
+async def serve_dashboard(_: web.Request) -> web.Response:
+    index = WEB_DIR / "index.html"
+    if not index.is_file():
+        return web.Response(text="dashboard not built (missing web/index.html)", status=500)
+    return web.Response(body=index.read_bytes(), content_type="text/html")
 
 
-async def get_inspect(request: web.Request) -> web.Response:
-    supervisor: RunSupervisor = request.app["supervisor"]
-    return web.json_response(supervisor.inspect())
+# ── wiring ──────────────────────────────────────────────────────────────────
 
 
-async def stream_inspect(request: web.Request) -> web.StreamResponse:
-    supervisor: RunSupervisor = request.app["supervisor"]
-    bus: EventBus = request.app["bus"]
-    resp = web.StreamResponse(headers=SSE_HEADERS)
-    await resp.prepare(request)
-    await resp.write(_sse_format({"type": "inspect", **supervisor.inspect()}))
-    q = await bus.subscribe("inspect")
-    try:
-        while not request.transport.is_closing():
-            try:
-                event = await asyncio.wait_for(q.get(), timeout=2.0)
-                await resp.write(_sse_format(event))
-            except TimeoutError:
-                await resp.write(
-                    _sse_format({"type": "inspect", **supervisor.inspect()})
-                )
-    finally:
-        bus.unsubscribe("inspect", q)
-    return resp
+def build_app(*, backend: RobotBackend | None = None) -> web.Application:
+    """Build the aiohttp app. If ``backend`` is omitted, the sim backend
+    is used (so existing tests keep working). Production callers pass
+    a configured backend (SimBackend or XArmBackend) explicitly."""
+    if backend is None:
+        from farm_edge_agent.backends import SimBackend
+        backend = SimBackend()
 
-
-def build_app() -> web.Application:
     app = web.Application(client_max_size=2_000_000)
     bus = EventBus(history=400)
-    supervisor = RunSupervisor(bus)
+    supervisor = Supervisor(bus, backend=backend)
     app["bus"] = bus
     app["supervisor"] = supervisor
 
-    async def _on_startup(app: web.Application) -> None:
+    async def _on_startup(_: web.Application) -> None:
         bus.attach_loop(asyncio.get_running_loop())
 
+    async def _on_cleanup(_: web.Application) -> None:
+        supervisor.shutdown()
+
     app.on_startup.append(_on_startup)
+    app.on_cleanup.append(_on_cleanup)
 
     routes = [
+        web.get("/", serve_dashboard),
         web.get("/healthz", healthz),
-        web.get("/v1/scene", get_scene),
         web.get("/v1/world", get_world),
         web.get("/v1/world/stream", stream_world),
-        web.post("/v1/runs", post_run),
-        web.get("/v1/runs", list_runs),
-        web.get("/v1/runs:stream", stream_runs_list),
-        web.get("/v1/runs/{run_id}", get_run),
+        web.post("/v1/teleop/jog", post_jog),
+        web.post("/v1/teleop/home", post_home),
+        web.post("/v1/teleop/gripper", post_gripper),
+        web.post("/v1/teleop/estop", post_estop),
+        web.post("/v1/teleop/estop/clear", post_estop_clear),
         web.get("/v1/cameras/{name}.jpg", get_camera_jpeg),
-        web.get("/v1/cameras/{name}.depth.png", get_camera_depth),
-        web.get("/v1/inspect", get_inspect),
-        web.get("/v1/inspect/stream", stream_inspect),
+        web.post("/v1/cameras/swap", post_cameras_swap),
     ]
     for route in routes:
         app.router.add_route(route.method, route.path, route.handler)
+
+    if WEB_DIR.is_dir():
+        app.router.add_static("/web/", path=str(WEB_DIR), show_index=False)
+    # Serve the URDF + STL meshes so the in-browser Three.js scene can load
+    # them. The URDF references its meshes by relative path so this single
+    # static route covers everything (uf850.urdf, meshes/visual/*.stl, etc.).
+    if ASSETS_DIR.is_dir():
+        app.router.add_static("/assets/", path=str(ASSETS_DIR), show_index=False)
 
     cors = aiohttp_cors.setup(
         app,
@@ -244,15 +259,40 @@ def build_app() -> web.Application:
         },
     )
     for r in list(app.router.routes()):
-        cors.add(r)
+        try:
+            cors.add(r)
+        except ValueError:
+            # aiohttp_cors raises on the static route; skip it.
+            pass
 
     return app
 
 
-def run(host: str = "127.0.0.1", port: int = 8787) -> None:
+def run(
+    host: str = "127.0.0.1",
+    port: int = 8787,
+    *,
+    ros_port: int = 10000,
+    backend: RobotBackend | None = None,
+) -> None:
     logging.basicConfig(level=logging.INFO)
-    app = build_app()
-    log.info("farm edge daemon listening on http://%s:%d", host, port)
+    app = build_app(backend=backend)
+
+    from farm_edge_agent.ros_bridge import RosTcpBridge
+    bridge = RosTcpBridge(supervisor=app["supervisor"], host=host, port=ros_port)
+    bridge.start()
+    app["ros_bridge"] = bridge
+
+    async def _stop_bridge(_: web.Application) -> None:
+        bridge.stop()
+
+    app.on_cleanup.append(_stop_bridge)
+
+    backend_name = getattr(app["supervisor"].backend, "backend_name", "?")
+    log.info(
+        "farm edge daemon (%s): http://%s:%d  ·  ros-tcp tcp://%s:%d",
+        backend_name, host, port, host, ros_port,
+    )
     web.run_app(app, host=host, port=port, print=None)
 
 

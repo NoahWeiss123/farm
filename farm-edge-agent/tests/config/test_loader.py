@@ -58,7 +58,6 @@ def test_load_basic_config(tmp_home: Path) -> None:
     assert cfg.driver == "lerobot-mock"
     assert cfg.camera.wrist.device == "/dev/video0"
     assert cfg.camera.overhead is None
-    assert cfg.safety.velocity_cap_mps == 0.25
     assert cfg.telemetry.upload_frames is True
 
 

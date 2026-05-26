@@ -2,19 +2,13 @@ from __future__ import annotations
 
 import click
 
-from farm_edge_agent.cli.commands import (
-    config,
-    run,
-    serve,
-    start,
-    version,
-)
+from farm_edge_agent.cli.commands import config, serve, version
 
 
 @click.group(
     invoke_without_command=True,
     context_settings={"help_option_names": ["-h", "--help"]},
-    help="FARM Edge Agent CLI — Pi0.5 + UFactory 850 harness.",
+    help="FARM Edge Agent CLI — UF850 sim + ROS-TCP teleop bridge.",
 )
 @click.option("--config", "config_path", type=click.Path(), default=None,
               help="Path to config file (overrides ~/.farm/config.yaml).")
@@ -38,8 +32,6 @@ def cli(
 
 
 cli.add_command(config.config)
-cli.add_command(start.start)
-cli.add_command(run.run)
 cli.add_command(version.version)
 cli.add_command(serve.serve)
 

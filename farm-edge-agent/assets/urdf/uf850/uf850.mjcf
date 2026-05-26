@@ -10,6 +10,11 @@
     <flag warmstart="enable"/>
   </option>
 
+  <!-- Offscreen framebuffer big enough for the dashboard's scene render. -->
+  <visual>
+    <global offwidth="1280" offheight="960"/>
+  </visual>
+
   <!-- Collision groups via contype/conaffinity bitmasks. Pairs collide iff
        (a.contype & b.conaffinity) | (b.contype & a.conaffinity) is nonzero.
 

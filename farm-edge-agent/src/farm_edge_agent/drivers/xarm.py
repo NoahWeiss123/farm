@@ -97,6 +97,7 @@ class XArmDriver:
         velocity_cap: float = _DEFAULT_VELOCITY_CAP,
         *,
         timeout: float = 10.0,
+        wait: bool = True,
     ) -> None:
         api = self._require_api()
         current = self._read_pose(api, timeout=timeout)
@@ -116,7 +117,7 @@ class XArmDriver:
             *pose,
             relative=True,
             speed=velocity_cap,
-            wait=True,
+            wait=wait,
             timeout=timeout,
         )
         self._check_motion_code("set_position", code, timeout)
@@ -136,7 +137,13 @@ class XArmDriver:
         api = self._require_api()
         return self._read_pose(api, timeout=timeout)
 
-    def set_gripper(self, state: GripperState, *, timeout: float = 5.0) -> None:
+    def set_gripper(
+        self,
+        state: GripperState,
+        *,
+        timeout: float = 5.0,
+        wait: bool = True,
+    ) -> None:
         api = self._require_api()
         position = _GRIPPER_POSITIONS[state]
         code = self._call(
@@ -144,10 +151,25 @@ class XArmDriver:
             timeout,
             api.set_gripper_position,
             position,
-            wait=True,
+            wait=wait,
             timeout=timeout,
         )
         self._check_motion_code("set_gripper_position", code, timeout)
+
+    def read_gripper_position(self, *, timeout: float = 2.0) -> float:
+        """Raw gripper opening in the SDK's native scale (0 = closed,
+        850 = fully open). Returns NaN if the SDK call fails so the
+        caller can fall through to the commanded state."""
+        api = self._require_api()
+        try:
+            code, pos = self._call(
+                "get_gripper_position", timeout, api.get_gripper_position
+            )
+        except XArmDriverError:
+            return float("nan")
+        if code != _SDK_OK or pos is None:
+            return float("nan")
+        return float(pos)
 
     def is_estop_armed(self, *, timeout: float = 2.0) -> bool:
         api = self._require_api()
@@ -158,7 +180,7 @@ class XArmDriver:
             )
         return state in (_STATE_SPORT, _STATE_PAUSE)
 
-    def home(self, *, timeout: float = 30.0) -> None:
+    def home(self, *, timeout: float = 30.0, wait: bool = True) -> None:
         api = self._require_api()
         self._check_envelope(self._home_pose)
         code = self._call(
@@ -167,7 +189,7 @@ class XArmDriver:
             api.set_position,
             *self._home_pose,
             relative=False,
-            wait=True,
+            wait=wait,
             timeout=timeout,
         )
         self._check_motion_code("home", code, timeout)

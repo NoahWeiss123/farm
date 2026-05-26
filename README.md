@@ -1,52 +1,62 @@
 # FARM
 
-Agent harness for Pi0.5 + UFactory 850. CS153 final project.
+UF850 sim + teleop harness. CS153 final project.
 
-High-level task → OpenAI decomposes into subtasks → each subtask runs through Pi0.5 → safety gates → arm executes.
-
-Everything runs in sim by default, no hardware required.
+Laptop side: MuJoCo sim, webviz-style browser dashboard, ROS-TCP-Endpoint
+bridge wired up so a future Quest VR client can plug in unmodified. No
+planner/policy stack today — the rewrite stripped that to focus on a clean
+teleop surface.
 
 ## Quickstart
 
-Need Python 3.12 and an OpenAI key.
+Need Python 3.12.
 
 ```bash
 git clone <this repo> && cd CS153
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ./farm-shared -e ./farm-edge-agent
-pip install mujoco openai opencv-python-headless aiohttp aiohttp-cors pillow
+pip install mujoco aiohttp aiohttp-cors pillow
 
-cp .env.example .env
-$EDITOR .env   # OPENAI_API_KEY=sk-...
-
-export $(grep -E '^[A-Z_]+=' .env | xargs)
-farm serve
+farm serve                  # opens the dashboard in your browser
 ```
 
-Try via curl:
-
-```bash
-curl -X POST http://127.0.0.1:8787/v1/runs -d '{"task": "pick the red block and place it on the cup"}'
-```
+The dashboard at http://127.0.0.1:8787/ shows three live MuJoCo camera
+feeds (exterior, wrist, topdown), joint bars, a TCP/RPY readout, and
+cartesian jog buttons. The Quest teleop bridge listens on `:10000` (ROS-TCP
+wire format) — speak it from any client and you can drive the arm.
 
 ## Layout
 
-- **`farm-edge-agent/`** — the agent harness. Drivers (MuJoCo sim, xArm real), Pi0.5 policy client, OpenAI task planner, safety enforcer, skill library, HTTP daemon.
+- **`farm-edge-agent/`** — the harness: sim, server (HTTP + SSE), ROS-TCP
+  bridge, web dashboard, CLI.
 - **`farm-shared/`** — shared error catalog.
-- **`farm-cloud/modal/`** — Pi0.5 inference server (Modal, ~24 GB GPU).
-
-## How a run flows
-
-POST `/v1/runs` → RunSupervisor picks backend → **GPT path**: OpenAI decomposes task into skill calls, each skill emits action chunks → **Pi0.5 path**: camera + joints + prompt → Modal endpoint → joint delta actions at 20 Hz → SafetyEnforcer gates every chunk (envelope, velocity, singularity) → Driver executes on sim or real arm.
+- **`farm-cloud/`** — placeholder for future GPU-side deployment.
 
 ## Commands
 
 ```bash
-farm serve                          # daemon on :8787
-pytest farm-edge-agent/tests        # 106 tests
+farm serve                          # daemon + dashboard + ROS-TCP bridge
+farm config init                    # scaffold ~/.farm/config.yaml
+pytest farm-edge-agent/tests
 ruff check .
 ```
 
-## Adding a skill
+## HTTP API
 
-Write a function in `farm_edge_agent/skills/library.py`, call `register(SkillSpec(...))`, restart `farm serve`. The planner picks it up automatically.
+```text
+GET  /                       — dashboard
+GET  /v1/world               — current sim snapshot
+GET  /v1/world/stream        — SSE stream of snapshots
+POST /v1/teleop/jog          — {axis, sign, step_mm?, step_rad?}
+POST /v1/teleop/home         — drive arm to HOME_JOINTS
+POST /v1/teleop/gripper      — {state: "open" | "closed"}
+GET  /v1/cameras/{name}.jpg  — exterior | wrist | topdown
+```
+
+## ROS-TCP bridge
+
+Listens on TCP `:10000`. Speaks the
+`Unity.Robotics.ROSTCPConnector` wire format (4-byte topic length + UTF-8
+topic + 4-byte body length + body). Today it accepts `/q2r_*` Quest
+publishers and pumps `/joint_states` outbound at 10 Hz. See
+`src/farm_edge_agent/ros_bridge/` for the full topic schema list.

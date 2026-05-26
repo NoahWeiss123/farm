@@ -18,7 +18,6 @@ from .schema import (
     CameraConfig,
     CameraView,
     Config,
-    SafetyConfig,
     TelemetryConfig,
 )
 
@@ -39,7 +38,6 @@ __all__ = [
     "ConfigNotFoundError",
     "EnvVarMissingError",
     "Finding",
-    "SafetyConfig",
     "Severity",
     "TelemetryConfig",
     "check",

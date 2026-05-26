@@ -12,8 +12,6 @@ SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
 SUBCOMMANDS = [
     "config",
-    "start",
-    "run",
     "version",
     "serve",
 ]
@@ -69,13 +67,3 @@ def test_global_flags_accepted() -> None:
     assert result.exit_code == 0
 
 
-def test_stub_subcommands_exit_zero() -> None:
-    runner = CliRunner()
-    stubs = [
-        ["start"],
-        ["run", "pick the red block"],
-    ]
-    for argv in stubs:
-        result = runner.invoke(cli, argv)
-        assert result.exit_code == 0, f"failed: {argv} -> {result.output}"
-        assert "[FARM] not implemented yet" in result.output, f"missing stub marker: {argv}"

@@ -33,14 +33,6 @@ class ArmConfig(BaseModel):
     ip: str | None = None
 
 
-class SafetyConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    workspace_envelope: Path | None = None
-    velocity_cap_mps: float = 0.25
-    watchdog_timeout_ms: int = 1000
-
-
 class TelemetryConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -55,5 +47,4 @@ class Config(BaseModel):
     driver: Driver = "lerobot-mock"
     arm: ArmConfig = Field(default_factory=ArmConfig)
     camera: CameraConfig
-    safety: SafetyConfig = Field(default_factory=SafetyConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)

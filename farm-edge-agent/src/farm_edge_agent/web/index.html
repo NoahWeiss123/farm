@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FARM · UF850</title>
+  <style>
+    :root {
+      --bg: #f5f5f5;
+      --card: #ffffff;
+      --fg: #111;
+      --muted: #6b6b6b;
+      --soft: #d6d6d6;
+      --line: #000;
+      --accent: #111;
+      --green: #2a8a3a;
+      --green-soft: #f0f9f3;
+      --green-hover: #d9f0e0;
+      --red: #c0392b;
+      --red-soft: #fdf0f0;
+      --red-hover: #f7dada;
+      --amber: #c08a2a;
+      --pad: 16px;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { background: var(--bg); color: var(--fg); }
+    body { overflow: hidden; font-family: -apple-system, "Segoe UI", system-ui, sans-serif; }
+
+    .panel {
+      background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    }
+
+    /* ── Top-left card ────────────────────────────────────────────────── */
+    #ui {
+      position: fixed; top: var(--pad); left: var(--pad); z-index: 10;
+      width: 380px; padding: var(--pad);
+      font-size: 13px;
+      max-height: calc(100vh - 2 * var(--pad));
+      overflow-y: auto;
+    }
+    .section + .section { margin-top: 18px; }
+    .section-label {
+      font-size: 10px; font-weight: 600; letter-spacing: 0.12em;
+      text-transform: uppercase; color: #888; margin-bottom: 10px;
+    }
+    #status {
+      font-size: 13px; font-weight: 500; color: var(--fg);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
+    /* Backend chip — small label up top */
+    #backendChip {
+      display: inline-block; padding: 2px 8px; margin-bottom: 8px;
+      font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+      color: #fff; background: #444; border-radius: 4px;
+    }
+    #backendChip.xarm { background: #c0392b; }
+    #backendChip.sim  { background: #2a8a3a; }
+
+    /* Joint readouts: name + value bar + numeric value, same as webviz */
+    #joints {
+      display: grid; grid-template-columns: 52px 1fr 56px;
+      gap: 7px 10px;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 11px;
+    }
+    #joints .name { text-align: right; color: var(--muted); align-self: center; line-height: 1; }
+    #joints .track {
+      position: relative; height: 8px; align-self: center;
+      background: #f0f0f0; border: 1px solid var(--soft); border-radius: 4px;
+      overflow: hidden;
+    }
+    #joints .track::before {
+      content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px;
+      background: rgba(0,0,0,0.3);
+    }
+    #joints .fill {
+      position: absolute; top: 0; bottom: 0; background: var(--accent);
+      transition: left 80ms linear, width 80ms linear;
+    }
+    #joints .fill.grip { background: var(--amber); }
+    #joints .val { text-align: right; color: var(--fg); align-self: center; line-height: 1; }
+    #joints .placeholder { grid-column: 1 / -1; color: var(--muted); font-style: italic; }
+
+    /* Buttons */
+    .btn {
+      display: block; width: 100%; height: 34px; padding: 0 12px;
+      font-family: inherit; font-size: 13px; font-weight: 500;
+      color: var(--fg); background: #fff; border: 1px solid var(--line);
+      border-radius: 6px; cursor: pointer;
+      transition: background 80ms;
+    }
+    .btn + .btn { margin-top: 8px; }
+    .btn:hover:not(:disabled) { background: #f3f3f3; }
+    .btn:active:not(:disabled) { background: #e6e6e6; }
+    .btn:disabled { opacity: 0.4; cursor: default; }
+    .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .btn.primary:hover:not(:disabled) { background: #2a2a2a; }
+    .btn.success { background: var(--green-soft); color: #1e5e2a; border-color: var(--green); }
+    .btn.success:hover:not(:disabled) { background: var(--green-hover); }
+    .btn.danger { background: var(--red-soft); color: #8a2118; border-color: var(--red); }
+    .btn.danger:hover:not(:disabled) { background: var(--red-hover); }
+
+    /* JOG grid */
+    #jog {
+      display: grid;
+      grid-template-columns: 44px 1fr 1fr;
+      gap: 6px 6px;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 12px;
+    }
+    #jog .axis { text-align: right; align-self: center; color: var(--muted); }
+    #jog button {
+      height: 30px; padding: 0;
+      font-family: inherit; font-size: 14px; font-weight: 600;
+      color: var(--fg); background: #fff; border: 1px solid var(--line);
+      border-radius: 4px; cursor: pointer; transition: background 80ms;
+    }
+    #jog button:hover:not(:disabled) { background: #f3f3f3; }
+    #jog button:active:not(:disabled) { background: #e6e6e6; }
+    #jog button.busy { opacity: 0.5; cursor: wait; }
+    #jog .step-row {
+      grid-column: 1 / -1; display: flex; gap: 10px; align-items: center;
+      margin-top: 4px; font-size: 11px; color: var(--muted);
+    }
+    #jog .step-row input {
+      width: 60px; height: 24px; padding: 0 6px;
+      font-family: inherit; font-size: 11px;
+      border: 1px solid var(--soft); border-radius: 4px;
+      background: #fff;
+    }
+
+    /* ── Top-right camera stack ───────────────────────────────────────── */
+    #cams {
+      position: fixed; top: var(--pad); right: var(--pad); z-index: 10;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    #cams figure {
+      position: relative; width: 480px; height: 360px; margin: 0;
+      border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+      background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    }
+    #cams img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    #cams figcaption {
+      position: absolute; top: 10px; left: 12px;
+      font-size: 10px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+      color: #fff; padding: 4px 8px; border-radius: 4px;
+      background: rgba(0,0,0,0.55); pointer-events: none;
+    }
+    #swapCamsBtn {
+      position: fixed; top: var(--pad); right: 510px; z-index: 11;
+      font-size: 11px; padding: 4px 10px;
+      background: #fff; border: 1px solid var(--soft); border-radius: 4px;
+      cursor: pointer; color: var(--muted);
+    }
+    #swapCamsBtn:hover { background: #f3f3f3; color: var(--fg); }
+
+    /* Pose readout, parked under the camera stack */
+    #readout {
+      position: fixed; top: 762px; right: var(--pad); z-index: 10;
+      width: 480px; padding: 12px 14px;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 12px; line-height: 1.55; color: #222;
+      white-space: pre; pointer-events: none;
+    }
+
+    /* ── Bottom-left help ─────────────────────────────────────────────── */
+    #help {
+      position: fixed; bottom: var(--pad); left: var(--pad);
+      color: rgba(0,0,0,0.4); font-size: 11px;
+    }
+
+    /* ── E-STOP top centre ────────────────────────────────────────────── */
+    #estopBar {
+      position: fixed; top: var(--pad); left: 50%; transform: translateX(-50%);
+      z-index: 50; display: flex; gap: 8px; align-items: center;
+    }
+    #estopBtn {
+      background: var(--red); color: #fff; border: 2px solid #6b1a13;
+      font-weight: 800; letter-spacing: 0.18em; font-size: 14px;
+      padding: 10px 24px; border-radius: 6px; cursor: pointer;
+      box-shadow: 0 2px 6px rgba(192,57,43,0.35);
+    }
+    #estopBtn:hover { background: #a32d22; }
+    #estopBtn:active { background: #862016; }
+    body.estopped #estopBtn { display: none; }
+    #estopClearBtn {
+      display: none;
+      background: #fff; color: var(--red); border: 2px solid var(--red);
+      font-weight: 700; padding: 10px 18px; border-radius: 6px; cursor: pointer;
+      font-size: 13px;
+    }
+    body.estopped #estopClearBtn { display: inline-block; }
+    body.estopped #ui { border-color: var(--red); }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="estopBar">
+    <button id="estopBtn">■ E-STOP</button>
+    <button id="estopClearBtn">Clear e-stop</button>
+  </div>
+
+  <div id="ui" class="panel">
+    <span id="backendChip">…</span>
+    <div class="section">
+      <div class="section-label">Status</div>
+      <div id="status">Connecting…</div>
+    </div>
+    <div class="section">
+      <div class="section-label">Joints</div>
+      <div id="joints"><div class="placeholder">waiting for /joint_states</div></div>
+    </div>
+    <div class="section">
+      <div class="section-label">Controls</div>
+      <button id="resetBtn" class="btn primary">Reset to home</button>
+      <button id="gripperBtn" class="btn">Gripper: open</button>
+    </div>
+    <div class="section">
+      <div class="section-label">Jog</div>
+      <div id="jog">
+        <div class="axis">X</div>
+        <button data-axis="x" data-sign="-1">X−</button>
+        <button data-axis="x" data-sign="1">X+</button>
+        <div class="axis">Y</div>
+        <button data-axis="y" data-sign="-1">Y−</button>
+        <button data-axis="y" data-sign="1">Y+</button>
+        <div class="axis">Z</div>
+        <button data-axis="z" data-sign="-1">Z−</button>
+        <button data-axis="z" data-sign="1">Z+</button>
+        <div class="axis">RX</div>
+        <button data-axis="rx" data-sign="-1">RX−</button>
+        <button data-axis="rx" data-sign="1">RX+</button>
+        <div class="axis">RY</div>
+        <button data-axis="ry" data-sign="-1">RY−</button>
+        <button data-axis="ry" data-sign="1">RY+</button>
+        <div class="axis">RZ</div>
+        <button data-axis="rz" data-sign="-1">RZ−</button>
+        <button data-axis="rz" data-sign="1">RZ+</button>
+        <div class="step-row">
+          <label>step mm <input id="stepMm" type="number" min="1" max="100" value="5"></label>
+          <label>step ° <input id="stepDeg" type="number" min="1" max="45" value="2"></label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="cams">
+    <figure><img id="camBase" alt="base camera feed"><figcaption>Base camera</figcaption></figure>
+    <figure><img id="camWrist" alt="wrist camera feed"><figcaption>Wrist camera</figcaption></figure>
+  </div>
+  <button id="swapCamsBtn" title="swap which D435 is base vs wrist">⇆ swap</button>
+
+  <div id="readout" class="panel">pose readout waiting…</div>
+
+  <div id="help">jog steps the TCP · SPACE = toggle e-stop · ESC = e-stop · drag scene to orbit</div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+
+    // ── Scene ────────────────────────────────────────────────────────────
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(devicePixelRatio);
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+    // The webviz renderer canvas is the page background — everything else
+    // is positioned on top via z-index.
+    renderer.domElement.style.position = 'fixed';
+    renderer.domElement.style.inset = '0';
+    renderer.domElement.style.zIndex = '0';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xf5f5f5);
+    scene.fog = new THREE.Fog(0xf5f5f5, 2.5, 8.0);
+
+    const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.01, 20);
+    camera.position.set(1.3, 0.7, 1.3);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0.7, 0.35, 0.25);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.update();
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+    const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+    sun.position.set(3, 5, 4);
+    sun.castShadow = true;
+    scene.add(sun);
+    scene.add(new THREE.DirectionalLight(0xccddff, 0.35).translateZ(-3).translateY(2));
+
+    const grid = new THREE.GridHelper(20.0, 200, 0x000000, 0x000000);
+    grid.material.opacity = 0.45;
+    grid.material.transparent = true;
+    grid.position.y = -0.001;
+    scene.add(grid);
+
+    // ROS Z-up → THREE Y-up.
+    const rosFrame = new THREE.Group();
+    rosFrame.rotation.x = -Math.PI / 2;
+    scene.add(rosFrame);
+
+    window.addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    let jointRotors = null;
+    let mimics = {};
+    let jointLimits = {};
+    let tcpLink = null;
+    // Ghost arm: a second URDF tree rendered translucent, driven by the
+    // "desired" (last-commanded) joint state from snap.target_joints.
+    // It runs ahead of the solid arm whenever the real arm is still
+    // catching up to a fresh command.
+    let ghostJointRotors = null;
+    let ghostMimics = {};
+
+    // ── Pose readout (hand/TCP in link_base) ─────────────────────────────
+    const readoutEl = document.getElementById('readout');
+    const _v = new THREE.Vector3(), _q = new THREE.Quaternion(),
+          _qros = new THREE.Quaternion(), _e = new THREE.Euler();
+    const fF = n => (n >= 0 ? ' ' : '') + n.toFixed(3);
+    const fD = r => { const d = r * 180 / Math.PI; return (d >= 0 ? ' ' : '') + d.toFixed(1) + '°'; };
+
+    function updateReadout() {
+      let hand = 'HAND (TCP)\n waiting...';
+      if (tcpLink) {
+        tcpLink.getWorldPosition(_v); rosFrame.worldToLocal(_v);
+        tcpLink.getWorldQuaternion(_q);
+        rosFrame.getWorldQuaternion(_qros).invert();
+        _q.premultiply(_qros);
+        _e.setFromQuaternion(_q, 'ZYX');
+        hand = 'HAND (TCP)\n' +
+               ` x ${fF(_v.x)}  y ${fF(_v.y)}  z ${fF(_v.z)}\n` +
+               ` R ${fD(_e.x)}  P ${fD(_e.y)}  Y ${fD(_e.z)}`;
+      }
+      readoutEl.textContent = hand;
+    }
+
+    (function render() {
+      requestAnimationFrame(render);
+      controls.update();
+      updateReadout();
+      renderer.render(scene, camera);
+    })();
+
+    // ── URDF parser ──────────────────────────────────────────────────────
+    const statusEl = document.getElementById('status');
+    const jointsEl = document.getElementById('joints');
+    const MAT_BASE = new THREE.MeshStandardMaterial({
+      color: 0xe8e8e8, roughness: 0.45, metalness: 0.08,
+    });
+    // Ghost: cool cyan tint, drawn AFTER the solid arm with depth test
+    // off so it never z-fights when the two meshes coincide. Combined
+    // with the visibility threshold below, the ghost is only on-screen
+    // when the real arm has meaningful distance left to travel.
+    const MAT_GHOST = new THREE.MeshStandardMaterial({
+      color: 0x4aa3df, roughness: 0.5, metalness: 0.05,
+      transparent: true, opacity: 0.45,
+      depthWrite: false, depthTest: false,
+    });
+    // Threshold for "ghost meaningfully differs from solid" — below this
+    // we hide the ghost entirely so the user sees a clean single arm at
+    // rest. 0.005 rad ≈ 0.29° — comfortably above the inevitable noise
+    // between an IK-predicted target and the real-arm joints converging
+    // to the same TCP pose via a different joint configuration.
+    const GHOST_HIDE_TOL_RAD = 0.005;
+
+    function parseVec3(str, def = '0 0 0') {
+      return (str || def).trim().split(/\s+/).map(Number);
+    }
+    function applyOrigin(obj, el) {
+      const xyz = parseVec3(el?.getAttribute('xyz'));
+      const rpy = parseVec3(el?.getAttribute('rpy'));
+      obj.position.set(...xyz);
+      // URDF rpy = extrinsic XYZ, equivalent to THREE intrinsic 'ZYX'.
+      obj.setRotationFromEuler(new THREE.Euler(rpy[0], rpy[1], rpy[2], 'ZYX'));
+    }
+
+    const URDF_URL = '/assets/urdf/uf850/uf850.urdf';
+    const URDF_BASE = '/assets/urdf/uf850/';
+
+    async function buildRobot(urdfText, material) {
+      const doc = new DOMParser().parseFromString(urdfText, 'text/xml');
+      const stlLoader = new STLLoader();
+
+      const jointDefs = {};
+      const mims = {};
+      const limits = {};
+      for (const j of doc.querySelectorAll('joint')) {
+        const type = j.getAttribute('type');
+        const parent = j.querySelector(':scope > parent')?.getAttribute('link');
+        const child = j.querySelector(':scope > child')?.getAttribute('link');
+        if (!type || !parent || !child) continue;
+        const name = j.getAttribute('name');
+        jointDefs[name] = {
+          type, parent, child,
+          originEl: j.querySelector(':scope > origin'),
+          axisEl: j.querySelector(':scope > axis'),
+        };
+        const lim = j.querySelector(':scope > limit');
+        if (lim) {
+          const lo = parseFloat(lim.getAttribute('lower') ?? 'NaN');
+          const hi = parseFloat(lim.getAttribute('upper') ?? 'NaN');
+          if (!Number.isNaN(lo) && !Number.isNaN(hi) && hi > lo) limits[name] = [lo, hi];
+        }
+        const mim = j.querySelector(':scope > mimic');
+        if (mim) {
+          mims[name] = {
+            source: mim.getAttribute('joint'),
+            mult: parseFloat(mim.getAttribute('multiplier') ?? '1'),
+            off: parseFloat(mim.getAttribute('offset') ?? '0'),
+          };
+        }
+      }
+
+      const linkGroups = {};
+      for (const l of doc.querySelectorAll('link')) {
+        const name = l.getAttribute('name');
+        const g = new THREE.Group();
+        g.name = name;
+        linkGroups[name] = g;
+        for (const visual of l.querySelectorAll('visual')) {
+          const filename = visual.querySelector('mesh')?.getAttribute('filename');
+          if (!filename || !filename.toLowerCase().endsWith('.stl')) continue;
+          // URDF references meshes by relative path (meshes/visual/...);
+          // resolve against the URDF's directory.
+          const url = URDF_BASE + filename;
+          const originEl = visual.querySelector(':scope > origin');
+          stlLoader.load(url, geom => {
+            geom.computeVertexNormals();
+            const mesh = new THREE.Mesh(geom, material.clone());
+            applyOrigin(mesh, originEl);
+            g.add(mesh);
+          }, null, err => console.warn('STL load failed:', url, err));
+        }
+      }
+
+      const rotors = {};
+      for (const [jname, jd] of Object.entries(jointDefs)) {
+        const parentGroup = linkGroups[jd.parent];
+        const childGroup = linkGroups[jd.child];
+        if (!parentGroup || !childGroup) continue;
+        const originGroup = new THREE.Group();
+        originGroup.name = 'origin_' + jname;
+        applyOrigin(originGroup, jd.originEl);
+        if (jd.type === 'revolute' || jd.type === 'continuous') {
+          const rotGroup = new THREE.Group();
+          rotGroup.name = 'rot_' + jname;
+          const axisArr = parseVec3(jd.axisEl?.getAttribute('xyz'), '0 0 1');
+          const axisVec = new THREE.Vector3(...axisArr).normalize();
+          rotors[jname] = { rotGroup, axis: axisVec };
+          originGroup.add(rotGroup);
+          rotGroup.add(childGroup);
+        } else {
+          originGroup.add(childGroup);
+        }
+        parentGroup.add(originGroup);
+      }
+
+      const children = new Set(Object.values(jointDefs).map(j => j.child));
+      const rootName = Object.keys(linkGroups).find(n => !children.has(n));
+      const rootGroup = linkGroups[rootName];
+      rosFrame.add(rootGroup);
+      return { jointRotors: rotors, mimics: mims, limits, linkGroups, rootGroup };
+    }
+
+    let ghostRoot = null;
+
+    function setJoint(name, val) {
+      const r = jointRotors && jointRotors[name];
+      if (r) r.rotGroup.quaternion.setFromAxisAngle(r.axis, val);
+    }
+    function setGhostJoint(name, val) {
+      const r = ghostJointRotors && ghostJointRotors[name];
+      if (r) r.rotGroup.quaternion.setFromAxisAngle(r.axis, val);
+    }
+
+    // ── Joint readout panel ──────────────────────────────────────────────
+    const DISPLAY_JOINTS = ['joint1','joint2','joint3','joint4','joint5','joint6','drive_joint'];
+    const JOINT_LABEL = { drive_joint: 'gripper' };
+    const DEFAULT_RANGE = { drive_joint: [0, 0.85] };
+    const jointRowEls = {};
+
+    function buildJointsPanel() {
+      jointsEl.innerHTML = '';
+      for (const jname of DISPLAY_JOINTS) {
+        const label = JOINT_LABEL[jname] || jname;
+        const nameEl = document.createElement('div'); nameEl.className = 'name'; nameEl.textContent = label;
+        const track = document.createElement('div'); track.className = 'track';
+        const fill = document.createElement('div');
+        fill.className = 'fill' + (jname === 'drive_joint' ? ' grip' : '');
+        track.appendChild(fill);
+        const val = document.createElement('div'); val.className = 'val'; val.textContent = '--';
+        jointsEl.appendChild(nameEl);
+        jointsEl.appendChild(track);
+        jointsEl.appendChild(val);
+        jointRowEls[jname] = { fill, val };
+      }
+    }
+
+    function paintJoint(jname, value) {
+      const row = jointRowEls[jname];
+      if (!row) return;
+      const [lo, hi] = jointLimits[jname] || DEFAULT_RANGE[jname] || [-Math.PI, Math.PI];
+      const v = Math.max(lo, Math.min(hi, value));
+      if (jname === 'drive_joint') {
+        const pct = ((v - lo) / (hi - lo)) * 100;
+        row.fill.style.left = '0';
+        row.fill.style.width = pct.toFixed(2) + '%';
+        row.val.textContent = (((v - lo) / (hi - lo)) * 100).toFixed(0).padStart(3) + '%';
+      } else {
+        const half = Math.max(Math.abs(lo), Math.abs(hi));
+        const pct = (Math.abs(v) / half) * 50;
+        if (v >= 0) { row.fill.style.left = '50%'; row.fill.style.width = pct.toFixed(2) + '%'; }
+        else        { row.fill.style.left = (50 - pct).toFixed(2) + '%'; row.fill.style.width = pct.toFixed(2) + '%'; }
+        const deg = v * 180 / Math.PI;
+        row.val.textContent = (deg >= 0 ? '+' : '') + deg.toFixed(1) + '°';
+      }
+    }
+
+    // ── Load URDF + subscribe to FARM SSE world stream ───────────────────
+    fetch(URDF_URL)
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); })
+      .then(async text => {
+        statusEl.textContent = 'Building scene...';
+        // Two passes — first the solid arm (what the real arm is doing
+        // RIGHT NOW), then the translucent ghost (where we last told it
+        // to go). STL fetches in the second pass hit the browser cache.
+        const built = await buildRobot(text, MAT_BASE);
+        const ghost = await buildRobot(text, MAT_GHOST);
+        return { built, ghost };
+      })
+      .then(({ built, ghost }) => {
+        jointRotors = built.jointRotors;
+        mimics = built.mimics;
+        jointLimits = built.limits;
+        const lg = built.linkGroups;
+        tcpLink = lg['link_tcp'] || lg['link6'] || lg['link_eef'] || lg['gripper_base_link'] || null;
+        ghostJointRotors = ghost.jointRotors;
+        ghostMimics = ghost.mimics;
+        ghostRoot = ghost.rootGroup;
+        // Ghost paints last so depth-test-off layers land on top of the
+        // solid arm cleanly.
+        ghostRoot.traverse(o => { if (o.isMesh) o.renderOrder = 10; });
+        ghostRoot.visible = false;
+        buildJointsPanel();
+        statusEl.textContent = 'Waiting for joints…';
+      })
+      .catch(err => {
+        statusEl.textContent = 'URDF error: ' + err.message;
+        console.error(err);
+      });
+
+    // Backend chip + e-stop state from the FARM snapshot.
+    function paintBackend(snap) {
+      const chip = document.getElementById('backendChip');
+      const name = snap.backend || 'sim';
+      chip.textContent = name === 'xarm' ? `UF850 · ${snap.arm_ip || '?'}` : 'SIM';
+      chip.classList.remove('sim', 'xarm');
+      chip.classList.add(name === 'xarm' ? 'xarm' : 'sim');
+    }
+    function paintEstop(snap) {
+      document.body.classList.toggle('estopped', !!snap.estopped);
+    }
+
+    // Map FARM's snapshot.joints[0..5] → joint1..joint6 + gripper_pos → drive_joint
+    const ARM_JOINT_NAMES = ['joint1','joint2','joint3','joint4','joint5','joint6'];
+    function applySnapshot(snap) {
+      if (!jointRotors || !Array.isArray(snap.joints)) return;
+
+      // ── Solid arm: real-time current joint state ────────────────────
+      const pos = {};
+      snap.joints.forEach((v, i) => {
+        const n = ARM_JOINT_NAMES[i];
+        if (!n) return;
+        pos[n] = v;
+        setJoint(n, v);
+        paintJoint(n, v);
+      });
+      const grip01 = typeof snap.gripper_pos === 'number' ? snap.gripper_pos : 0;
+      const [lo, hi] = jointLimits['drive_joint'] || DEFAULT_RANGE['drive_joint'];
+      const driveVal = lo + grip01 * (hi - lo);
+      pos['drive_joint'] = driveVal;
+      setJoint('drive_joint', driveVal);
+      paintJoint('drive_joint', driveVal);
+      for (const [mj, spec] of Object.entries(mimics)) {
+        const src = pos[spec.source];
+        if (src !== undefined) setJoint(mj, src * spec.mult + spec.off);
+      }
+
+      // ── Ghost arm: digital desired joint state ─────────────────────
+      if (ghostJointRotors && ghostRoot) {
+        const haveTarget = Array.isArray(snap.target_joints) && snap.target_joints.length;
+        const targets = haveTarget ? snap.target_joints : snap.joints;
+
+        // Decide visibility BEFORE poking quaternions so a hidden ghost
+        // doesn't keep painting stale geometry. The ghost is only on
+        // screen while there's a meaningful gap between commanded and
+        // measured joints.
+        let maxDiff = 0;
+        if (haveTarget) {
+          for (let i = 0; i < ARM_JOINT_NAMES.length; i++) {
+            const d = Math.abs((targets[i] ?? 0) - (snap.joints[i] ?? 0));
+            if (d > maxDiff) maxDiff = d;
+          }
+        }
+        ghostRoot.visible = maxDiff > GHOST_HIDE_TOL_RAD;
+
+        const gpos = {};
+        targets.forEach((v, i) => {
+          const n = ARM_JOINT_NAMES[i];
+          if (!n) return;
+          gpos[n] = v;
+          setGhostJoint(n, v);
+        });
+        gpos['drive_joint'] = driveVal;
+        setGhostJoint('drive_joint', driveVal);
+        for (const [mj, spec] of Object.entries(ghostMimics)) {
+          const src = gpos[spec.source];
+          if (src !== undefined) setGhostJoint(mj, src * spec.mult + spec.off);
+        }
+      }
+
+      statusEl.textContent = 'Live';
+    }
+
+    function connectStream() {
+      const es = new EventSource('/v1/world/stream');
+      es.onmessage = (ev) => {
+        let snap;
+        try { snap = JSON.parse(ev.data); } catch { return; }
+        if (!snap) return;
+        paintBackend(snap);
+        paintEstop(snap);
+        applySnapshot(snap);
+      };
+      es.onerror = () => { statusEl.textContent = 'SSE link lost — retrying'; };
+    }
+    connectStream();
+
+    // ── Camera feeds (poll JPEGs) ────────────────────────────────────────
+    function pollCam(imgId, name) {
+      const img = document.getElementById(imgId);
+      const tick = () => { img.src = `/v1/cameras/${name}.jpg?t=${Date.now()}`; };
+      img.onload  = () => setTimeout(tick, 50);
+      img.onerror = () => setTimeout(tick, 2000);
+      tick();
+    }
+    pollCam('camBase', 'base');
+    pollCam('camWrist', 'wrist');
+
+    document.getElementById('swapCamsBtn').addEventListener('click', async () => {
+      await fetch('/v1/cameras/swap', { method: 'POST' });
+    });
+
+    // ── Buttons ──────────────────────────────────────────────────────────
+    async function postJSON(url, body) {
+      const r = await fetch(url, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : '',
+      });
+      if (!r.ok) {
+        const t = await r.text();
+        throw new Error(`${r.status} ${t}`);
+      }
+      return r.json();
+    }
+
+    document.getElementById('resetBtn').addEventListener('click', async () => {
+      try { await postJSON('/v1/teleop/home'); }
+      catch (e) { console.error('home failed', e); }
+    });
+
+    const gripperBtn = document.getElementById('gripperBtn');
+    let gripperOpen = true;
+    gripperBtn.addEventListener('click', async () => {
+      const next = gripperOpen ? 'closed' : 'open';
+      try {
+        await postJSON('/v1/teleop/gripper', { state: next });
+        gripperOpen = !gripperOpen;
+        gripperBtn.textContent = `Gripper: ${next}`;
+      } catch (e) { console.error('gripper failed', e); }
+    });
+
+    document.querySelectorAll('#jog button[data-axis]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        if (btn.classList.contains('busy')) return;
+        if (document.body.classList.contains('estopped')) return;
+        btn.classList.add('busy');
+        const axis = btn.dataset.axis;
+        const sign = parseInt(btn.dataset.sign, 10);
+        const stepMm = parseFloat(document.getElementById('stepMm').value) || 5;
+        const stepDeg = parseFloat(document.getElementById('stepDeg').value) || 2;
+        const body = { axis, sign, step_mm: stepMm, step_rad: stepDeg * Math.PI / 180 };
+        try { await postJSON('/v1/teleop/jog', body); }
+        catch (e) { console.error('jog failed', e); alert(`jog failed: ${e.message}`); }
+        btn.classList.remove('busy');
+      });
+    });
+
+    document.getElementById('estopBtn').addEventListener('click', async () => {
+      try { await postJSON('/v1/teleop/estop'); }
+      catch (e) { console.error('estop failed', e); }
+    });
+    document.getElementById('estopClearBtn').addEventListener('click', async () => {
+      if (!confirm('Clear e-stop? Verify the workspace is safe first.')) return;
+      try { await postJSON('/v1/teleop/estop/clear'); }
+      catch (e) { console.error('estop clear failed', e); }
+    });
+
+    // Keyboard: Space toggles E-STOP; Esc forces stop.
+    document.addEventListener('keydown', async (ev) => {
+      const t = ev.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (ev.code === 'Escape') {
+        ev.preventDefault();
+        try { await postJSON('/v1/teleop/estop'); } catch (_e) {}
+      } else if (ev.code === 'Space') {
+        ev.preventDefault();
+        const url = document.body.classList.contains('estopped')
+          ? '/v1/teleop/estop/clear'
+          : '/v1/teleop/estop';
+        try { await postJSON(url); } catch (_e) {}
+      }
+    });
+  </script>
+</body>
+</html>
