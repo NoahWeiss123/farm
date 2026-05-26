@@ -70,9 +70,9 @@ class Pi05Server:
         """Cold-start: download checkpoint + warm up the policy."""
         import os
         os.environ.setdefault("OPENPI_CACHE", "/root/openpi_cache")
-        from openpi.training import config as _config
         from openpi.policies import policy_config
         from openpi.shared import download
+        from openpi.training import config as _config
 
         ckpt = download.maybe_download(CHECKPOINT)
         cfg = _config.get_config("pi05_droid")

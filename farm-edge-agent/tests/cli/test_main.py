@@ -11,17 +11,11 @@ from farm_edge_agent.cli.main import cli
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
 SUBCOMMANDS = [
-    "quickstart",
-    "login",
     "config",
     "start",
     "run",
-    "export",
-    "calibrate",
-    "card",
-    "doctor",
-    "verify",
     "version",
+    "serve",
 ]
 
 
@@ -70,14 +64,7 @@ def test_version_json_emits_structured_payload() -> None:
 
 def test_global_flags_accepted() -> None:
     runner = CliRunner()
-    args = [
-        "--config", "/tmp/farm.yaml",
-        "--workspace", "demo",
-        "--quiet",
-        "--auto-update",
-        "--accept-calibration",
-        "version",
-    ]
+    args = ["--config", "/tmp/farm.yaml", "--quiet", "version"]
     result = runner.invoke(cli, args)
     assert result.exit_code == 0
 
@@ -85,14 +72,8 @@ def test_global_flags_accepted() -> None:
 def test_stub_subcommands_exit_zero() -> None:
     runner = CliRunner()
     stubs = [
-        ["quickstart"],
-        ["login"],
         ["start"],
         ["run", "pick the red block"],
-        ["run", "--offline", "task"],
-        ["run", "--resume", "r_123"],
-        ["calibrate"],
-        ["verify", "r_123"],
     ]
     for argv in stubs:
         result = runner.invoke(cli, argv)

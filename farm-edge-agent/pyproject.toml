@@ -5,24 +5,26 @@ build-backend = "hatchling.build"
 [project]
 name = "farm-edge-agent"
 version = "0.0.1"
-description = "FARM Edge Agent: local CLI, drivers, safety, recovery, and run records."
+description = "FARM Edge Agent — Pi0.5 + UFactory 850 agent harness."
 requires-python = ">=3.12"
 dependencies = [
     "farm-shared @ {root:uri}/../farm-shared",
     "click>=8.1",
     "pydantic>=2.7",
     "pyyaml>=6.0",
-    "pyarrow>=14.0",
-    "websockets>=12",
+    "aiohttp>=3.9",
+    "aiohttp-cors>=0.7",
+    "numpy>=1.26",
+    "pillow>=10.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
-    "pandas>=2.0",
 ]
 arm = ["xarm-python-sdk>=1.17"]
+sim = ["mujoco>=3.1"]
 
 [project.scripts]
 farm = "farm_edge_agent.cli.main:main"

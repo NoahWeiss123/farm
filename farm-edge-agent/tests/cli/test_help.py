@@ -4,25 +4,15 @@ from click.testing import CliRunner
 from farm_edge_agent.cli.main import cli
 
 LEAF_COMMANDS: list[list[str]] = [
-    ["quickstart"],
-    ["login"],
     ["start"],
     ["run"],
-    ["export"],
-    ["calibrate"],
-    ["verify"],
     ["version"],
     ["config"],
     ["config", "init"],
     ["config", "doctor"],
     ["config", "show"],
     ["config", "set"],
-    ["card"],
-    ["card", "validate"],
-    ["doctor"],
-    ["doctor", "cameras"],
-    ["doctor", "network"],
-    ["doctor", "real-arm"],
+    ["serve"],
 ]
 
 

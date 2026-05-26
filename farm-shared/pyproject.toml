@@ -5,12 +5,9 @@ build-backend = "hatchling.build"
 [project]
 name = "farm-shared"
 version = "0.0.1"
-description = "Cross-package contracts for FARM: schemas, error catalog, protocol versions."
+description = "Shared error catalog for FARM."
 requires-python = ">=3.12"
-dependencies = [
-    "pydantic>=2.7",
-    "jsonschema>=4.22",
-]
+dependencies = []
 
 [project.optional-dependencies]
 dev = [
@@ -19,6 +16,3 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/farm_shared"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/farm_shared/schemas" = "farm_shared/schemas"
