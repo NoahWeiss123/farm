@@ -80,6 +80,15 @@ class XArmDriver:
             ("motion_enable", (), {"enable": True}),
             ("set_mode", (0,), {}),
             ("set_state", (0,), {}),
+            # Without these the gripper SDK calls silently no-op:
+            # set_gripper_position appears to succeed but no motion
+            # occurs, and get_gripper_position returns whatever the jaws
+            # happen to be parked at — which on the dashboard reads as a
+            # stuck "Gripper bar = 100%" if the gripper happens to be
+            # closed at boot.
+            ("set_gripper_mode", (0,), {}),
+            ("set_gripper_enable", (True,), {}),
+            ("set_gripper_speed", (2000,), {}),
         ):
             code = self._call(op, timeout, getattr(api, op), *args, **kwargs)
             self._check_motion_code(op, code, timeout)

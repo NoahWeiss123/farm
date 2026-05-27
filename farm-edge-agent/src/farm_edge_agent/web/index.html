@@ -44,19 +44,36 @@
       font-size: 10px; font-weight: 600; letter-spacing: 0.12em;
       text-transform: uppercase; color: #888; margin-bottom: 10px;
     }
-    #status {
-      font-size: 13px; font-weight: 500; color: var(--fg);
+
+    /* Status panel: Link / Backend / Headset */
+    #statusGrid {
+      display: grid; grid-template-columns: 72px 1fr;
+      gap: 6px 10px; font-size: 13px;
+    }
+    #statusGrid .key {
+      color: var(--muted); font-size: 10px; letter-spacing: 0.08em;
+      align-self: center; text-transform: uppercase;
+    }
+    #statusGrid .val {
+      align-self: center; line-height: 1; min-height: 18px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-
-    /* Backend chip — small label up top */
-    #backendChip {
-      display: inline-block; padding: 2px 8px; margin-bottom: 8px;
-      font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
-      color: #fff; background: #444; border-radius: 4px;
+    .pill {
+      display: inline-block; padding: 2px 8px; border-radius: 4px;
+      font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+      font-weight: 700; color: #fff; background: #888; line-height: 1.4;
     }
-    #backendChip.xarm { background: #c0392b; }
-    #backendChip.sim  { background: #2a8a3a; }
+    .pill.ok    { background: var(--green); }
+    .pill.warn  { background: var(--amber); }
+    .pill.bad   { background: var(--red); }
+    .pill.sim   { background: var(--green); }
+    .pill.xarm  { background: var(--green); }
+    .pill.muted { background: #888; }
+    #sceneNote {
+      margin-top: 8px; font-size: 11px; color: var(--muted); font-style: italic;
+      min-height: 14px;
+    }
+    #sceneNote.err { color: var(--red); font-style: normal; }
 
     /* Joint readouts: name + value bar + numeric value, same as webviz */
     #joints {
@@ -102,6 +119,16 @@
     .btn.danger { background: var(--red-soft); color: #8a2118; border-color: var(--red); }
     .btn.danger:hover:not(:disabled) { background: var(--red-hover); }
 
+    /* Recording panel */
+    #recState {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 12px; color: var(--muted); margin-bottom: 8px;
+      letter-spacing: 0.02em;
+    }
+    #recState.recording { color: #c33; font-weight: 600; }
+    .rec-buttons { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+    .rec-buttons .btn { margin-top: 0; }
+
     /* JOG grid */
     #jog {
       display: grid;
@@ -139,15 +166,27 @@
     #cams figure {
       position: relative; width: 480px; height: 360px; margin: 0;
       border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
-      background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+      background: #000; box-shadow: 0 1px 2px rgba(0,0,0,0.04);
     }
-    #cams img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    /* Camera tiles: black when no real feed (img hidden). When a frame
+       arrives, .live is added and the img becomes visible. */
+    #cams img {
+      width: 100%; height: 100%; object-fit: cover; display: block;
+      visibility: hidden; background: #000;
+    }
+    #cams img.live { visibility: visible; }
     #cams figcaption {
       position: absolute; top: 10px; left: 12px;
       font-size: 10px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
       color: #fff; padding: 4px 8px; border-radius: 4px;
       background: rgba(0,0,0,0.55); pointer-events: none;
     }
+    #cams .nofeed {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      color: rgba(255,255,255,0.55); font-size: 11px; letter-spacing: 0.12em;
+      text-transform: uppercase; pointer-events: none;
+    }
+    #cams figure.live .nofeed { display: none; }
     #swapCamsBtn {
       position: fixed; top: var(--pad); right: 510px; z-index: 11;
       font-size: 11px; padding: 4px 10px;
@@ -210,10 +249,14 @@
   </div>
 
   <div id="ui" class="panel">
-    <span id="backendChip">…</span>
     <div class="section">
       <div class="section-label">Status</div>
-      <div id="status">Connecting…</div>
+      <div id="statusGrid">
+        <div class="key">Link</div>     <div class="val"><span id="linkPill" class="pill muted">Connecting</span></div>
+        <div class="key">Backend</div>  <div class="val"><span id="backendPill" class="pill muted">…</span> <span id="backendDetail" style="color:var(--muted);font-size:11px;"></span></div>
+        <div class="key">Headset</div>  <div class="val"><span id="headsetPill" class="pill muted">Unknown</span></div>
+      </div>
+      <div id="sceneNote">scene loading…</div>
     </div>
     <div class="section">
       <div class="section-label">Joints</div>
@@ -223,6 +266,16 @@
       <div class="section-label">Controls</div>
       <button id="resetBtn" class="btn primary">Reset to home</button>
       <button id="gripperBtn" class="btn">Gripper: open</button>
+      <button id="driveModeBtn" class="btn">Mode: digital only</button>
+    </div>
+    <div class="section">
+      <div class="section-label">Recording</div>
+      <div id="recState">Idle</div>
+      <div class="rec-buttons">
+        <button id="recStartBtn" class="btn primary">● Start</button>
+        <button id="recSaveBtn" class="btn" disabled>Save</button>
+        <button id="recCancelBtn" class="btn" disabled>Cancel</button>
+      </div>
     </div>
     <div class="section">
       <div class="section-label">Jog</div>
@@ -254,8 +307,16 @@
   </div>
 
   <div id="cams">
-    <figure><img id="camBase" alt="base camera feed"><figcaption>Base camera</figcaption></figure>
-    <figure><img id="camWrist" alt="wrist camera feed"><figcaption>Wrist camera</figcaption></figure>
+    <figure id="figBase">
+      <img id="camBase" alt="base camera feed">
+      <div class="nofeed">no signal</div>
+      <figcaption>Base camera</figcaption>
+    </figure>
+    <figure id="figWrist">
+      <img id="camWrist" alt="wrist camera feed">
+      <div class="nofeed">no signal</div>
+      <figcaption>Wrist camera</figcaption>
+    </figure>
   </div>
   <button id="swapCamsBtn" title="swap which D435 is base vs wrist">⇆ swap</button>
 
@@ -311,6 +372,25 @@
     rosFrame.rotation.x = -Math.PI / 2;
     scene.add(rosFrame);
 
+    // Controller gizmo — a small AxesHelper + filled box at the Quest
+    // right-controller pose. Position arrives in arm-base mm (so divide
+    // by 1000 for THREE metres). Hidden until first pose frame, painted
+    // green while the trigger is held to indicate active control.
+    const ctrlGizmo = new THREE.Group();
+    ctrlGizmo.add(new THREE.AxesHelper(0.08));
+    const ctrlBoxMat = new THREE.MeshStandardMaterial({
+      color: 0xee9933, roughness: 0.4, metalness: 0.1,
+      transparent: true, opacity: 0.85,
+    });
+    const ctrlBox = new THREE.Mesh(
+      new THREE.BoxGeometry(0.04, 0.04, 0.10),
+      ctrlBoxMat,
+    );
+    ctrlGizmo.add(ctrlBox);
+    ctrlGizmo.visible = false;
+    rosFrame.add(ctrlGizmo);
+    const _ctrlEuler = new THREE.Euler();
+
     window.addEventListener('resize', () => {
       camera.aspect = innerWidth / innerHeight;
       camera.updateProjectionMatrix();
@@ -357,9 +437,28 @@
       renderer.render(scene, camera);
     })();
 
-    // ── URDF parser ──────────────────────────────────────────────────────
-    const statusEl = document.getElementById('status');
+    // ── Status panel ─────────────────────────────────────────────────────
     const jointsEl = document.getElementById('joints');
+    const linkPill = document.getElementById('linkPill');
+    const backendPill = document.getElementById('backendPill');
+    const backendDetail = document.getElementById('backendDetail');
+    const headsetPill = document.getElementById('headsetPill');
+    const sceneNoteEl = document.getElementById('sceneNote');
+
+    function setPill(el, cls, text) {
+      el.className = 'pill ' + cls;
+      el.textContent = text;
+    }
+    function setLink(state) {
+      // state: 'connecting' | 'live' | 'lost'
+      if (state === 'live') setPill(linkPill, 'ok', 'Live');
+      else if (state === 'lost') setPill(linkPill, 'bad', 'Lost link');
+      else setPill(linkPill, 'muted', 'Connecting');
+    }
+    function setScene(text, isError) {
+      sceneNoteEl.textContent = text || '';
+      sceneNoteEl.classList.toggle('err', !!isError);
+    }
     const MAT_BASE = new THREE.MeshStandardMaterial({
       color: 0xe8e8e8, roughness: 0.45, metalness: 0.08,
     });
@@ -532,14 +631,14 @@
       }
     }
 
-    // ── Load URDF + subscribe to FARM SSE world stream ───────────────────
-    fetch(URDF_URL)
+    // ── Load URDF (3D scene) ─────────────────────────────────────────────
+    // Scene loading is independent of the data link — the dashboard goes
+    // "Live" as soon as snapshots flow, even if STL meshes are still
+    // arriving. The scene-loading note clears when the URDF is parsed.
+    setScene('scene loading…');
+    fetchWithTimeout(URDF_URL, { cache: 'force-cache' }, 8000)
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); })
       .then(async text => {
-        statusEl.textContent = 'Building scene...';
-        // Two passes — first the solid arm (what the real arm is doing
-        // RIGHT NOW), then the translucent ghost (where we last told it
-        // to go). STL fetches in the second pass hit the browser cache.
         const built = await buildRobot(text, MAT_BASE);
         const ghost = await buildRobot(text, MAT_GHOST);
         return { built, ghost };
@@ -558,23 +657,50 @@
         ghostRoot.traverse(o => { if (o.isMesh) o.renderOrder = 10; });
         ghostRoot.visible = false;
         buildJointsPanel();
-        statusEl.textContent = 'Waiting for joints…';
+        setScene('');
       })
       .catch(err => {
-        statusEl.textContent = 'URDF error: ' + err.message;
+        setScene('scene unavailable — ' + err.message, true);
         console.error(err);
       });
 
-    // Backend chip + e-stop state from the FARM snapshot.
     function paintBackend(snap) {
-      const chip = document.getElementById('backendChip');
       const name = snap.backend || 'sim';
-      chip.textContent = name === 'xarm' ? `UF850 · ${snap.arm_ip || '?'}` : 'SIM';
-      chip.classList.remove('sim', 'xarm');
-      chip.classList.add(name === 'xarm' ? 'xarm' : 'sim');
+      if (name === 'xarm') {
+        setPill(backendPill, 'xarm', 'UF850');
+        backendDetail.textContent = snap.arm_ip ? snap.arm_ip : '';
+      } else {
+        setPill(backendPill, 'sim', 'SIM');
+        backendDetail.textContent = '';
+      }
+    }
+    function paintHeadset(snap) {
+      const h = snap.headset;
+      if (!h) { setPill(headsetPill, 'muted', 'Unknown'); return; }
+      if (h.active) setPill(headsetPill, 'ok', 'Active');
+      else if (h.connected) setPill(headsetPill, 'warn', 'Idle');
+      else setPill(headsetPill, 'muted', 'Disconnected');
     }
     function paintEstop(snap) {
       document.body.classList.toggle('estopped', !!snap.estopped);
+    }
+
+    function paintControllerGizmo(snap) {
+      const cp = snap.controller_pose;
+      if (!cp || !Array.isArray(cp.xyz_mm) || !Array.isArray(cp.rpy)) {
+        ctrlGizmo.visible = false;
+        return;
+      }
+      ctrlGizmo.visible = true;
+      ctrlGizmo.position.set(
+        cp.xyz_mm[0] / 1000.0,
+        cp.xyz_mm[1] / 1000.0,
+        cp.xyz_mm[2] / 1000.0,
+      );
+      _ctrlEuler.set(cp.rpy[0], cp.rpy[1], cp.rpy[2], 'ZYX');
+      ctrlGizmo.quaternion.setFromEuler(_ctrlEuler);
+      // Green while trigger is held; amber otherwise.
+      ctrlBoxMat.color.setHex(cp.trigger_held ? 0x44dd66 : 0xee9933);
     }
 
     // Map FARM's snapshot.joints[0..5] → joint1..joint6 + gripper_pos → drive_joint
@@ -591,6 +717,10 @@
         setJoint(n, v);
         paintJoint(n, v);
       });
+      if (typeof snap.gripper === 'string' && snap.gripper !== gripperState) {
+        gripperState = snap.gripper;
+        gripperBtn.textContent = `Gripper: ${gripperState}`;
+      }
       const grip01 = typeof snap.gripper_pos === 'number' ? snap.gripper_pos : 0;
       const [lo, hi] = jointLimits['drive_joint'] || DEFAULT_RANGE['drive_joint'];
       const driveVal = lo + grip01 * (hi - lo);
@@ -635,33 +765,131 @@
         }
       }
 
-      statusEl.textContent = 'Live';
+      // Live-link transition handled in pollWorld so it's set even
+      // before the URDF / 3D scene finishes loading.
     }
 
-    function connectStream() {
-      const es = new EventSource('/v1/world/stream');
-      es.onmessage = (ev) => {
-        let snap;
-        try { snap = JSON.parse(ev.data); } catch { return; }
-        if (!snap) return;
+    // ── Drive-mode toggle (right-stick-click mirror) ─────────────────────
+    const driveModeBtn = document.getElementById('driveModeBtn');
+    function paintDriveMode(snap) {
+      const on = !!snap.drive_real_arm;
+      driveModeBtn.textContent = on ? 'Mode: digital + real' : 'Mode: digital only';
+      driveModeBtn.classList.toggle('danger', on);
+    }
+    driveModeBtn.addEventListener('click', async () => {
+      try { await postJSON('/v1/teleop/drive_mode'); } catch (e) {}
+    });
+
+    // ── Recording UI ──────────────────────────────────────────────────────
+    const recStateEl = document.getElementById('recState');
+    const recStartBtn = document.getElementById('recStartBtn');
+    const recSaveBtn = document.getElementById('recSaveBtn');
+    const recCancelBtn = document.getElementById('recCancelBtn');
+
+    function paintRecording(snap) {
+      const r = snap.recording;
+      const recording = !!(r && r.recording);
+      if (recording) {
+        const s = Math.floor(r.elapsed_s || 0);
+        const mm = String(Math.floor(s / 60)).padStart(2, '0');
+        const ss = String(s % 60).padStart(2, '0');
+        recStateEl.textContent = `● REC  ${mm}:${ss}   ${r.frame_count || 0} frames`;
+        recStateEl.classList.add('recording');
+      } else {
+        recStateEl.textContent = 'Idle';
+        recStateEl.classList.remove('recording');
+      }
+      recStartBtn.disabled = recording;
+      recSaveBtn.disabled = !recording;
+      recCancelBtn.disabled = !recording;
+    }
+
+    recStartBtn.addEventListener('click', () => postJSON('/v1/recording/start'));
+    recSaveBtn.addEventListener('click', () => postJSON('/v1/recording/save'));
+    recCancelBtn.addEventListener('click', () => postJSON('/v1/recording/cancel'));
+
+    // ── fetch helper with hard timeout ──────────────────────────────────
+    // Without this a stalled daemon hangs every request forever and the
+    // dashboard appears frozen. AbortController forces the failure path
+    // so callers can retry on a sane cadence.
+    function fetchWithTimeout(url, opts, timeoutMs) {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), timeoutMs);
+      const merged = Object.assign({ signal: ctrl.signal }, opts || {});
+      return fetch(url, merged).finally(() => clearTimeout(t));
+    }
+
+    // ── World poll @ ~15 Hz with 1.5 s timeout ───────────────────────────
+    let pollMisses = 0;
+    async function pollWorld() {
+      let nextDelay = 66;  // ~15 Hz on success
+      try {
+        const r = await fetchWithTimeout('/v1/world', { cache: 'no-store' }, 1500);
+        if (!r.ok) throw new Error('http ' + r.status);
+        const snap = await r.json();
         paintBackend(snap);
         paintEstop(snap);
+        paintRecording(snap);
+        paintDriveMode(snap);
+        paintHeadset(snap);
         applySnapshot(snap);
-      };
-      es.onerror = () => { statusEl.textContent = 'SSE link lost — retrying'; };
+        paintControllerGizmo(snap);
+        pollMisses = 0;
+        setLink('live');
+      } catch (e) {
+        pollMisses++;
+        if (pollMisses >= 2) setLink('lost');
+        nextDelay = 500;  // back off when the daemon's unhappy
+      } finally {
+        setTimeout(pollWorld, nextDelay);
+      }
     }
-    connectStream();
+    pollWorld();
 
-    // ── Camera feeds (poll JPEGs) ────────────────────────────────────────
-    function pollCam(imgId, name) {
+    // ── Camera feeds: black tile until a REAL camera frame arrives ─────
+    // Real hardware only — the endpoint returns 503 when no physical
+    // camera is connected, and the tile stays black. No sim renders.
+    function pollCam(figId, imgId, name) {
+      const figure = document.getElementById(figId);
       const img = document.getElementById(imgId);
-      const tick = () => { img.src = `/v1/cameras/${name}.jpg?t=${Date.now()}`; };
-      img.onload  = () => setTimeout(tick, 50);
-      img.onerror = () => setTimeout(tick, 2000);
+      let watchdog = null;
+      const clearWatchdog = () => {
+        if (watchdog !== null) { clearTimeout(watchdog); watchdog = null; }
+      };
+      const goBlack = () => {
+        clearWatchdog();
+        img.classList.remove('live');
+        figure.classList.remove('live');
+        img.removeAttribute('src');
+      };
+      const armWatchdog = () => {
+        clearWatchdog();
+        // If a request neither loads nor errors within 2 s (slow daemon /
+        // dropped connection), drop to black and try again.
+        watchdog = setTimeout(() => {
+          goBlack();
+          setTimeout(tick, 800);
+        }, 2000);
+      };
+      const tick = () => {
+        armWatchdog();
+        img.src = `/v1/cameras/${name}.jpg?t=${Date.now()}`;
+      };
+      img.onload = () => {
+        clearWatchdog();
+        img.classList.add('live');
+        figure.classList.add('live');
+        setTimeout(tick, 80);  // ~12 Hz
+      };
+      img.onerror = () => {
+        // 503 (no camera) or transient error: paint black, retry in 1 s.
+        goBlack();
+        setTimeout(tick, 1000);
+      };
       tick();
     }
-    pollCam('camBase', 'base');
-    pollCam('camWrist', 'wrist');
+    pollCam('figBase',  'camBase',  'base');
+    pollCam('figWrist', 'camWrist', 'wrist');
 
     document.getElementById('swapCamsBtn').addEventListener('click', async () => {
       await fetch('/v1/cameras/swap', { method: 'POST' });
@@ -686,13 +914,11 @@
     });
 
     const gripperBtn = document.getElementById('gripperBtn');
-    let gripperOpen = true;
+    let gripperState = 'open';
     gripperBtn.addEventListener('click', async () => {
-      const next = gripperOpen ? 'closed' : 'open';
+      const next = gripperState === 'open' ? 'closed' : 'open';
       try {
         await postJSON('/v1/teleop/gripper', { state: next });
-        gripperOpen = !gripperOpen;
-        gripperBtn.textContent = `Gripper: ${next}`;
       } catch (e) { console.error('gripper failed', e); }
     });
 

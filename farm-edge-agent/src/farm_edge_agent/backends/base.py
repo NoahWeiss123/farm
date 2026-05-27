@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from typing import Any, Literal, Protocol
 
-import numpy as np
-
 JogAxis = Literal["x", "y", "z", "rx", "ry", "rz"]
 GripperState = Literal["open", "closed", "grasping"]
 
@@ -33,11 +31,6 @@ class RobotBackend(Protocol):
     def snapshot(self) -> dict[str, Any]:
         """Combined state: joints (rad), tcp_pos_mm, tcp_rpy (rad),
         gripper (Literal), gripper_pos (0=open, 1=closed), t (epoch s)."""
-        ...
-
-    def render_rgb(self, camera: str, *, width: int, height: int) -> np.ndarray:
-        """Return an (H, W, 3) uint8 array. Backends without real cameras
-        return a placeholder image."""
         ...
 
     def jog(

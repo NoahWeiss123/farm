@@ -30,6 +30,9 @@ class RecordingXArm:
         "set_state": 0,
         "set_position": 0,
         "set_gripper_position": 0,
+        "set_gripper_mode": 0,
+        "set_gripper_enable": 0,
+        "set_gripper_speed": 0,
         "get_position": (0, [300.0, 0.0, 300.0, 180.0, 0.0, 0.0]),
         "get_servo_angle": (0, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
         "get_state": (0, 1),
@@ -94,10 +97,19 @@ def test_connect_enables_motion_then_sets_mode_and_state(
     driver = XArmDriver("192.168.1.10")
     driver.connect()
     methods = [c["method"] for c in recording_arm.calls]
-    assert methods == ["motion_enable", "set_mode", "set_state"]
+    assert methods == [
+        "motion_enable",
+        "set_mode",
+        "set_state",
+        "set_gripper_mode",
+        "set_gripper_enable",
+        "set_gripper_speed",
+    ]
     assert recording_arm.calls[0]["kwargs"] == {"enable": True}
     assert recording_arm.calls[1]["args"] == [0]
     assert recording_arm.calls[2]["args"] == [0]
+    assert recording_arm.calls[3]["args"] == [0]
+    assert recording_arm.calls[4]["args"] == [True]
 
 
 def test_move_to_reads_current_pose_then_sends_relative_set_position(

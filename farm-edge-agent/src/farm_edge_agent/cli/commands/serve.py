@@ -21,6 +21,10 @@ import click
 @click.option("--envelope/--no-envelope", default=True,
               help="Enforce workspace envelope on real hardware (default on; off "
                    "disables the safety cube — use only when you know the table).")
+@click.option("--cameras/--no-cameras", default=True,
+              help="Spawn RealSense camera subprocesses. Off when you don't need "
+                   "the D435 feeds (e.g. during Quest teleop), since librealsense "
+                   "is unstable with two D435s on macOS.")
 @click.option("--open/--no-open", "open_browser", default=True,
               help="Open the dashboard in the default browser on start.")
 def serve(
@@ -30,6 +34,7 @@ def serve(
     backend: str,
     arm_ip: str | None,
     envelope: bool,
+    cameras: bool,
     open_browser: bool,
 ) -> None:
     """Run the FARM edge daemon (sim or real arm + dashboard + ROS-TCP bridge)."""
@@ -43,8 +48,11 @@ def serve(
             DEFAULT_ENVELOPE_MIN,
         )
         env = (DEFAULT_ENVELOPE_MIN, DEFAULT_ENVELOPE_MAX) if envelope else None
-        chosen = XArmBackend(arm_ip, envelope=env)
-        click.echo(f"farm serve: backend=xarm arm_ip={arm_ip} envelope={'on' if envelope else 'OFF'}")
+        chosen = XArmBackend(arm_ip, envelope=env, cameras=cameras)
+        click.echo(
+            f"farm serve: backend=xarm arm_ip={arm_ip} envelope={'on' if envelope else 'OFF'} "
+            f"cameras={'on' if cameras else 'OFF'}"
+        )
     else:
         from farm_edge_agent.backends import SimBackend
         chosen = SimBackend()

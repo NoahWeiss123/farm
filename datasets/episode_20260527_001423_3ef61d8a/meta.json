@@ -1,0 +1,13 @@
+{
+  "episode_id": "episode_20260527_001423_3ef61d8a",
+  "start_iso": "2026-05-27T00:14:23.754921+00:00",
+  "duration_s": 3.049,
+  "fps": 30.0,
+  "frame_count": 88,
+  "cameras": [
+    "base",
+    "wrist"
+  ],
+  "backend": "sim",
+  "format": "farm-episode-v1"
+}

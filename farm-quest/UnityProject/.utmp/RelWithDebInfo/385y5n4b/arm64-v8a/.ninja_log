@@ -1,0 +1,23 @@
+# ninja log v5
+1165	1293	1779771391230914343	/Users/noahweiss/Documents/CS153/farm-quest/UnityProject/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/RelWithDebInfo/385y5n4b/obj/arm64-v8a/libgame.so	419de23b608de124
+0	1165	1779771391102332678	GameActivity/CMakeFiles/game.dir/UGAApplication.cpp.o	e54a91e75ef01c2
+1	1064	1779771391002100262	GameActivity/CMakeFiles/game.dir/UGAInput.cpp.o	fe3da00eac8a35d1
+2	938	1779771390876953117	GameActivity/CMakeFiles/game.dir/UGASoftKeyboard.cpp.o	b7db5f5007742339
+1	897	1779771390835727794	GameActivity/CMakeFiles/game.dir/UGADebug.cpp.o	f764871147ac77ff
+0	868	1779771390806140372	GameActivity/CMakeFiles/game.dir/UGAConfiguration.cpp.o	f6207294e02fbebd
+1	831	1779771390766179515	GameActivity/CMakeFiles/game.dir/UGAInputKeyEvent.cpp.o	be511538242b5357
+1	828	1779771390762123741	GameActivity/CMakeFiles/game.dir/UGAEntry.cpp.o	18c9c64bfaefd770
+260	461	1779771390376469331	/Users/noahweiss/Documents/CS153/farm-quest/UnityProject/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/RelWithDebInfo/385y5n4b/obj/arm64-v8a/libswappywrapper.so	1a869afed7734302
+2	855	1779771390791522162	GameActivity/CMakeFiles/game.dir/UGAInputMotionEvent.cpp.o	f32edcf5bcbccc27
+2	260	1779771390200009679	FramePacing/CMakeFiles/swappywrapper.dir/UnitySwappyWrapper.cpp.o	2325f4a79b08748f
+8	550	1779772033901957117	FramePacing/CMakeFiles/swappywrapper.dir/UnitySwappyWrapper.cpp.o	2325f4a79b08748f
+550	867	1779772034201258441	/Users/noahweiss/Documents/CS153/farm-quest/UnityProject/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/RelWithDebInfo/385y5n4b/obj/arm64-v8a/libswappywrapper.so	1a869afed7734302
+7	1282	1779772034632209448	GameActivity/CMakeFiles/game.dir/UGAInputKeyEvent.cpp.o	be511538242b5357
+7	1314	1779772034664055342	GameActivity/CMakeFiles/game.dir/UGAEntry.cpp.o	18c9c64bfaefd770
+7	1328	1779772034676130579	GameActivity/CMakeFiles/game.dir/UGAInputMotionEvent.cpp.o	f32edcf5bcbccc27
+6	1341	1779772034691066082	GameActivity/CMakeFiles/game.dir/UGAConfiguration.cpp.o	f6207294e02fbebd
+7	1387	1779772034736506972	GameActivity/CMakeFiles/game.dir/UGADebug.cpp.o	f764871147ac77ff
+8	1445	1779772034796025485	GameActivity/CMakeFiles/game.dir/UGASoftKeyboard.cpp.o	b7db5f5007742339
+7	1598	1779772034949253251	GameActivity/CMakeFiles/game.dir/UGAInput.cpp.o	fe3da00eac8a35d1
+6	1710	1779772035060621399	GameActivity/CMakeFiles/game.dir/UGAApplication.cpp.o	e54a91e75ef01c2
+1710	1857	1779772035207912006	/Users/noahweiss/Documents/CS153/farm-quest/UnityProject/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/RelWithDebInfo/385y5n4b/obj/arm64-v8a/libgame.so	419de23b608de124

@@ -74,7 +74,18 @@ class _Grabber:
                 cfg.enable_stream(
                     rs.stream.color, self._w, self._h, rs.format.rgb8, self._fps
                 )
-                pipeline.start(cfg)
+                profile = pipeline.start(cfg)
+                # Kill the time_diff_keeper polling thread inside librealsense:
+                # on macOS it issues USB control transfers concurrently with
+                # the streaming pipeline and races claim_interface, which
+                # surfaces as "memory corruption of free block" in libmalloc.
+                # We don't need host-side clock-sync for dashboard tiles.
+                try:
+                    for sensor in profile.get_device().sensors:
+                        if sensor.supports(rs.option.global_time_enabled):
+                            sensor.set_option(rs.option.global_time_enabled, 0.0)
+                except Exception as exc:  # noqa: BLE001
+                    log.debug("global_time disable skipped: %s", exc)
                 log.info(
                     "streaming %dx%d@%d (sn %s)",
                     self._w, self._h, self._fps, self.serial,

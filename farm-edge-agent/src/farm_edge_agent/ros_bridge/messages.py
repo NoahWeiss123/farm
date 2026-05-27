@@ -139,7 +139,12 @@ class TwistStamped:
 
 @dataclass
 class OVR2ROSInputs:
-    """quest2ros/OVR2ROSInputs — controller button + stick state."""
+    """quest2ros/OVR2ROSInputs — controller button + stick state.
+
+    Extended with ``thumb_stick_click`` at the tail so old Unity
+    publishers that omit the byte still decode the first six fields
+    cleanly (the bridge falls back to ``False`` if the body is short).
+    """
 
     button_upper: bool = False
     button_lower: bool = False
@@ -147,16 +152,28 @@ class OVR2ROSInputs:
     thumb_stick_vertical: float = 0.0
     press_index: float = 0.0
     press_middle: float = 0.0
+    thumb_stick_click: bool = False
 
     @classmethod
     def read(cls, r: Reader) -> OVR2ROSInputs:
+        button_upper = r.bool()
+        button_lower = r.bool()
+        thumb_stick_horizontal = r.float32()
+        thumb_stick_vertical = r.float32()
+        press_index = r.float32()
+        press_middle = r.float32()
+        try:
+            thumb_stick_click = r.bool()
+        except Exception:
+            thumb_stick_click = False
         return cls(
-            button_upper=r.bool(),
-            button_lower=r.bool(),
-            thumb_stick_horizontal=r.float32(),
-            thumb_stick_vertical=r.float32(),
-            press_index=r.float32(),
-            press_middle=r.float32(),
+            button_upper=button_upper,
+            button_lower=button_lower,
+            thumb_stick_horizontal=thumb_stick_horizontal,
+            thumb_stick_vertical=thumb_stick_vertical,
+            press_index=press_index,
+            press_middle=press_middle,
+            thumb_stick_click=thumb_stick_click,
         )
 
     def write(self, w: Writer) -> None:
@@ -166,6 +183,7 @@ class OVR2ROSInputs:
         w.float32(self.thumb_stick_vertical)
         w.float32(self.press_index)
         w.float32(self.press_middle)
+        w.bool(self.thumb_stick_click)
 
 
 @dataclass

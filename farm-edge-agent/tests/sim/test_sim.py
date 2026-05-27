@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 mujoco = pytest.importorskip("mujoco")  # noqa: F841
@@ -90,6 +92,41 @@ def test_set_gripper_closes_and_reopens(sim: Sim) -> None:
     assert sim.gripper_state == "open"
     open_pos = sim.read_gripper()
     assert closed_pos > open_pos, f"close didn't move finger: open={open_pos} closed={closed_pos}"
+
+
+def test_continuous_joints_unwrap_toward_home(sim: Sim) -> None:
+    # J1/J4/J6 are continuous revolute joints on the UF850 (range ±2π).
+    # Asking the sim to park them at 3π/2 should fold back to -π/2 (the
+    # representative within π of home=0), not get clamped at +2π-ε.
+    sim.move_joint(
+        [
+            3.0 * math.pi / 2,         # J1: 4.71 → -1.57
+            -0.5, -0.5,
+            3.0 * math.pi / 2,         # J4: same
+            -math.pi / 2,
+            3.0 * math.pi / 2,         # J6: same
+        ]
+    )
+    joints = sim.read_joint_state()
+    want = -math.pi / 2
+    for idx in (0, 3, 5):
+        assert abs(joints[idx] - want) < 0.05, (
+            f"continuous joint J{idx + 1} didn't unwrap toward home: "
+            f"got {joints[idx]:.3f}, want {want:.3f}"
+        )
+
+
+def test_repeated_rotation_does_not_pin_continuous_joint(sim: Sim) -> None:
+    # Old IK clamped J4 at +2π-ε, so repeated rz jogs would visibly stop
+    # tracking once the joint wound up. With unwrap on apply, |J4| should
+    # never run away.
+    sim.home()
+    for _ in range(60):
+        sim.jog("rz", +1, step_rad=math.radians(10.0))
+    j4 = sim.read_joint_state()[3]
+    assert abs(j4) <= math.pi + 0.1, (
+        f"J4 ran past its representative range after sustained rz jog: {j4:.3f}"
+    )
 
 
 def test_jog_rejects_unknown_axis(sim: Sim) -> None:

@@ -66,7 +66,28 @@ def _free_port() -> int:
 
 
 class _CamProc:
-    """One subprocess running a single D435."""
+    """One subprocess running a single D435.
+
+    Restart policy: librealsense on macOS crashes periodically inside
+    the USB transfer code — not the user's fault, not avoidable from
+    Python. We just respawn forever with a backoff so a permanently
+    unplugged camera doesn't peg CPU. The previous "give up after 3
+    crashes" cap meant a transient USB hiccup turned the camera feed
+    off for the rest of the session, which is worse than the noise.
+    """
+
+    # Minimum gap between respawn attempts, scales linearly with the
+    # restart counter (clamped at MAX_RESTART_GAP).
+    RESTART_BACKOFF_S = 5.0
+    MAX_RESTART_GAP_S = 60.0
+
+    # Process-wide guard so two cam subprocesses never enter
+    # ``pipeline.start`` concurrently — librealsense on macOS races inside
+    # ``claim_interface`` and that race is what the IOKit memory-corruption
+    # crash falls out of. Applies to first launch AND every restart.
+    _START_LOCK: threading.Lock = threading.Lock()
+    _LAST_START_T: float = 0.0
+    MIN_INTER_START_GAP_S = 3.0
 
     def __init__(
         self,
@@ -84,6 +105,8 @@ class _CamProc:
         self._proc: subprocess.Popen | None = None
         self._url_frame = f"http://127.0.0.1:{self._port}/frame.jpg"
         self._url_health = f"http://127.0.0.1:{self._port}/healthz"
+        self._restarts = 0
+        self._last_restart_t = 0.0
 
     def start(self) -> None:
         argv = [
@@ -97,12 +120,21 @@ class _CamProc:
         # Pipe stderr/stdout to /dev/null so a chatty subprocess can't fill
         # this process's pipes. The subprocess logs to its own stderr which
         # we discard; if you need to debug, run cam_server by hand.
-        self._proc = subprocess.Popen(
-            argv,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
-        )
+        with _CamProc._START_LOCK:
+            gap = (
+                _CamProc._LAST_START_T
+                + _CamProc.MIN_INTER_START_GAP_S
+                - time.time()
+            )
+            if gap > 0:
+                time.sleep(gap)
+            self._proc = subprocess.Popen(
+                argv,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+            )
+            _CamProc._LAST_START_T = time.time()
         log.info("cam subprocess up: serial=%s port=%d pid=%d",
                  self.serial, self._port, self._proc.pid)
 
@@ -173,11 +205,11 @@ class RealsenseGrabber:
         self._watchdog_thread: threading.Thread | None = None
 
     def start(self) -> None:
+        # ``_CamProc.start`` itself enforces an inter-start gap process-wide,
+        # so we can just fire them off in sequence — first launch and
+        # post-crash restart are handled by the same mechanism.
         for p in self._procs.values():
             p.start()
-        # Watchdog: a dead D435 subprocess (libuvc tantrum) is restarted
-        # transparently every few seconds. The browser sees a few frames
-        # of placeholder while the new subprocess negotiates USB.
         self._watchdog_thread = threading.Thread(
             target=self._watchdog_loop, name="cam-watchdog", daemon=True
         )
@@ -189,9 +221,12 @@ class RealsenseGrabber:
             p.stop()
 
     def _watchdog_loop(self) -> None:
+        # Tight watchdog so a crashed cam comes back fast. The per-proc
+        # backoff inside ``reap_dead`` keeps a wedged camera from
+        # respawn-flooding USB.
         while not self._watchdog_stop.is_set():
             self.reap_dead()
-            self._watchdog_stop.wait(3.0)
+            self._watchdog_stop.wait(2.0)
 
     def names(self) -> list[str]:
         with self._map_lock:
@@ -246,11 +281,24 @@ class RealsenseGrabber:
     # Idle health check the supervisor can call to restart dead subprocesses.
     def reap_dead(self) -> list[str]:
         dead: list[str] = []
+        now = time.time()
         for serial, proc in list(self._procs.items()):
-            if not proc.alive():
-                log.warning("cam subprocess for sn %s died; restarting", serial)
-                proc.start()
-                dead.append(serial)
+            if proc.alive():
+                continue
+            gap = min(
+                proc.RESTART_BACKOFF_S * max(1, proc._restarts),
+                proc.MAX_RESTART_GAP_S,
+            )
+            if (now - proc._last_restart_t) < gap:
+                continue
+            proc._restarts += 1
+            proc._last_restart_t = now
+            log.warning(
+                "cam subprocess for sn %s died; restart attempt %d",
+                serial, proc._restarts,
+            )
+            proc.start()
+            dead.append(serial)
         return dead
 
 

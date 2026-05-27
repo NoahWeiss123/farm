@@ -1,0 +1,15 @@
+UnityProject/Library/
+UnityProject/Temp/
+UnityProject/Obj/
+UnityProject/Build/
+UnityProject/Builds/
+UnityProject/Logs/
+UnityProject/UserSettings/
+UnityProject/MemoryCaptures/
+UnityProject/.vs/
+UnityProject/.vsconfig
+UnityProject/*.csproj
+UnityProject/*.sln
+UnityProject/Assemblies/
+artifacts/
+logs/

@@ -1,15 +1,15 @@
 """Lean MuJoCo backend for the UF850.
 
 Loads ``assets/urdf/uf850/uf850.mjcf``, steps physics, reports joint state +
-TCP pose, renders the three on-scene cameras (exterior, wrist, topdown), and
-exposes a cartesian jog primitive that the dashboard buttons and (later) the
-Quest teleop bridge both call into.
+TCP pose, and exposes a cartesian jog primitive that the dashboard buttons
+and (later) the Quest teleop bridge both call into.
+
+No camera rendering — the dashboard's camera tiles are reserved for real
+hardware. Sim renders were intentionally ripped out; the 3D scene
+visualisation in the browser comes from URDF + joint snapshots.
 
 Pose convention crossing the public API is millimetres + radians, matching the
-``Driver`` protocol; everything internal stays SI (metres, radians). This is
-a fresh rewrite — no soft-grasp carry, no prop/scene system, no openpi
-observation shaping. Add those back behind feature flags when they're needed
-again.
+``Driver`` protocol; everything internal stays SI (metres, radians).
 """
 
 from __future__ import annotations
@@ -68,16 +68,12 @@ class Sim:
         mjcf_path: Path = MJCF_PATH,
         event_sink: EventCallback | None = None,
         sim_rate: int = 25,
-        render_height: int = 480,
-        render_width: int = 640,
         realtime: bool = True,
         realtime_speed: float = 1.0,
     ) -> None:
         self._mjcf_path = Path(mjcf_path)
         self._event_sink = event_sink
         self._sim_rate = max(1, int(sim_rate))
-        self._render_height = int(render_height)
-        self._render_width = int(render_width)
         self._realtime = bool(realtime)
         self._realtime_speed = max(0.01, float(realtime_speed))
 
@@ -106,11 +102,26 @@ class Sim:
         if self._tcp_sid < 0:
             raise RuntimeError(f"MJCF missing required site '{_TCP_SITE}'")
 
+        # Per-joint limit info, computed once. Continuous joints (range
+        # ≥ 2π — J1/J4/J6 on the UF850) have no real endpoint; the clamp
+        # is purely cosmetic and was the cause of "joint locks at limit"
+        # during teleop. We exempt them from clamping inside IK and unwrap
+        # them toward home on apply.
+        self._jnt_lo = np.array(
+            [self._model.jnt_range[j][0] for j in self._arm_jids], dtype=np.float64
+        )
+        self._jnt_hi = np.array(
+            [self._model.jnt_range[j][1] for j in self._arm_jids], dtype=np.float64
+        )
+        self._jnt_mid = 0.5 * (self._jnt_lo + self._jnt_hi)
+        self._jnt_half = 0.5 * (self._jnt_hi - self._jnt_lo)
+        self._jnt_continuous = (
+            (self._jnt_hi - self._jnt_lo) >= (2.0 * math.pi - 1e-6)
+        )
+        self._home_q = np.array(HOME_JOINTS, dtype=np.float64)
+
         self._apply_arm_qpos(np.asarray(HOME_JOINTS, dtype=np.float64))
         self._data.ctrl[self._gripper_aid] = _GRIPPER_OPEN_CTRL
-
-        # Renderers are lazy because constructing one allocates a GL context.
-        self._renderers: dict[tuple[str, int, int], mujoco.Renderer] = {}
 
     # ── connection lifecycle ─────────────────────────────────────────────────
 
@@ -120,10 +131,6 @@ class Sim:
 
     def disconnect(self) -> None:
         self._connected = False
-        with self._lock:
-            for r in self._renderers.values():
-                r.close()
-            self._renderers.clear()
         self._emit("disconnected", {})
 
     # ── motion ──────────────────────────────────────────────────────────────
@@ -210,6 +217,11 @@ class Sim:
         with self._lock:
             self._apply_arm_qpos(np.asarray(HOME_JOINTS, dtype=np.float64))
             self._data.ctrl[self._gripper_aid] = _GRIPPER_OPEN_CTRL
+            # Step physics so the fingers actually travel open. Without
+            # this the qpos stays wherever it was last (e.g. closed on a
+            # block from a prior set_gripper) and the dashboard's gripper
+            # bar stays stuck even though the state flips to "open".
+            self._step_gripper(self._sim_rate * 2)
             self._gripper = "open"
         self._emit("home", {})
 
@@ -274,48 +286,42 @@ class Sim:
             "t": t,
         }
 
-    def render_rgb(
-        self,
-        camera: str = "exterior",
-        height: int | None = None,
-        width: int | None = None,
-    ) -> np.ndarray:
-        h = height or self._render_height
-        w = width or self._render_width
-        key = (camera, h, w)
-        with self._lock:
-            renderer = self._renderers.get(key)
-            if renderer is None:
-                renderer = mujoco.Renderer(self._model, height=h, width=w)
-                self._renderers[key] = renderer
-            mujoco.mj_forward(self._model, self._data)
-            renderer.update_scene(self._data, camera=camera)
-            return renderer.render()
-
     # ── internals ──────────────────────────────────────────────────────────
 
     def _apply_arm_qpos(self, target: np.ndarray) -> None:
         """Write arm qpos directly and refresh derived state.
 
-        Kinematic — no physics step on the arm. Joint limits are clipped
-        with a small safety margin to keep the IK solver from parking the
-        arm against a singularity it then can't escape on the next jog.
+        Kinematic — no physics step on the arm. Bounded joints (J2/J3/J5)
+        are clipped just inside their hard limits. Continuous joints
+        (J1/J4/J6) are unwrapped to within π of the home value rather than
+        clamped — they have no physical endpoint, so winding past ±2π and
+        getting stuck against a synthetic wall would be silly.
+
         Ctrl mirrors qpos so a future switch to PD-driven motion holds in
         place rather than snapping.
-
-        Holds ``self._lock`` (reentrant) for the whole write+forward block
-        so a concurrent ``render_rgb`` from another thread doesn't observe
-        a half-written ``data.qpos`` while the GL renderer is mid-frame —
-        the source of an earlier SIGTRAP on the shadow-sim render path.
         """
         target = np.asarray(target, dtype=np.float64)
         if target.shape[0] < 6:
             raise ValueError(f"qpos target must have >=6 dims; got {target.shape[0]}")
         target = target[:6].copy()
+        two_pi = 2.0 * math.pi
         with self._lock:
-            for k, jid in enumerate(self._arm_jids):
-                lo, hi = self._model.jnt_range[jid]
-                target[k] = max(lo + 1e-3, min(hi - 1e-3, target[k]))
+            for k in range(6):
+                if self._jnt_continuous[k]:
+                    # Fold to within π of home, then verify we're inside the
+                    # MJCF's nominal range — the unwrap can leave us at e.g.
+                    # +π+ε which is still well inside ±2π but tidier near home.
+                    q = float(target[k])
+                    home = float(self._home_q[k])
+                    while q - home > math.pi:
+                        q -= two_pi
+                    while q - home < -math.pi:
+                        q += two_pi
+                    target[k] = q
+                else:
+                    lo = float(self._jnt_lo[k])
+                    hi = float(self._jnt_hi[k])
+                    target[k] = max(lo + 1e-3, min(hi - 1e-3, float(target[k])))
             for k, qadr in enumerate(self._arm_qadr):
                 self._data.qpos[qadr] = float(target[k])
             # Zero arm velocity so any subsequent mj_step (e.g. during gripper
@@ -350,18 +356,39 @@ class Sim:
         rot_tol: float = 5e-2,
         damping: float = 2e-2,
         step_scale: float = 0.5,
+        posture_weight_base: float = 0.02,
+        posture_weight_max: float = 0.6,
+        danger_threshold: float = 0.7,
     ) -> _IKResult:
-        """Damped-least-squares IK against the TCP site.
+        """Posture-aware damped-least-squares IK against the TCP site.
 
-        Operates in the 6-DOF arm subspace — only the columns of the
-        Jacobian corresponding to the arm's dof addresses are kept. This
-        leaves the finger joints free to be driven independently by the
-        gripper actuator without IK fighting them.
+        Operates in the 6-DOF arm subspace. Each iteration solves a
+        stacked weighted system: the primary task is the 6-D Cartesian
+        error at the TCP, the secondary task is a posture-tracking pull
+        toward ``HOME_JOINTS``. The posture weight per joint is a
+        smoothstep in normalised limit distance — invisible while there's
+        headroom, dominant near a hard limit — and the target itself is
+        nudged away from whichever limit is being approached. The result
+        is that bounded joints (J2/J3/J5) yield gracefully before pinning
+        instead of slamming into a stop and losing a DOF.
+
+        Continuous joints (J1/J4/J6) are not clamped here — they have no
+        physical endpoint, so we let them wind freely and rely on the
+        unwrap in ``_apply_arm_qpos`` to keep their values tidy.
         """
         n_arm = 6
         jac_pos = np.zeros((3, self._model.nv))
         jac_rot = np.zeros((3, self._model.nv))
+        I_arm = np.eye(n_arm)
+        bounded = ~self._jnt_continuous  # mask of joints with real limits
 
+        # Posture-row weights are 0 for continuous joints (no preferred
+        # value — they unwrap toward home on apply) and ramp from base to
+        # max as the bounded joint enters its limit "danger zone".
+        w_base = np.where(bounded, posture_weight_base, 0.0)
+
+        pos_err_n = 0.0
+        rot_err_n = 0.0
         for it in range(max_iter):
             mujoco.mj_forward(self._model, scratch)
             cur_pos = scratch.site_xpos[self._tcp_sid].copy()
@@ -382,22 +409,66 @@ class Sim:
                     iterations=it,
                 )
 
+            q = np.array(
+                [scratch.qpos[i] for i in self._arm_qadr], dtype=np.float64
+            )
+
+            # Normalised signed distance from midpoint in [-1, 1]. Only
+            # meaningful for bounded joints; for continuous joints half
+            # is π so u is harmless but ignored via the bounded mask.
+            u = (q - self._jnt_mid) / np.maximum(self._jnt_half, 1e-9)
+            danger = np.clip(
+                (np.abs(u) - danger_threshold) / max(1.0 - danger_threshold, 1e-9),
+                0.0,
+                1.0,
+            )
+            # C¹ smoothstep so the posture weight has continuous derivative
+            # — no jitter when a joint crosses the threshold.
+            s = danger * danger * (3.0 - 2.0 * danger)
+            s = np.where(bounded, s, 0.0)
+
+            # Adaptive posture target: shift away from the limit being
+            # approached, in proportion to how dangerous the joint is.
+            adaptive_target = self._home_q - s * np.sign(u) * self._jnt_half * 0.3
+            err_post = adaptive_target - q
+
+            w_post = w_base + (posture_weight_max - posture_weight_base) * s
+            w_post = np.where(bounded, w_post, 0.0)
+
             mujoco.mj_jacSite(self._model, scratch, jac_pos, jac_rot, self._tcp_sid)
-            J = np.vstack([jac_pos[:, self._arm_dofadr], jac_rot[:, self._arm_dofadr]])
-            err = np.concatenate([err_pos, err_rot])
-            # Damped pseudo-inverse: dq = J^T (J J^T + λ²I)^-1 e
-            JJt = J @ J.T + (damping**2) * np.eye(6)
-            dq = J.T @ np.linalg.solve(JJt, err)
-            dq *= step_scale
+            J_task = np.vstack(
+                [jac_pos[:, self._arm_dofadr], jac_rot[:, self._arm_dofadr]]
+            )
+
+            # Weighted stacked DLS:
+            #   dq = (J_aug^T W J_aug + λ²I)^-1 J_aug^T W e_aug
+            # with J_aug = [J_task; I], e_aug = [err_pos; err_rot; err_post]
+            # and W = diag(1,1,1,1,1,1, w_post[0..5]).
+            JtJ = J_task.T @ J_task
+            ItWI = np.diag(w_post)  # I^T diag(w) I = diag(w)
+            A = JtJ + ItWI + (damping**2) * I_arm
+            b = J_task.T @ np.concatenate([err_pos, err_rot]) + w_post * err_post
+            dq = np.linalg.solve(A, b) * step_scale
+
+            # Soft saturation: scale the whole dq so no bounded joint is
+            # pushed past its limit. Preserves direction (smooth) instead
+            # of per-joint clamping (kinky).
+            new_q = q + dq
+            alpha = 1.0
+            margin = 1e-3
+            for k in range(n_arm):
+                if not bounded[k]:
+                    continue
+                hi_k = self._jnt_hi[k] - margin
+                lo_k = self._jnt_lo[k] + margin
+                if new_q[k] > hi_k and dq[k] > 0:
+                    alpha = min(alpha, max(0.0, (hi_k - q[k]) / dq[k]))
+                elif new_q[k] < lo_k and dq[k] < 0:
+                    alpha = min(alpha, max(0.0, (lo_k - q[k]) / dq[k]))
+            dq *= alpha
+
             for k, qadr in enumerate(self._arm_qadr):
                 scratch.qpos[qadr] += float(dq[k])
-            # Clamp to limits during the search
-            for k, jid in enumerate(self._arm_jids):
-                lo, hi = self._model.jnt_range[jid]
-                scratch.qpos[self._arm_qadr[k]] = max(
-                    lo + 1e-3, min(hi - 1e-3, float(scratch.qpos[self._arm_qadr[k]]))
-                )
-            _ = n_arm  # purely for readability above
 
         # Bail out without converging — return best-effort qpos. The caller
         # decides whether to honor it; the dashboard surfaces ik_converged.
