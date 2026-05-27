@@ -1,10 +1,11 @@
-// Left-hand UI ray pointer for the FARM floating tablet.
+// Left-hand UI navigator for the FARM floating tablet.
 //
-// The right-hand instance stays a no-op (passthrough already shows the
-// user's actual right hand on the controller, which drives the arm).
-// The left-hand instance casts a line at the HUD card every frame,
-// hit-tests it against the card's button rects, and fires the button's
-// onClick when the left trigger is pulled.
+// The right-hand instance is a no-op (right hand drives the arm).
+// The left-hand instance:
+//   • Tilt left stick horizontally → move selection between HUD buttons
+//   • Pull the left trigger → invoke selected button
+//
+// No laser. The HUD draws a highlight ring around the selected button.
 
 using System.Collections.Generic;
 using UnityEngine;
@@ -16,56 +17,26 @@ namespace TeleopDataCollector
     {
         public bool IsRight = true;
 
-        LineRenderer line;
-        Transform dot;
-        Renderer dotRenderer;
-        bool prevTrigger;
+        const float STICK_DEADZONE = 0.5f;
+        const float STICK_REPEAT_S = 0.25f;
+        const float TRIGGER_DOWN   = 0.6f;
 
-        static readonly Color C_LINE       = new Color(0.55f, 0.78f, 0.96f, 0.85f);
-        static readonly Color C_DOT_IDLE   = new Color(0.55f, 0.78f, 0.96f, 1f);
-        static readonly Color C_DOT_HOVER  = new Color(0.40f, 0.95f, 0.60f, 1f);
-        const float RAY_MAX_M = 5f;
+        HUDController hud;
+        float lastStickMoveT;
+        bool prevTrigger;
+        float lastDiagT;
 
         void Awake()
         {
             if (IsRight) { enabled = false; return; }
-            BuildVisuals();
-        }
-
-        void BuildVisuals()
-        {
-            line = gameObject.AddComponent<LineRenderer>();
-            line.useWorldSpace = true;
-            line.positionCount = 2;
-            line.startWidth = 0.004f;
-            line.endWidth = 0.002f;
-            line.material = new Material(Shader.Find("Sprites/Default"));
-            line.startColor = C_LINE;
-            line.endColor = C_LINE;
-            line.numCapVertices = 2;
-            line.enabled = false;
-
-            var dotGO = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            dotGO.name = "ui_pointer_dot";
-            dotGO.transform.SetParent(transform, false);
-            dotGO.transform.localScale = Vector3.one * 0.012f;
-            var collider = dotGO.GetComponent<Collider>();
-            if (collider != null) Destroy(collider);
-            dot = dotGO.transform;
-            dotRenderer = dotGO.GetComponent<Renderer>();
-            dotRenderer.material = new Material(Shader.Find("Sprites/Default"));
-            dotRenderer.material.color = C_DOT_IDLE;
-            dot.gameObject.SetActive(false);
         }
 
         void Update()
         {
-            var hud = Object.FindFirstObjectByType<HUDController>();
-            if (hud == null || hud.CardTransform == null)
+            if (hud == null)
             {
-                if (line != null) line.enabled = false;
-                if (dot != null) dot.gameObject.SetActive(false);
-                return;
+                hud = Object.FindFirstObjectByType<HUDController>();
+                if (hud == null) return;
             }
 
             var left = InputDevices.GetDeviceAtXRNode(XRNode.LeftHand);
@@ -76,81 +47,47 @@ namespace TeleopDataCollector
                     InputDeviceCharacteristics.Left | InputDeviceCharacteristics.Controller, ll);
                 if (ll.Count > 0) left = ll[0];
             }
-            if (!left.isValid ||
-                !left.TryGetFeatureValue(CommonUsages.devicePosition, out Vector3 lpos) ||
-                !left.TryGetFeatureValue(CommonUsages.deviceRotation, out Quaternion lrot))
-            {
-                line.enabled = false;
-                dot.gameObject.SetActive(false);
-                return;
-            }
+            if (!left.isValid) return;
 
-            // Controller-space origin/forward sit in the tracking-rig frame.
-            // Convert into world by applying the rig's transform — that's
-            // the same parent the HUD card uses, so the math agrees with
-            // the card's world pose.
-            var rig = Camera.main != null ? Camera.main.transform.parent : null;
-            Vector3 originW = rig != null ? rig.TransformPoint(lpos) : lpos;
-            Quaternion rotW = rig != null ? rig.rotation * lrot : lrot;
-            Vector3 dirW = rotW * Vector3.forward;
+            // Stick navigation — horizontal axis moves selection. Re-arm only
+            // when the stick returns to neutral so a held tilt doesn't walk
+            // selection forever; STICK_REPEAT_S still steps periodically.
+            // primary2DAxis is the canonical Quest thumbstick; some bindings
+            // expose it as secondary2DAxis, so fall back if the primary is
+            // missing.
+            bool gotStick = left.TryGetFeatureValue(CommonUsages.primary2DAxis, out Vector2 stick);
+            if (!gotStick || stick == Vector2.zero)
+                left.TryGetFeatureValue(CommonUsages.secondary2DAxis, out stick);
 
-            // Ray-plane intersection with the card plane. The canvas's
-            // local +Z (transform.forward) points AWAY from the reader, so
-            // the plane normal pointing toward the user is -forward.
-            var card = hud.CardTransform;
-            Vector3 planePos = card.position;
-            Vector3 planeNormal = -card.forward;
-            float denom = Vector3.Dot(dirW, planeNormal);
-            bool hit = false;
-            Vector3 hitW = Vector3.zero;
-            Vector2 localXY = Vector2.zero;
-            if (Mathf.Abs(denom) > 1e-5f)
+            float now = Time.unscaledTime;
+            if (Mathf.Abs(stick.x) > STICK_DEADZONE && now - lastStickMoveT > STICK_REPEAT_S)
             {
-                float t = Vector3.Dot(planePos - originW, planeNormal) / denom;
-                if (t > 0f && t < RAY_MAX_M)
+                int step = stick.x > 0 ? +1 : -1;
+                int next = Mathf.Clamp(hud.SelectedIndex + step, 0, hud.Buttons.Count - 1);
+                if (next != hud.SelectedIndex)
                 {
-                    hitW = originW + dirW * t;
-                    // Convert to canvas-local 2D (in canvas pixels).
-                    Vector3 localHit = card.InverseTransformPoint(hitW);
-                    localXY = new Vector2(localHit.x, localHit.y);
-                    Vector2 half = hud.CardSizePx * 0.5f;
-                    if (Mathf.Abs(localXY.x) <= half.x && Mathf.Abs(localXY.y) <= half.y)
-                        hit = true;
+                    hud.SelectedIndex = next;
+                    lastStickMoveT = now;
                 }
             }
-
-            line.enabled = true;
-            line.SetPosition(0, originW);
-            line.SetPosition(1, hit ? hitW : originW + dirW * 0.6f);
-            dot.gameObject.SetActive(hit);
-            if (hit) dot.position = hitW;
-
-            // Hit-test against the card's button rects.
-            HUDController.UIButton? hovered = null;
-            if (hit)
+            else if (Mathf.Abs(stick.x) <= STICK_DEADZONE)
             {
-                foreach (var b in hud.Buttons)
-                {
-                    if (b.rect == null) continue;
-                    Vector2 c = b.rect.anchoredPosition;
-                    Vector2 s = b.rect.sizeDelta * 0.5f;
-                    if (localXY.x >= c.x - s.x && localXY.x <= c.x + s.x &&
-                        localXY.y >= c.y - s.y && localXY.y <= c.y + s.y)
-                    {
-                        hovered = b;
-                        break;
-                    }
-                }
+                lastStickMoveT = 0f;
             }
-            if (dotRenderer != null)
-                dotRenderer.material.color = hovered.HasValue ? C_DOT_HOVER : C_DOT_IDLE;
 
-            // Rising-edge click on left trigger.
-            left.TryGetFeatureValue(CommonUsages.trigger, out float trig);
-            bool triggerDown = trig > 0.65f;
-            if (triggerDown && !prevTrigger && hovered.HasValue)
-                hovered.Value.onClick?.Invoke();
+            // Left trigger click. Read both the analog axis and the boolean
+            // button bind — whichever the runtime exposes first.
+            bool gotTrig = left.TryGetFeatureValue(CommonUsages.trigger, out float trig);
+            left.TryGetFeatureValue(CommonUsages.triggerButton, out bool trigBtn);
+            bool triggerDown = trigBtn || (gotTrig && trig >= TRIGGER_DOWN);
+            if (triggerDown && !prevTrigger) hud.InvokeSelected();
             prevTrigger = triggerDown;
+
+            if (now - lastDiagT > 2f)
+            {
+                Debug.Log($"[FARM PTR] stick={stick} (gotStick={gotStick}) trig={trig:F2} trigBtn={trigBtn} sel={hud.SelectedIndex}");
+                lastDiagT = now;
+            }
         }
     }
 }

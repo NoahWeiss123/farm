@@ -32,13 +32,6 @@ log = logging.getLogger("farm.ros_bridge")
 
 _JOINT_NAMES = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
 
-# Auto re-anchor after this many consecutive rejected/ik_fail ghost
-# updates. At ~80 Hz Quest input that's ~0.3 s of "the ghost wasn't
-# moving" — clearly a stall, but quick enough that the operator's hand
-# hasn't drifted far from where the re-snap will land.
-_AUTO_REANCHOR_STALLS = 25
-
-
 class RosTcpBridge:
     """One TCP listener, fan-out publisher, fan-in routing.
 
@@ -105,18 +98,14 @@ class RosTcpBridge:
         self._viz_ctrl_anchor_quat: tuple[float, float, float, float] | None = None
         self._viz_arm_anchor_mm: tuple[float, float, float] = (0.0, 0.0, 0.0)
         self._viz_arm_anchor_quat: tuple[float, float, float, float] | None = None
-        # Auto re-anchor on persistent ghost stalls. The arm-anchor is
-        # captured at trigger DOWN, then targets = anchor + Δcontroller.
-        # As the operator's hand drifts away from the anchor, the
-        # computed target eventually leaves the reachable workspace and
-        # IK fails every frame — symptom: ghost AND real arm both
-        # freeze until the operator manually release+represses. We count
-        # consecutive rejected/ik_fail returns from set_ghost_target_pose
-        # and force a fresh anchor capture once the streak crosses
-        # _AUTO_REANCHOR_STALLS. Equivalent to release+repress but
-        # automatic. _ms threshold is "long enough to be a real stall,
-        # short enough that the operator barely notices the re-snap."
-        self._ghost_stall_streak = 0
+        # NOTE: the auto-reanchor stall watchdog that used to live here
+        # was removed — when an IK rejection counter would fire, it
+        # would wipe the anchors and try to recover, but in practice
+        # it just produced a "freeze that only clears when you toggle
+        # drive mode" UX bug. The backend now silently holds at the
+        # last reachable pose when IK rejects, and resumes the moment
+        # the next reachable pose comes in, which makes the watchdog
+        # unnecessary.
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -464,39 +453,9 @@ class RosTcpBridge:
             math.degrees(rx), math.degrees(ry), math.degrees(rz),
         )
         try:
-            result = self._supervisor.set_ghost_target_pose(pose)
+            self._supervisor.set_ghost_target_pose(pose)
         except Exception as exc:  # noqa: BLE001
             log.debug("ghost update failed: %s", exc)
-            result = None
-        # Auto-reanchor on persistent stalls. Only counts ik_fail (pose
-        # out of reach — the dominant cause of the trigger-held freeze);
-        # we no longer reject branch flips, so there's nothing else to
-        # count.
-        stalled = isinstance(result, dict) and result.get("ik_fail")
-        if stalled:
-            self._ghost_stall_streak += 1
-            if self._ghost_stall_streak >= _AUTO_REANCHOR_STALLS:
-                log.warning(
-                    "ghost stalled %d frames (ik_fail) — auto re-anchoring",
-                    self._ghost_stall_streak,
-                )
-                # Same state machine release+repress walks through, just
-                # in-place: clear both anchor sets, arm the next frame
-                # to recapture. The next pose frame will snap arm-anchor
-                # to the live arm TCP and ctrl-anchor to the live
-                # controller pose, so the upcoming small Δcontroller
-                # lands well inside the reachable workspace again.
-                self._anchor_ctrl_pos = None
-                self._anchor_ctrl_quat = None
-                self._anchor_arm_xyz_mm = None
-                self._anchor_arm_quat = None
-                self._anchor_armed = True
-                self._viz_ctrl_anchor = None
-                self._viz_ctrl_anchor_quat = None
-                self._viz_arm_anchor_quat = None
-                self._ghost_stall_streak = 0
-        else:
-            self._ghost_stall_streak = 0
 
     # ── outbound publisher: /joint_states ───────────────────────────────────
 

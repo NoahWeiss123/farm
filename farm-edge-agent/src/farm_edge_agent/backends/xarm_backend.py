@@ -30,6 +30,7 @@ from farm_edge_agent.cameras import RealsenseGrabber, RealsenseUnavailable
 from farm_edge_agent.drivers.xarm import (
     DEFAULT_ENVELOPE_MAX,
     DEFAULT_ENVELOPE_MIN,
+    DEFAULT_HOME_JOINTS_850_DEG,
     DEFAULT_HOME_POSE_850,
     XArmDriver,
     XArmDriverError,
@@ -51,6 +52,16 @@ DEFAULT_STEP_RAD = math.radians(2.0)
 # gives a ~0.7 s deceleration ramp on top of DEFAULT_JOINT_SPEED_RAD_S,
 # so the arm coasts into the target instead of locking.
 DEFAULT_JOINT_ACCEL_RAD_S2 = math.radians(60.0)
+
+# Homing is a discrete, operator-initiated one-shot move — there's no
+# fine-control feel to preserve, just "get there fast". Decoupled from
+# the jog/teleop DEFAULT_JOINT_* tune (which is deliberately slow for
+# soft deceleration on small inputs). 10× the previous tune (was
+# 200°/s, 800°/s²) per operator request — the xArm controller will
+# clip to its per-joint hardware limits anyway, so commanding higher
+# just guarantees we saturate those.
+HOMING_JOINT_SPEED_RAD_S = math.radians(2000.0)  # ~35 rad/s commanded
+HOMING_JOINT_ACCEL_RAD_S2 = math.radians(8000.0)  # ~140 rad/s² commanded
 
 # Effectively infinite — "envelope off" mode the driver can still chew on.
 _NO_ENVELOPE_MIN = (-1e9, -1e9, -1e9)
@@ -74,12 +85,14 @@ _STREAM_PERIOD = 1.0 / _STREAM_HZ
 # the newest sample, causing micro-stutter. (Was 60 ms — halved to cut
 # perceived button-to-action latency.)
 _STREAM_DELAY_S = 0.030
-# Hard cap on commanded joint velocity (~135 °/s). Both the accel
-# limiter's velocity output and the per-cycle step are clamped to this.
-# 3× of the previous 45 °/s — close to the original 180 °/s ceiling
-# but with the smoothing stack now in front of it (1€, Catmull-Rom,
-# PD tracker), high velocities are clean rather than jagged.
-_STREAM_SAFETY_STEP_RAD = math.radians(135.0) / _STREAM_HZ
+# Software velocity cap on the streaming path — set effectively
+# unbounded (50000°/s ≈ 873 rad/s, ~6× the worst-case Kp·err the PD
+# tracker can request, so it never bites). Per user request: when the
+# operator moves fast, the software cap was producing a stop-start
+# rhythm because the tracker couldn't follow and stalled out at the
+# limit. The xArm controller's per-joint hardware limits remain the
+# real safety floor.
+_STREAM_SAFETY_STEP_RAD = math.radians(50000.0) / _STREAM_HZ
 # Cap on history retention. Anything older than render_t − this window
 # is evicted each cycle. 0.5 s easily covers _STREAM_DELAY_S plus any
 # clock drift.
@@ -117,11 +130,15 @@ _STREAM_EXTRAP_S = 0.060
 _STREAM_OMEGA_RAD_S = 15.0
 _STREAM_KP = _STREAM_OMEGA_RAD_S * _STREAM_OMEGA_RAD_S
 _STREAM_KD = 2.0 * _STREAM_OMEGA_RAD_S
-# Hard cap on the PD tracker's commanded acceleration. Lowered from
-# 50 rad/s² in lockstep with the omega drop: caps the deceleration
-# ramp when a large step error appears (Quest reconnect, big target
-# jump) so the arm can't snap even in those edge cases.
-_STREAM_MAX_ACCEL_RAD_S2 = 15.0
+# Software acceleration cap on the PD tracker — effectively unbounded
+# (5000 rad/s², ~4× the worst-case Kp·err of the PD tracker). The
+# previous low cap (15 rad/s²) made fast hand motion feel like it was
+# "stopping" because the tracker couldn't ramp velocity fast enough
+# to keep up. Soft-deceleration character on small inputs is still
+# preserved by the PD tracker's natural critical damping at ω=15 —
+# Kp·err stays small near steady state so the clamp never enters
+# the picture there.
+_STREAM_MAX_ACCEL_RAD_S2 = 5000.0
 
 # 1€ filter (Casiez/Roussel/Vogel CHI 2012) applied to the IK'd joint
 # vector before it enters the stream-history buffer. Quest pose
@@ -737,15 +754,15 @@ class XArmBackend:
             return {"throttled": True}
         self._last_ghost_t = now
 
-        target_joints, ik_ok = self._ik_for_pose(pose_mm_deg)
-        if not ik_ok:
-            # IK couldn't solve this pose (out of reach / singular).
-            # Surface this so the bridge can count consecutive failures
-            # and auto re-anchor if it persists.
-            return {
-                "ik_fail": True,
-                "pose": list(pose_mm_deg),
-            }
+        # IK rejection here used to short-circuit and return ``ik_fail``,
+        # which the bridge counted toward an auto-reanchor watchdog. That
+        # path produced a teleop "freeze" the operator could only escape
+        # by toggling drive mode off/on. Now: ``_ik_for_pose`` already
+        # falls back to the last-known joints on rejection, so we just
+        # use that and keep pushing samples — the arm holds smoothly at
+        # the last reachable pose and resumes the moment IK accepts a
+        # new pose again. No frozen state, no manual recovery needed.
+        target_joints, _ik_ok = self._ik_for_pose(pose_mm_deg)
         with self._lock:
             self._target_joints = target_joints
             self._last_snapshot["target_joints"] = list(target_joints)
@@ -772,16 +789,24 @@ class XArmBackend:
             # Quest teleop), drop briefly to 0 and restore afterwards.
             restore = self._ensure_position_mode()
             try:
-                target_joints, _ = self._ik_for_pose(DEFAULT_HOME_POSE_850)
-                self._target_joints = target_joints
+                # Joint-space home — bypass IK so we always land in the
+                # canonical "gripper forward, jaws upright" branch. Going
+                # through TCP-space IK silently picks a wrist-flipped
+                # branch (joint 4 = 180°) that reaches the same TCP but
+                # rolls the gripper 180° about its pointing axis, which
+                # reads as "facing backward" to the operator.
+                target_joints_rad = [
+                    math.radians(j) for j in DEFAULT_HOME_JOINTS_850_DEG
+                ]
+                self._target_joints = list(target_joints_rad)
                 api = getattr(self._driver, "_api", None)
                 if api is None:
                     raise RuntimeError("xArm SDK not connected")
                 code = api.set_servo_angle(
-                    angle=list(target_joints),
-                    speed=DEFAULT_JOINT_SPEED_RAD_S,
-                    mvacc=DEFAULT_JOINT_ACCEL_RAD_S2,
-                    is_radian=True,
+                    angle=list(DEFAULT_HOME_JOINTS_850_DEG),
+                    speed=HOMING_JOINT_SPEED_RAD_S,
+                    mvacc=HOMING_JOINT_ACCEL_RAD_S2,
+                    is_radian=False,
                     wait=False,
                 )
                 if code != 0:
@@ -797,10 +822,11 @@ class XArmBackend:
     ) -> tuple[list[float], bool]:
         """Query the xArm's onboard IK. Returns ``(joints, ok)``: on
         failure ``joints`` falls back to the last known target so the
-        caller can keep going, but ``ok`` is False so it can also tell
-        that nothing moved. Bridge uses ``ok`` to count consecutive
-        stalls and trigger an auto re-anchor. SDK call is one TCP
-        roundtrip; serialized via ``_lock``."""
+        caller can keep going. The ``ok`` flag is preserved for
+        diagnostic logging but no longer drives any state machine —
+        the auto-reanchor watchdog that used to consume it has been
+        removed (it caused a "freeze until you toggle drive mode"
+        UX bug). SDK call is one TCP roundtrip; serialized via ``_lock``."""
         api: Any = getattr(self._driver, "_api", None)
         if api is None:
             return list(self._target_joints or [0.0] * 6), False

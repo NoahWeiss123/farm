@@ -131,7 +131,7 @@ def test_move_to_reads_current_pose_then_sends_relative_set_position(
 def test_move_to_out_of_envelope_raises_before_sdk_set_position(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    arm = RecordingXArm(returns={"get_position": (0, [400.0, 0.0, 400.0, 0.0, 0.0, 0.0])})
+    arm = RecordingXArm(returns={"get_position": (0, [500.0, 0.0, 400.0, 0.0, 0.0, 0.0])})
     _patch_arm(monkeypatch, arm)
     driver = XArmDriver("192.168.1.10")
     driver.connect()

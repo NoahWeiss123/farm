@@ -20,8 +20,11 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
+using System.Net.Sockets;
+using System.Text;
+using System.Threading;
 using UnityEngine;
-using UnityEngine.Networking;
 using UnityEngine.UI;
 using UnityEngine.XR;
 
@@ -34,11 +37,33 @@ namespace TeleopDataCollector
             public RectTransform rect;
             public Action onClick;
             public string label;
+            public Image image;
+            public Color baseColor;
+            public Color hoverColor;
+            public RectTransform highlight;
         }
 
         public Transform CardTransform => cardTransform;
         public Vector2 CardSizePx => cardSizePx;
         public IReadOnlyList<UIButton> Buttons => buttons;
+
+        public int SelectedIndex
+        {
+            get => selectedIndex;
+            set
+            {
+                if (buttons.Count == 0) { selectedIndex = -1; return; }
+                selectedIndex = Mathf.Clamp(value, 0, buttons.Count - 1);
+            }
+        }
+
+        public void InvokeSelected()
+        {
+            if (selectedIndex >= 0 && selectedIndex < buttons.Count)
+                buttons[selectedIndex].onClick?.Invoke();
+        }
+
+        int selectedIndex = 0;
 
         Transform hudRoot;
         Transform cardTransform;
@@ -61,6 +86,7 @@ namespace TeleopDataCollector
         readonly List<UIButton> buttons = new List<UIButton>();
 
         bool placed;
+        float lastPlacementDiagT;
 
         // Mirrored from the bridge (Q2RPublisher edge-detects A/B). The HUD
         // poll also overwrites these with daemon truth so a daemon-side
@@ -99,6 +125,7 @@ namespace TeleopDataCollector
         static readonly Color C_REC_GLOW_OFF = new Color(0, 0, 0, 0);
         static readonly Color C_MODE_DIGITAL = new Color(0.20f, 0.28f, 0.40f, 1f);
         static readonly Color C_MODE_REAL    = new Color(0.55f, 0.20f, 0.22f, 1f);
+        static readonly Color C_HIGHLIGHT    = new Color(0.98f, 0.85f, 0.30f, 1f);
 
         void Awake()
         {
@@ -106,6 +133,7 @@ namespace TeleopDataCollector
             BuildCard();
             Application.targetFrameRate = 90;
             StartCoroutine(PollHudLoop());
+            Debug.Log($"[FARM HUD] Awake done, polling http://{ConnectionConfig.Ip}:8787/v1/hud");
         }
 
         void BuildCard()
@@ -122,6 +150,9 @@ namespace TeleopDataCollector
 
             cardTransform = canvasGO.transform;
             var rt = (RectTransform)canvasGO.transform;
+            rt.anchorMin = new Vector2(0.5f, 0.5f);
+            rt.anchorMax = new Vector2(0.5f, 0.5f);
+            rt.pivot     = new Vector2(0.5f, 0.5f);
             rt.sizeDelta = cardSizePx;
             canvasGO.transform.localScale = Vector3.one * 0.0007f;
 
@@ -225,7 +256,7 @@ namespace TeleopDataCollector
             // ── footer ────────────────────────────────────────────────────
             footerLine = NewText(canvasGO, "footer",
                 new Vector2(0, -168), 16, TextAnchor.MiddleCenter, C_DIM);
-            footerLine.text = "A start/save · B cancel · right trigger move · grip gripper";
+            footerLine.text = "L-stick select  ·  X click  ·  A start/save  ·  B cancel  ·  R-trigger move";
             ((RectTransform)footerLine.transform).sizeDelta = new Vector2(560, 22);
         }
 
@@ -236,6 +267,16 @@ namespace TeleopDataCollector
             var rt = (RectTransform)go.transform;
             rt.sizeDelta = size;
             rt.anchoredPosition = pos;
+
+            // Selection highlight ring — slightly larger rectangle behind the
+            // button, off by default. Shown when SelectedIndex matches.
+            var ringGO = NewChild(go, "highlight");
+            var ringRT = (RectTransform)ringGO.transform;
+            ringRT.anchorMin = Vector2.zero; ringRT.anchorMax = Vector2.one;
+            ringRT.offsetMin = new Vector2(-8, -8);
+            ringRT.offsetMax = new Vector2( 8,  8);
+            ringGO.AddComponent<Image>().color = C_HIGHLIGHT;
+            ringGO.SetActive(false);
 
             var img = go.AddComponent<Image>();
             img.color = baseCol;
@@ -254,7 +295,11 @@ namespace TeleopDataCollector
             ((RectTransform)txt.transform).sizeDelta = size;
             txt.text = label;
 
-            buttons.Add(new UIButton { rect = rt, onClick = onClick, label = label });
+            buttons.Add(new UIButton {
+                rect = rt, onClick = onClick, label = label,
+                image = img, baseColor = baseCol, hoverColor = hoverCol,
+                highlight = ringRT,
+            });
             return btn;
         }
 
@@ -268,15 +313,22 @@ namespace TeleopDataCollector
             {
                 if (cam.transform.position.sqrMagnitude > 0.0001f)
                 {
-                    var rigParent = cam.transform.parent;
-                    if (rigParent != null) hudRoot.SetParent(rigParent, false);
+                    // Keep hudRoot at scene root — never parent it under the
+                    // camera or any XR rig. World-fixed only.
+                    if (hudRoot.parent != null) hudRoot.SetParent(null, true);
                     var fwd = cam.transform.forward; fwd.y = 0f;
                     if (fwd.sqrMagnitude < 0.01f) fwd = Vector3.forward;
                     fwd.Normalize();
-                    var origin = new Vector3(cam.transform.position.x, 0f, cam.transform.position.z);
-                    hudRoot.position = origin + fwd * 1.2f + Vector3.up * 1.45f;
+                    // Place off to the left of the user's initial gaze so it
+                    // sits in peripheral vision and is obviously world-locked
+                    // (look right and it leaves view; look back left to find it).
+                    // Unity is left-handed: cross(forward, up) yields left.
+                    var leftDir = Vector3.Cross(fwd, Vector3.up).normalized;
+                    var head = cam.transform.position;
+                    hudRoot.position = head + fwd * 0.9f + leftDir * 0.6f - Vector3.up * 0.15f;
                     hudRoot.rotation = Quaternion.LookRotation(fwd, Vector3.up);
                     placed = true;
+                    Debug.Log($"[FARM HUD] placed at {hudRoot.position} (head was {head}, fwd {fwd}, left {leftDir})");
                 }
             }
 
@@ -292,6 +344,17 @@ namespace TeleopDataCollector
                     var target = Quaternion.LookRotation(fromCam.normalized, Vector3.up);
                     hudRoot.rotation = Quaternion.Slerp(
                         hudRoot.rotation, target, Time.deltaTime * 8f);
+                }
+
+                // Diagnostic: log camera vs HUD world position every 3s so we
+                // can verify the camera actually tracks head motion (without
+                // a TrackedPoseDriver the camera stays at spawn and the HUD
+                // appears head-locked).
+                if (Time.unscaledTime - lastPlacementDiagT > 3f)
+                {
+                    string parentName = hudRoot.parent != null ? hudRoot.parent.name : "<root>";
+                    Debug.Log($"[FARM HUD] cam={cam.transform.position} hud={hudRoot.position} parent={parentName}");
+                    lastPlacementDiagT = Time.unscaledTime;
                 }
             }
 
@@ -339,6 +402,17 @@ namespace TeleopDataCollector
 
             episodeCount.text = hudEpisodes.ToString();
 
+            // Apply selection visual — highlight ring on selected button only,
+            // and bump the button color to its hover variant for extra contrast.
+            for (int i = 0; i < buttons.Count; i++)
+            {
+                bool sel = (i == selectedIndex);
+                if (buttons[i].image != null)
+                    buttons[i].image.color = sel ? buttons[i].hoverColor : buttons[i].baseColor;
+                if (buttons[i].highlight != null)
+                    buttons[i].highlight.gameObject.SetActive(sel);
+            }
+
             // Primary state line: REC > CONTROLLING > READY
             var right = InputDevices.GetDeviceAtXRNode(XRNode.RightHand);
             float trig = 0f;
@@ -368,26 +442,92 @@ namespace TeleopDataCollector
         }
 
         // ── HTTP poll ─────────────────────────────────────────────────────
+        // UnityWebRequest hangs on Quest 3 against the daemon's HTTP port even
+        // when both TCP-reachability and cleartext traffic are confirmed.
+        // Roll a tiny HTTP/1.1 client over System.Net.Sockets — same path
+        // Q2RPublisher uses for the bridge TCP, which is known to work.
+        // Worker-thread → coroutine handoff. C# disallows volatile on string,
+        // so use the explicit Volatile.Read/Write helpers via Interlocked-like
+        // semantics — both threads only ever do a single reference swap.
+        string pendingJson;
+
         IEnumerator PollHudLoop()
         {
+            int iter = 0;
             while (true)
             {
-                string url = $"http://{ConnectionConfig.Ip}:8787/v1/hud";
-                using (var req = UnityWebRequest.Get(url))
+                iter++;
+                string ip = ConnectionConfig.Ip;
+                Debug.Log($"[FARM HUD] poll #{iter} → http://{ip}:8787/v1/hud");
+                pendingJson = null;
+                var t = new Thread(() => FetchHudJson(ip, 8787, "/v1/hud", iter)) {
+                    IsBackground = true,
+                    Name = $"hudpoll-{iter}",
+                };
+                t.Start();
+
+                // Wait up to 3s for the worker thread to populate pendingJson.
+                float deadline = Time.unscaledTime + 3f;
+                while (pendingJson == null && Time.unscaledTime < deadline)
+                    yield return null;
+
+                if (pendingJson != null && pendingJson.Length > 0)
                 {
-                    req.timeout = 2;
-                    yield return req.SendWebRequest();
-                    if (req.result == UnityWebRequest.Result.Success)
+                    daemonReachable = true;
+                    ApplyHudPayload(pendingJson);
+                    Debug.Log($"[FARM HUD] poll #{iter} ← ok ({pendingJson.Length} bytes)");
+                }
+                else
+                {
+                    daemonReachable = false;
+                    Debug.Log($"[FARM HUD] poll #{iter} ← timeout/empty");
+                }
+                yield return new WaitForSeconds(2f);
+            }
+        }
+
+        void FetchHudJson(string host, int port, string path, int iter)
+        {
+            try
+            {
+                using (var client = new TcpClient { NoDelay = true })
+                {
+                    var ar = client.BeginConnect(host, port, null, null);
+                    if (!ar.AsyncWaitHandle.WaitOne(TimeSpan.FromSeconds(2)))
                     {
-                        daemonReachable = true;
-                        ApplyHudPayload(req.downloadHandler.text);
+                        Debug.LogWarning($"[FARM HUD] poll #{iter} connect timeout");
+                        pendingJson = "";
+                        return;
                     }
-                    else
+                    client.EndConnect(ar);
+                    using (var stream = client.GetStream())
                     {
-                        daemonReachable = false;
+                        stream.ReadTimeout = 2000;
+                        stream.WriteTimeout = 2000;
+                        // HTTP/1.0 to disable chunked transfer-encoding so the
+                        // parser doesn't have to handle chunk-size framing.
+                        var req = $"GET {path} HTTP/1.0\r\nHost: {host}:{port}\r\nConnection: close\r\nAccept: application/json\r\n\r\n";
+                        var reqBytes = Encoding.ASCII.GetBytes(req);
+                        stream.Write(reqBytes, 0, reqBytes.Length);
+
+                        using (var ms = new MemoryStream())
+                        {
+                            var buf = new byte[4096];
+                            int n;
+                            while ((n = stream.Read(buf, 0, buf.Length)) > 0)
+                                ms.Write(buf, 0, n);
+                            var raw = Encoding.UTF8.GetString(ms.ToArray());
+                            int sep = raw.IndexOf("\r\n\r\n");
+                            if (sep < 0) { pendingJson = ""; return; }
+                            pendingJson = raw.Substring(sep + 4);
+                        }
                     }
                 }
-                yield return new WaitForSeconds(0.5f);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[FARM HUD] poll #{iter} exception: {e.Message}");
+                pendingJson = "";
             }
         }
 
@@ -434,25 +574,55 @@ namespace TeleopDataCollector
         // ── button actions ────────────────────────────────────────────────
         void OnZeroPressed()
         {
-            StartCoroutine(PostNoBody($"http://{ConnectionConfig.Ip}:8787/v1/teleop/home"));
+            Debug.Log("[FARM HUD] click ZERO");
+            new Thread(() => PostNoBody(ConnectionConfig.Ip, 8787, "/v1/teleop/home")) {
+                IsBackground = true, Name = "hudpost-home",
+            }.Start();
         }
 
         void OnEstopPressed()
         {
-            StartCoroutine(PostNoBody($"http://{ConnectionConfig.Ip}:8787/v1/teleop/estop"));
+            Debug.Log("[FARM HUD] click ESTOP");
+            new Thread(() => PostNoBody(ConnectionConfig.Ip, 8787, "/v1/teleop/estop")) {
+                IsBackground = true, Name = "hudpost-estop",
+            }.Start();
         }
 
-        IEnumerator PostNoBody(string url)
+        void PostNoBody(string host, int port, string path)
         {
-            using (var req = new UnityWebRequest(url, UnityWebRequest.kHttpVerbPOST))
+            try
             {
-                req.uploadHandler = new UploadHandlerRaw(new byte[0]);
-                req.downloadHandler = new DownloadHandlerBuffer();
-                req.SetRequestHeader("Content-Type", "application/json");
-                req.timeout = 2;
-                yield return req.SendWebRequest();
-                if (req.result != UnityWebRequest.Result.Success)
-                    Debug.LogWarning($"[FARM HUD] POST {url} failed: {req.error}");
+                using (var client = new TcpClient { NoDelay = true })
+                {
+                    var ar = client.BeginConnect(host, port, null, null);
+                    if (!ar.AsyncWaitHandle.WaitOne(TimeSpan.FromSeconds(2)))
+                    {
+                        Debug.LogWarning($"[FARM HUD] POST {path} connect timeout");
+                        return;
+                    }
+                    client.EndConnect(ar);
+                    using (var stream = client.GetStream())
+                    {
+                        stream.ReadTimeout = 2000;
+                        stream.WriteTimeout = 2000;
+                        var req =
+                            $"POST {path} HTTP/1.0\r\n" +
+                            $"Host: {host}:{port}\r\n" +
+                            $"Content-Type: application/json\r\n" +
+                            $"Content-Length: 0\r\n" +
+                            $"Connection: close\r\n\r\n";
+                        var bytes = Encoding.ASCII.GetBytes(req);
+                        stream.Write(bytes, 0, bytes.Length);
+                        // Drain so the server actually processes the request
+                        // before we close (some aiohttp paths buffer otherwise).
+                        var sink = new byte[1024];
+                        try { while (stream.Read(sink, 0, sink.Length) > 0) { } } catch {}
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[FARM HUD] POST {path} exception: {e.Message}");
             }
         }
 

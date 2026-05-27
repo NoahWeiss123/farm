@@ -16,12 +16,28 @@ from typing import Any
 from farm_edge_agent.drivers import _xarm_sdk_shim
 from farm_edge_agent.drivers.base import GripperState, Pose
 
-DEFAULT_HOME_POSE_850: Pose = (200.0, 0.0, 300.0, 180.0, 0.0, 0.0)
-"""Forward, ~30cm above table, TCP pointing down. Inside the default envelope."""
+DEFAULT_HOME_JOINTS_850_DEG: tuple[float, ...] = (0.0, -20.0, -20.0, 0.0, 70.0, 0.0)
+"""Canonical home in joint space — light shoulder/elbow bend, wrist
+pitched 70° up from the all-zero straight-down rest pose. Joints 4
+and 6 zeroed so the gripper's parallel-jaw "front" stays upright
+instead of being rolled 180° as the SDK's TCP-space IK would
+otherwise pick. Drive this with ``set_servo_angle`` directly; do
+NOT route through ``set_position`` + SDK IK, which silently chooses
+the wrist-flipped branch."""
+
+DEFAULT_HOME_POSE_850: Pose = (365.3, 0.0, 274.1, 180.0, -70.0, 0.0)
+"""TCP equivalent of ``DEFAULT_HOME_JOINTS_850_DEG`` derived via the
+UF850's forward kinematics. Used by the driver-layer
+``XArmDriver.home`` which calls ``set_position`` and lets the SDK
+pick an IK branch (the runtime arm-control path in
+``XArmBackend.home`` uses the joint vector above and bypasses that
+branch selection — see the joint constant for why)."""
 
 DEFAULT_ENVELOPE_MIN: tuple[float, float, float] = (100.0, -200.0, 50.0)
-DEFAULT_ENVELOPE_MAX: tuple[float, float, float] = (500.0, 200.0, 450.0)
-"""Conservative 40cm cube centred ~30cm in front of the base. DESIGN → Safety."""
+DEFAULT_ENVELOPE_MAX: tuple[float, float, float] = (600.0, 200.0, 450.0)
+"""Conservative box centred in front of the base. x-max bumped from
+500 to 600 mm to comfortably contain ``DEFAULT_HOME_POSE_850.x ≈ 513``
+plus jog headroom. DESIGN → Safety."""
 
 _DEFAULT_VELOCITY_CAP = 100.0
 

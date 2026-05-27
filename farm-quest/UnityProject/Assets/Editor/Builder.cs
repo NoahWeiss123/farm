@@ -305,18 +305,30 @@ namespace TeleopDataCollector
 
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
-            // Main camera at adult-eye height. XR plugin drives its pose from the HMD.
-            // CRITICAL for passthrough: backgroundColor alpha=0 so transparent pixels let
-            // the Meta Quest compositor show the passthrough layer through.
+            // XR Origin hierarchy — required for OpenXR to drive the camera
+            // *transform* from the HMD pose. Without this the camera renders
+            // correctly (eye matrices follow the headset) but the camera
+            // GameObject's transform stays at spawn, so any world-anchored
+            // object computed against Camera.main.transform.position ends up
+            // effectively head-locked.
+            //
+            // Structure:
+            //   XR Origin                (XROrigin component, tracking origin)
+            //     └─ Camera Offset       (zero offset under Floor tracking)
+            //          └─ Main Camera    (auto-driven by OpenXR)
+            var xrOriginGO = new GameObject("XR Origin");
+            var cameraOffsetGO = new GameObject("Camera Offset");
+            cameraOffsetGO.transform.SetParent(xrOriginGO.transform, false);
+
+            // Main camera at adult-eye height. CRITICAL for passthrough:
+            // backgroundColor alpha=0 so transparent pixels let the Meta Quest
+            // compositor show the passthrough layer through.
             var camGO = new GameObject("Main Camera", typeof(Camera), typeof(AudioListener));
             camGO.tag = "MainCamera";
-            camGO.transform.position = new Vector3(0f, 1.6f, 0f);
+            camGO.transform.SetParent(cameraOffsetGO.transform, false);
+            camGO.transform.localPosition = Vector3.zero;
             var cam = camGO.GetComponent<Camera>();
             cam.clearFlags = CameraClearFlags.SolidColor;
-            // Transparent clear: ARCameraBackground (added below) renders the Meta
-            // Quest passthrough feed as a fullscreen background quad behind anything
-            // we draw. Camera buffer's alpha=0 pixels show passthrough, opaque pixels
-            // (UI) show through normally.
             cam.backgroundColor = new Color(0f, 0f, 0f, 0f);
             cam.nearClipPlane = 0.05f;
             cam.farClipPlane  = 50f;
@@ -326,6 +338,24 @@ namespace TeleopDataCollector
             // come from com.unity.xr.arfoundation (transitive of meta-openxr).
             AddComponentByName(camGO, "UnityEngine.XR.ARFoundation.ARCameraManager");
             AddComponentByName(camGO, "UnityEngine.XR.ARFoundation.ARCameraBackground");
+
+            // Read HMD pose ourselves — XROrigin sets up the rig but doesn't
+            // drive the camera transform on Quest+OpenXR. The driver reads
+            // InputTracking + InputDevices fallbacks and applies the result
+            // to the camera's localTransform every frame.
+            camGO.AddComponent<CameraPoseDriver>();
+
+            // Add the XR Origin component last and wire its Camera/Offset refs.
+            // Reflective because Unity.XR.CoreUtils.XROrigin isn't a project-side
+            // hard reference and we want Builder.cs to keep compiling either way.
+            var xrOriginComp = AddComponentByName(xrOriginGO, "Unity.XR.CoreUtils.XROrigin");
+            if (xrOriginComp != null)
+            {
+                var t = xrOriginComp.GetType();
+                t.GetProperty("Camera")?.SetValue(xrOriginComp, cam);
+                t.GetProperty("CameraFloorOffsetObject")?.SetValue(xrOriginComp, cameraOffsetGO);
+                Log("[scene] wired XROrigin → camera + camera-offset");
+            }
 
             // Publisher GO -- reads OpenXR controllers, publishes Q2R topics.
             var pubGO = new GameObject("Q2RPublisher");
