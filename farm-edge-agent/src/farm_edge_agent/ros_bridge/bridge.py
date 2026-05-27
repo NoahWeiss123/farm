@@ -265,16 +265,22 @@ class RosTcpBridge:
             log.info("trigger UP — ghost frozen")
         self._trigger_held = trigger_now
 
-        # ── grip (middle finger) → gripper toggle on rising edge ─────
+        # ── grip (middle finger) → momentary gripper ─────────────────
+        # Closed while held, open while released. Rising and falling
+        # edges each fire a single command.
         grip_now = float(msg.press_middle) > 0.5
         if grip_now and not self._grip_held:
             try:
-                cur = self._supervisor.snapshot().get("gripper", "open")
-                new = "open" if cur == "closed" else "closed"
-                self._supervisor.set_gripper(new)
-                log.info("grip RISING — gripper → %s", new)
+                self._supervisor.set_gripper("closed")
+                log.info("grip DOWN — gripper → closed")
             except Exception as exc:
-                log.warning("gripper toggle failed: %s", exc)
+                log.warning("gripper close failed: %s", exc)
+        elif (not grip_now) and self._grip_held:
+            try:
+                self._supervisor.set_gripper("open")
+                log.info("grip UP — gripper → open")
+            except Exception as exc:
+                log.warning("gripper open failed: %s", exc)
         self._grip_held = grip_now
 
         # ── A (button_lower) → start / save recording on rising edge ──
@@ -462,22 +468,17 @@ class RosTcpBridge:
         except Exception as exc:  # noqa: BLE001
             log.debug("ghost update failed: %s", exc)
             result = None
-        # Auto-reanchor on persistent stalls. We don't count "throttled"
-        # — that's normal at high input rates. We DO count "rejected"
-        # (branch flip the unwrap couldn't collapse) and "ik_fail" (pose
-        # out of reach — the dominant cause of the trigger-held freeze).
-        stalled = (
-            isinstance(result, dict)
-            and ("rejected" in result or result.get("ik_fail"))
-        )
+        # Auto-reanchor on persistent stalls. Only counts ik_fail (pose
+        # out of reach — the dominant cause of the trigger-held freeze);
+        # we no longer reject branch flips, so there's nothing else to
+        # count.
+        stalled = isinstance(result, dict) and result.get("ik_fail")
         if stalled:
             self._ghost_stall_streak += 1
             if self._ghost_stall_streak >= _AUTO_REANCHOR_STALLS:
-                reason = "ik_fail" if result.get("ik_fail") else "rejected"
                 log.warning(
-                    "ghost stalled %d frames (%s) — auto re-anchoring",
+                    "ghost stalled %d frames (ik_fail) — auto re-anchoring",
                     self._ghost_stall_streak,
-                    reason,
                 )
                 # Same state machine release+repress walks through, just
                 # in-place: clear both anchor sets, arm the next frame

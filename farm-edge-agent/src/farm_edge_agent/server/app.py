@@ -11,6 +11,8 @@ POST /v1/teleop/home            — drive arm to backend home pose
 POST /v1/teleop/gripper         — {state: "open"|"closed"}
 POST /v1/teleop/estop           — software emergency stop
 POST /v1/teleop/estop/clear     — re-arm after e-stop
+GET  /v1/teleop/filter          — current 1€ joint-filter params
+POST /v1/teleop/filter          — {min_cutoff?, beta?} hot-tune 1€ filter
 GET  /v1/cameras/{name}.jpg     — live JPEG from a backend camera (placeholder for xarm)
 """
 
@@ -20,6 +22,8 @@ import asyncio
 import json
 import logging
 import math
+import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +50,26 @@ DATASETS_DIR = Path(__file__).resolve().parents[4] / "datasets"
 _VALID_AXES = {"x", "y", "z", "rx", "ry", "rz"}
 DEFAULT_STEP_MM = 5.0
 DEFAULT_STEP_RAD = math.radians(2.0)
+
+# Episode IDs look like ``episode_<UTC>_<uuid8>``; this also covers any
+# legacy directories that happen to be in datasets/. The regex is the
+# only thing standing between a user-supplied path segment and shutil's
+# rmtree, so keep it tight.
+_EPISODE_ID_RE = re.compile(r"^episode_[A-Za-z0-9_\-]+$")
+_CAM_NAME_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+
+
+def _episode_dir(name: str) -> Path | None:
+    if not _EPISODE_ID_RE.match(name or ""):
+        return None
+    p = (DATASETS_DIR / name).resolve()
+    try:
+        p.relative_to(DATASETS_DIR.resolve())
+    except ValueError:
+        return None
+    if not p.is_dir():
+        return None
+    return p
 
 
 def _sse(event: dict[str, Any]) -> bytes:
@@ -223,6 +247,47 @@ async def post_drive_mode(request: web.Request) -> web.Response:
     return web.json_response({"drive_real_arm": bool(backend.drive_real_arm)})
 
 
+async def get_filter_params(request: web.Request) -> web.Response:
+    """Current 1€ filter params on the joint stream."""
+    supervisor: Supervisor = request.app["supervisor"]
+    backend = getattr(supervisor, "_backend", None)
+    if backend is None or not hasattr(backend, "get_joint_filter_params"):
+        return web.json_response({"error": "backend has no joint filter"}, status=503)
+    return web.json_response(backend.get_joint_filter_params())
+
+
+async def post_filter_params(request: web.Request) -> web.Response:
+    """Hot-tune the 1€ filter from the dashboard.
+
+    Body: ``{"min_cutoff": <Hz>, "beta": <float>}`` — either key may
+    be omitted to leave that channel untouched. Echoes the new params
+    back so the UI can stay authoritative.
+    """
+    supervisor: Supervisor = request.app["supervisor"]
+    backend = getattr(supervisor, "_backend", None)
+    if backend is None or not hasattr(backend, "set_joint_filter_params"):
+        return web.json_response({"error": "backend has no joint filter"}, status=503)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be a JSON object"}, status=400)
+    kwargs: dict[str, float] = {}
+    for key in ("min_cutoff", "beta"):
+        if key in body and body[key] is not None:
+            try:
+                kwargs[key] = float(body[key])
+            except (TypeError, ValueError):
+                return web.json_response(
+                    {"error": f"{key} must be a number"}, status=400
+                )
+    params = await asyncio.to_thread(
+        lambda: backend.set_joint_filter_params(**kwargs)
+    )
+    return web.json_response(params)
+
+
 async def post_recording_start(request: web.Request) -> web.Response:
     rec = request.app["supervisor"].recorder
     if rec is None:
@@ -249,6 +314,174 @@ async def get_recording_state(request: web.Request) -> web.Response:
     if rec is None:
         return web.json_response({"recording": False, "error": "not configured"})
     return web.json_response(rec.state)
+
+
+def _hud_state_sync(supervisor: Supervisor) -> dict[str, Any]:
+    backend = supervisor.backend
+    grabber = getattr(backend, "_grabber", None)
+    alive_fn = getattr(grabber, "alive", None) if grabber is not None else None
+    if callable(alive_fn):
+        cam_alive = alive_fn()
+    else:
+        cam_alive = {name: False for name in supervisor.cameras()}
+    cameras = [{"name": n, "alive": bool(v)} for n, v in cam_alive.items()]
+
+    ep_count = 0
+    if DATASETS_DIR.is_dir():
+        for p in DATASETS_DIR.iterdir():
+            if p.is_dir() and _EPISODE_ID_RE.match(p.name):
+                ep_count += 1
+
+    rec = supervisor.recorder
+    rec_state = rec.state if rec is not None else {"recording": False}
+
+    return {
+        "cameras": cameras,
+        "episodes": ep_count,
+        "recording": rec_state,
+        "drive_real_arm": bool(getattr(backend, "drive_real_arm", False)),
+    }
+
+
+async def get_hud(request: web.Request) -> web.Response:
+    supervisor: Supervisor = request.app["supervisor"]
+    payload = await asyncio.to_thread(_hud_state_sync, supervisor)
+    return web.json_response(payload)
+
+
+def _list_episodes_sync() -> list[dict[str, Any]]:
+    if not DATASETS_DIR.is_dir():
+        return []
+    out: list[dict[str, Any]] = []
+    for p in DATASETS_DIR.iterdir():
+        if not p.is_dir() or not _EPISODE_ID_RE.match(p.name):
+            continue
+        meta_path = p / "meta.json"
+        meta: dict[str, Any] = {}
+        if meta_path.is_file():
+            try:
+                meta = json.loads(meta_path.read_text())
+            except Exception:
+                meta = {}
+        cameras = meta.get("cameras") or []
+        if not cameras:
+            cam_root = p / "cameras"
+            if cam_root.is_dir():
+                cameras = sorted(c.name for c in cam_root.iterdir() if c.is_dir())
+        out.append({
+            "id": p.name,
+            "start_iso": meta.get("start_iso"),
+            "duration_s": meta.get("duration_s"),
+            "fps": meta.get("fps"),
+            "frame_count": meta.get("frame_count"),
+            "cameras": list(cameras),
+            "backend": meta.get("backend"),
+        })
+    # Newest first: episode IDs embed the UTC timestamp so a lexicographic
+    # sort matches chronological order without parsing meta.json.
+    out.sort(key=lambda e: e["id"], reverse=True)
+    return out
+
+
+async def list_episodes(_: web.Request) -> web.Response:
+    episodes = await asyncio.to_thread(_list_episodes_sync)
+    return web.json_response({"episodes": episodes})
+
+
+async def get_episode_meta(request: web.Request) -> web.Response:
+    p = _episode_dir(request.match_info["id"])
+    if p is None:
+        return web.json_response({"error": "not found"}, status=404)
+    meta = p / "meta.json"
+    if not meta.is_file():
+        return web.json_response({"error": "no meta"}, status=404)
+    return web.Response(body=meta.read_bytes(), content_type="application/json")
+
+
+async def get_episode_frames(request: web.Request) -> web.Response:
+    p = _episode_dir(request.match_info["id"])
+    if p is None:
+        return web.json_response({"error": "not found"}, status=404)
+    frames = p / "frames.jsonl"
+    if not frames.is_file():
+        return web.Response(text="", content_type="application/x-ndjson")
+    return web.Response(body=frames.read_bytes(), content_type="application/x-ndjson")
+
+
+def _episode_frame_path(episode: Path, cam: str, idx: int) -> Path | None:
+    if not _CAM_NAME_RE.match(cam or "") or idx < 0:
+        return None
+    candidate = (episode / "cameras" / cam / f"{idx:06d}.jpg").resolve()
+    try:
+        candidate.relative_to(episode.resolve())
+    except ValueError:
+        return None
+    if not candidate.is_file():
+        return None
+    return candidate
+
+
+async def get_episode_thumbnail(request: web.Request) -> web.Response:
+    p = _episode_dir(request.match_info["id"])
+    if p is None:
+        return web.Response(status=404)
+    cam_root = p / "cameras"
+    if not cam_root.is_dir():
+        return web.Response(status=404)
+    # Prefer "base" — that's the wide context shot — then fall back to
+    # whichever camera directory has frame 0 on disk.
+    cam_order: list[str] = []
+    if (cam_root / "base").is_dir():
+        cam_order.append("base")
+    for c in sorted(cam_root.iterdir()):
+        if c.is_dir() and c.name not in cam_order:
+            cam_order.append(c.name)
+    for cam in cam_order:
+        frame = _episode_frame_path(p, cam, 0)
+        if frame is not None:
+            return web.Response(
+                body=frame.read_bytes(), content_type="image/jpeg",
+                headers={"Cache-Control": "no-store"},
+            )
+    return web.Response(status=404)
+
+
+async def get_episode_camera_frame(request: web.Request) -> web.Response:
+    p = _episode_dir(request.match_info["id"])
+    if p is None:
+        return web.Response(status=404)
+    cam = request.match_info["cam"]
+    try:
+        idx = int(request.match_info["idx"])
+    except ValueError:
+        return web.Response(status=400)
+    frame = _episode_frame_path(p, cam, idx)
+    if frame is None:
+        return web.Response(status=404)
+    return web.Response(
+        body=frame.read_bytes(), content_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+async def delete_episode(request: web.Request) -> web.Response:
+    p = _episode_dir(request.match_info["id"])
+    if p is None:
+        return web.json_response({"error": "not found"}, status=404)
+    rec = request.app["supervisor"].recorder
+    if rec is not None:
+        st = rec.state
+        if st.get("recording") and st.get("episode_id") == p.name:
+            return web.json_response(
+                {"error": "cannot delete an episode that is still recording"},
+                status=409,
+            )
+    try:
+        await asyncio.to_thread(shutil.rmtree, p)
+    except Exception as exc:
+        log.warning("episode delete failed for %s: %s", p, exc)
+        return web.json_response({"error": str(exc)}, status=500)
+    return web.json_response({"ok": True, "id": p.name})
 
 
 async def serve_dashboard(_: web.Request) -> web.Response:
@@ -303,10 +536,19 @@ def build_app(*, backend: RobotBackend | None = None) -> web.Application:
         web.get("/v1/cameras/{name}.jpg", get_camera_jpeg),
         web.post("/v1/cameras/swap", post_cameras_swap),
         web.post("/v1/teleop/drive_mode", post_drive_mode),
+        web.get("/v1/teleop/filter", get_filter_params),
+        web.post("/v1/teleop/filter", post_filter_params),
         web.post("/v1/recording/start", post_recording_start),
         web.post("/v1/recording/save", post_recording_save),
         web.post("/v1/recording/cancel", post_recording_cancel),
         web.get("/v1/recording/state", get_recording_state),
+        web.get("/v1/hud", get_hud),
+        web.get("/v1/episodes", list_episodes),
+        web.get("/v1/episodes/{id}/meta.json", get_episode_meta),
+        web.get("/v1/episodes/{id}/frames.jsonl", get_episode_frames),
+        web.get("/v1/episodes/{id}/thumbnail.jpg", get_episode_thumbnail),
+        web.get("/v1/episodes/{id}/cameras/{cam}/{idx}.jpg", get_episode_camera_frame),
+        web.delete("/v1/episodes/{id}", delete_episode),
     ]
     for route in routes:
         app.router.add_route(route.method, route.path, route.handler)

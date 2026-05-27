@@ -268,6 +268,15 @@ class RealsenseGrabber:
             return None
         return proc.latest_jpeg()
 
+    def alive(self) -> dict[str, bool]:
+        with self._map_lock:
+            mapping = dict(self._label_to_serial)
+        out: dict[str, bool] = {}
+        for name, serial in mapping.items():
+            proc = self._procs.get(serial)
+            out[name] = bool(proc and proc.alive())
+        return out
+
     def swap(self) -> dict[str, str]:
         with self._map_lock:
             if set(self._label_to_serial) != {"base", "wrist"}:

@@ -34,83 +34,161 @@ from farm_edge_agent.drivers.xarm import (
     XArmDriver,
     XArmDriverError,
 )
+from farm_edge_agent.one_euro import OneEuroFilterND
 
 from .base import GripperState, JogAxis
 
 log = logging.getLogger("farm.backends.xarm")
 
 DEFAULT_VELOCITY_CAP_MM_S = 50.0
-DEFAULT_JOINT_SPEED_RAD_S = math.radians(40.0)  # slow + safe
+DEFAULT_JOINT_SPEED_RAD_S = math.radians(120.0)  # 3× of the prior 40°/s
 DEFAULT_STEP_MM = 5.0
 DEFAULT_STEP_RAD = math.radians(2.0)
-
-# Largest per-joint delta a single jog is allowed to issue. Catches the
-# case where the SDK's IK picks a different branch than what's currently
-# loaded (e.g. flips the elbow); without this the arm would swing
-# violently to reach a numerically valid but geometrically distant
-# joint configuration.
-_JOG_MAX_JOINT_DELTA_RAD = math.radians(30.0)
-# Same idea for the ghost-arm Quest stream — looser threshold because
-# the ghost moves continuously instead of in discrete clicks. Anything
-# past 60° between frames is almost certainly an IK branch jump (elbow
-# flip, wrist roll-over) and we drop it. Comparison is against the last
-# accepted target, not the live arm joints, so the user's smooth hand
-# motion doesn't keep tripping the filter while the real arm catches up.
-_GHOST_MAX_JOINT_JUMP_RAD = math.radians(60.0)
-# Safety valve on the branch-jump filter: if we reject this many ghost
-# updates in a row, the IK is genuinely stuck in a flipped branch and
-# the operator can't unstick it from the headset. Force-accept the
-# next one rather than freeze indefinitely. ~0.2 s at 100 Hz Quest input.
-_GHOST_REJECT_STREAK_MAX = 20
+# Joint acceleration cap for discrete moves (jog/home). The xArm SDK's
+# default mvacc is ~17 rad/s², which produces a near-step velocity
+# change at the end of every move — the operator sees the arm reach
+# target and visibly snap to a halt. Setting mvacc to ~1 rad/s² (≈57°/s²)
+# gives a ~0.7 s deceleration ramp on top of DEFAULT_JOINT_SPEED_RAD_S,
+# so the arm coasts into the target instead of locking.
+DEFAULT_JOINT_ACCEL_RAD_S2 = math.radians(60.0)
 
 # Effectively infinite — "envelope off" mode the driver can still chew on.
 _NO_ENVELOPE_MIN = (-1e9, -1e9, -1e9)
 _NO_ENVELOPE_MAX = (1e9, 1e9, 1e9)
 
-# Streaming loop — what mode 1 actually wants.
+# Streaming loop: replay the ghost arm's recorded trajectory.
 #
-# xArm mode 1 (`set_servo_angle_j`) does NO interpolation in the controller:
-# whatever angle we push lands as the next setpoint. If we forward each
-# Quest pose directly (60–90 Hz, lumpy from Unity), the arm sees command
-# gaps and stutters.
-#
-# Naive fix #1 — "chase the latest target with a slew cap" — replaces the
-# stutter with the WORSE artifact the operator actually feels: the real
-# arm falls behind, sprints at the cap velocity (faster than the hand!),
-# overshoots in *velocity*, stops, sprints again. That's intrinsic to any
-# catch-up strategy.
-#
-# What we do instead: a **fixed-delay replay buffer**. Every Quest target
-# is timestamped and pushed into a deque. The 250 Hz stream loop renders
-# the target sampled `_STREAM_DELAY_S` in the past, linearly interpolated
-# between buffer entries. By construction the output velocity equals the
-# input velocity — so the real arm tracks the digital arm's speed exactly,
-# just `_STREAM_DELAY_S` seconds behind. When the operator stops, the arm
-# rolls to the last buffered position and stops cleanly. No catch-up.
+# Every ghost-target update appends (t, joints) to a deque. The 250 Hz
+# stream loop renders that history at (now − _STREAM_DELAY_S), linearly
+# interpolated between adjacent samples. No setpoint chasing, no
+# smoothing — the real arm walks through the same joint positions the
+# ghost did, at the ghost's actual frame-to-frame velocity, just
+# _STREAM_DELAY_S seconds behind. When the ghost stops, the renderer
+# reaches the last entry and holds; the real arm stops too.
 _STREAM_HZ = 250.0
 _STREAM_PERIOD = 1.0 / _STREAM_HZ
 # Tracking delay. Has to comfortably exceed the worst inter-frame gap of
-# the Quest input so we always have a "future" sample to interpolate
-# toward; 60 ms = ~5 frames at 90 Hz of headroom.
-_STREAM_DELAY_S = 0.060
-# Hard safety cap on per-cycle joint motion (~180 °/s). Sized well above
-# anything the operator's hand can realistically command, so it never
-# binds during normal teleop; it only catches IK glitches that escape
-# the bridge's branch-jump filter.
-_STREAM_SAFETY_STEP_RAD = math.radians(180.0) / _STREAM_HZ
+# the Quest input so the renderer always has a "future" sample to
+# interpolate toward. 30 ms = ~3 frames at 90 Hz of headroom; tighter
+# than this and Quest jitter can have the renderer briefly walk past
+# the newest sample, causing micro-stutter. (Was 60 ms — halved to cut
+# perceived button-to-action latency.)
+_STREAM_DELAY_S = 0.030
+# Hard cap on commanded joint velocity (~135 °/s). Both the accel
+# limiter's velocity output and the per-cycle step are clamped to this.
+# 3× of the previous 45 °/s — close to the original 180 °/s ceiling
+# but with the smoothing stack now in front of it (1€, Catmull-Rom,
+# PD tracker), high velocities are clean rather than jagged.
+_STREAM_SAFETY_STEP_RAD = math.radians(135.0) / _STREAM_HZ
 # Cap on history retention. Anything older than render_t − this window
 # is evicted each cycle. 0.5 s easily covers _STREAM_DELAY_S plus any
 # clock drift.
 _STREAM_HISTORY_WINDOW_S = 0.5
-# One-pole IIR coefficient applied to the spline-rendered command. At
-# 250 Hz this gives a ~17 Hz corner — kills residual hand tremor and
-# IK micro-jitter that the spline faithfully reproduces through, while
-# adding only ~6 ms of group delay on top of _STREAM_DELAY_S.
-_STREAM_FILTER_ALPHA = 0.35
+
+# When render_t passes the newest buffered sample (Quest input briefly
+# stalled — network hiccup, frame drop, controller momentarily idle),
+# carry the last segment's velocity forward for up to this many seconds
+# instead of hard-snapping to the held sample value. The extrapolation
+# is capped at one full segment span, so the worst-case overshoot is
+# bounded even if the operator truly stopped between the last two
+# samples. Removes the "reach a sample, stop, jump to next" feel.
+_STREAM_EXTRAP_S = 0.060
+
+# Acceleration limiter (critically-damped second-order tracker).
+#
+# Without this the stream loop commands "go to rendered target NOW";
+# every Quest-frame boundary is a velocity step, and the operator feels
+# that as buzz. Just clamping Δvel/cycle (a bare accel cap) leaves an
+# undamped second-order system that wobbles after trigger release.
+# Solution: PD tracker chosen for critical damping, plus a hard accel
+# clamp on the controller's output.
+#
+#   desired_accel = Kp·(target − cmd) − Kd·current_vel
+#   clamped_accel = clamp(desired_accel, ±_STREAM_MAX_ACCEL_RAD_S2)
+#   new_vel       = current_vel + clamped_accel · dt
+#   new_cmd       = cmd + new_vel · dt
+#
+# Kp = ω², Kd = 2ω. ω = 15 rad/s → 4/ω ≈ 270 ms step-input settling.
+# Tuned down from 60 rad/s so the arm coasts into the final target on
+# trigger release instead of snapping to a halt — the operator sees a
+# visible ease-in over ~¼ second. Steady-state ramp-tracking lag =
+# Kd·V/Kp = (2/ω)·V ≈ 0.133·V rad ≈ 7.6° per (rad/s) of joint speed;
+# perceptible but acceptable for the smoother stop.
+_STREAM_OMEGA_RAD_S = 15.0
+_STREAM_KP = _STREAM_OMEGA_RAD_S * _STREAM_OMEGA_RAD_S
+_STREAM_KD = 2.0 * _STREAM_OMEGA_RAD_S
+# Hard cap on the PD tracker's commanded acceleration. Lowered from
+# 50 rad/s² in lockstep with the omega drop: caps the deceleration
+# ramp when a large step error appears (Quest reconnect, big target
+# jump) so the arm can't snap even in those edge cases.
+_STREAM_MAX_ACCEL_RAD_S2 = 15.0
+
+# 1€ filter (Casiez/Roussel/Vogel CHI 2012) applied to the IK'd joint
+# vector before it enters the stream-history buffer. Quest pose
+# updates land at ~90 Hz with sub-degree jitter even when the user's
+# hand is still; that jitter gets amplified by IK (small TCP jiggle →
+# larger joint jiggle on near-singular configurations) and then
+# faithfully replayed onto the arm by the streaming loop. The filter
+# strips the high-frequency content at rest while letting fast hand
+# motion through with minimal lag.
+#
+#   min_cutoff = 1.5 Hz → moderate smoothing at rest. Higher than the
+#                         canonical 1.0 to keep the arm feeling
+#                         responsive on small inputs; the Catmull-Rom
+#                         interpolation downstream picks up most of
+#                         the residual smoothness without adding lag.
+#   beta       = 0.10   → cutoff rises ~5.7 Hz per (rad/s) of joint
+#                         velocity, so fast motion gets essentially no
+#                         smoothing (cutoff far above signal band).
+#                         Upper end of the canonical 0–0.1 range.
+#   d_cutoff   = 1.0 Hz → canonical default for the derivative.
+#
+# Tune these if the arm feels too laggy (raise both) or too jittery
+# (lower min_cutoff). Values verified by ear/eye on the UF850; the
+# paper's defaults for mouse cursors are a reasonable starting point.
+_JOINT_FILTER_MIN_CUTOFF_HZ = 1.5
+_JOINT_FILTER_BETA = 0.10
+_JOINT_FILTER_D_CUTOFF_HZ = 1.0
+# Max commanded joint velocity (rad/s) — same envelope as the existing
+# safety step cap, just expressed in velocity units for the tracker.
+_STREAM_MAX_VEL_RAD_S = _STREAM_SAFETY_STEP_RAD / _STREAM_PERIOD
 
 # xArm SDK state codes
 _STATE_READY = 0
 _STATE_STOP = 4
+
+
+def _catmull_rom6(
+    p0: list[float],
+    p1: list[float],
+    p2: list[float],
+    p3: list[float],
+    alpha: float,
+) -> list[float]:
+    """Uniform Catmull-Rom cubic at parameter ``alpha`` ∈ [0,1] on the
+    segment between ``p1`` (alpha=0) and ``p2`` (alpha=1).
+
+    Tangents at the segment endpoints are derived from the neighbor
+    samples ``p0`` and ``p3``: m₁ = (p₂ − p₀)/2, m₂ = (p₃ − p₁)/2. The
+    result is C¹-continuous across segments — joining segments share
+    both position and velocity — so the rendered trajectory has no
+    velocity steps at Quest-frame boundaries the way bare linear
+    interpolation does.
+
+    Specialized to 6 channels (the UF850 joint vector) to keep the
+    inner loop allocation-free in the 250 Hz stream thread.
+    """
+    a2 = alpha * alpha
+    a3 = a2 * alpha
+    out = [0.0] * 6
+    for k in range(6):
+        out[k] = 0.5 * (
+            (2.0 * p1[k])
+            + (-p0[k] + p2[k]) * alpha
+            + (2.0 * p0[k] - 5.0 * p1[k] + 4.0 * p2[k] - p3[k]) * a2
+            + (-p0[k] + 3.0 * p1[k] - 3.0 * p2[k] + p3[k]) * a3
+        )
+    return out
 
 
 class XArmBackend:
@@ -157,10 +235,6 @@ class XArmBackend:
         # this; the solid arm reads the live snapshot. Populated on the
         # first successful snapshot refresh and on every jog/home.
         self._target_joints: list[float] | None = None
-        # Count of consecutive ghost-update rejections. Reset on accept;
-        # forces an accept once it crosses _GHOST_REJECT_STREAK_MAX so a
-        # persistent IK branch flip can't permanently freeze teleop.
-        self._ghost_reject_streak: int = 0
         # 250 Hz streaming thread state. ``_stream_history`` is the
         # timestamped buffer of Quest-driven joint targets; the thread
         # samples it at (now - DELAY) and linearly interpolates to render
@@ -172,6 +246,22 @@ class XArmBackend:
         self._stream_target_lock = threading.Lock()
         self._stream_history: deque[tuple[float, list[float]]] = deque(maxlen=512)
         self._stream_cmd: list[float] | None = None
+        # Per-joint commanded velocity (rad/s) used by the accel-limited
+        # PD tracker. Always reset to zero on (re)seed so the tracker
+        # never carries pre-jog/pre-estop velocity into a new motion.
+        self._stream_vel: list[float] | None = None
+        # 1€ filter for the IK'd joint vector. Runs upstream of the
+        # history buffer (and therefore upstream of the PD tracker), so
+        # it cleans Quest jitter before the streaming loop ever sees it.
+        # Reset whenever we re-seed the buffer from live joints —
+        # otherwise the first post-mode-switch sample fights the
+        # filter's stale history and produces a visible jump.
+        self._joint_filter = OneEuroFilterND(
+            6,
+            min_cutoff=_JOINT_FILTER_MIN_CUTOFF_HZ,
+            beta=_JOINT_FILTER_BETA,
+            d_cutoff=_JOINT_FILTER_D_CUTOFF_HZ,
+        )
         self._stream_thread: threading.Thread | None = None
         self._stream_stop = threading.Event()
         # Set while jog/home/gripper temporarily drops to mode 0. The
@@ -203,7 +293,8 @@ class XArmBackend:
             "cameras": ["base", "wrist"],
         }
         self._poll_stop = threading.Event()
-        self._poll_thread: threading.Thread | None = None
+        self._joint_poll_thread: threading.Thread | None = None
+        self._slow_poll_thread: threading.Thread | None = None
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -212,8 +303,14 @@ class XArmBackend:
         self._driver.connect()
         log.info("UF850 connected")
         self._refresh_snapshot()
-        self._poll_thread = threading.Thread(target=self._poll_loop, daemon=True)
-        self._poll_thread.start()
+        self._joint_poll_thread = threading.Thread(
+            target=self._joint_poll_loop, daemon=True, name="xarm-joint-poll"
+        )
+        self._slow_poll_thread = threading.Thread(
+            target=self._slow_poll_loop, daemon=True, name="xarm-slow-poll"
+        )
+        self._joint_poll_thread.start()
+        self._slow_poll_thread.start()
         if self._grabber is not None:
             self._grabber.start()
 
@@ -293,10 +390,13 @@ class XArmBackend:
             cur_rad = [math.radians(j) for j in cur_deg[:6]]
         except Exception:
             cur_rad = list(self._target_joints or [0.0] * 6)
+        seed_t = time.perf_counter()
         with self._stream_target_lock:
             self._stream_history.clear()
-            self._stream_history.append((time.perf_counter(), list(cur_rad)))
+            self._stream_history.append((seed_t, list(cur_rad)))
             self._stream_cmd = list(cur_rad)
+            self._stream_vel = [0.0] * 6
+            self._joint_filter.reset(x0=list(cur_rad), t0=seed_t)
         self._stream_stop.clear()
         self._stream_paused.clear()
         self._stream_thread = threading.Thread(
@@ -312,13 +412,13 @@ class XArmBackend:
             t.join(timeout=0.5)
 
     def _stream_loop(self) -> None:
-        """Fixed-rate 250 Hz loop: render the buffered target sampled at
-        (now − _STREAM_DELAY_S), linearly interpolated, and push it.
+        """Fixed-rate 250 Hz loop: render the buffered ghost trajectory
+        at (now − _STREAM_DELAY_S) via linear interpolation, push it.
 
-        This is the *only* place set_servo_angle_j gets called. Quest pose
-        callbacks just append (timestamp, joints) to ``_stream_history``;
-        the loop reads from the past so output velocity = input velocity
-        and the operator never feels the slew cap pulling the arm.
+        This is the *only* place set_servo_angle_j gets called. The
+        command IS the (interpolated) buffered joint state — no
+        smoothing, no chase. The real arm physically traces the ghost's
+        path at the ghost's speed.
         """
         api = getattr(self._driver, "_api", None)
         if api is None:
@@ -340,22 +440,36 @@ class XArmBackend:
                     and len(target) == 6
                     and len(cmd) == 6
                 ):
+                    # Acceleration-limited critically-damped PD tracker.
+                    # Vel transitions across Quest-frame boundaries are
+                    # shaped by Kd damping + the hard accel clamp, so
+                    # the operator never feels the discontinuity. State:
+                    # _stream_vel holds the per-joint commanded vel
+                    # carried across cycles.
+                    vel_state = (
+                        list(self._stream_vel)
+                        if self._stream_vel is not None
+                        else [0.0] * 6
+                    )
                     new_cmd = [0.0] * 6
+                    new_vel = [0.0] * 6
                     for i in range(6):
-                        # IIR pass: filtered = cmd + α·(rendered - cmd).
-                        # Removes residual high-freq noise the spline
-                        # carried straight through from the buffer.
-                        filtered = cmd[i] + _STREAM_FILTER_ALPHA * (
-                            target[i] - cmd[i]
+                        err = target[i] - cmd[i]
+                        a = (
+                            _STREAM_KP * err
+                            - _STREAM_KD * vel_state[i]
                         )
-                        diff = filtered - cmd[i]
-                        # Hard safety cap — only ever bites on an IK
-                        # glitch. Normal hand motion is well below this.
-                        if diff > _STREAM_SAFETY_STEP_RAD:
-                            diff = _STREAM_SAFETY_STEP_RAD
-                        elif diff < -_STREAM_SAFETY_STEP_RAD:
-                            diff = -_STREAM_SAFETY_STEP_RAD
-                        new_cmd[i] = cmd[i] + diff
+                        if a > _STREAM_MAX_ACCEL_RAD_S2:
+                            a = _STREAM_MAX_ACCEL_RAD_S2
+                        elif a < -_STREAM_MAX_ACCEL_RAD_S2:
+                            a = -_STREAM_MAX_ACCEL_RAD_S2
+                        v = vel_state[i] + a * _STREAM_PERIOD
+                        if v > _STREAM_MAX_VEL_RAD_S:
+                            v = _STREAM_MAX_VEL_RAD_S
+                        elif v < -_STREAM_MAX_VEL_RAD_S:
+                            v = -_STREAM_MAX_VEL_RAD_S
+                        new_vel[i] = v
+                        new_cmd[i] = cmd[i] + v * _STREAM_PERIOD
                     try:
                         # Serialize SDK access via _lock so we don't
                         # interleave bytes with the poll loop's reads on
@@ -373,11 +487,10 @@ class XArmBackend:
                         log.debug("stream set_servo_angle_j failed: %s", exc)
                     with self._stream_target_lock:
                         self._stream_cmd = new_cmd
+                        self._stream_vel = new_vel
             next_tick += _STREAM_PERIOD
             delay = next_tick - time.perf_counter()
             if delay > 0:
-                # time.sleep releases the GIL, so the bridge's I/O
-                # threads keep running.
                 time.sleep(delay)
             else:
                 # Behind schedule (poll loop probably held the SDK
@@ -386,36 +499,34 @@ class XArmBackend:
                 next_tick = time.perf_counter()
 
     def _sample_history_locked(self, t: float) -> list[float] | None:
-        """Render the buffered target at time ``t`` using a non-uniform
-        Catmull-Rom spline. Caller must hold ``_stream_target_lock``.
+        """Catmull-Rom interpolation of the buffered ghost trajectory at
+        time ``t``. Caller must hold ``_stream_target_lock``.
 
-        Why a spline instead of linear interp: linear is C⁰ continuous
-        but velocity is piecewise-constant, so at every Quest-frame
-        boundary (~80 Hz) the commanded velocity changes discretely.
-        The arm reads that as an acceleration impulse and the operator
-        feels it as buzz. Catmull-Rom is C¹ — velocity matches across
-        every segment boundary, so the commanded motion has no
-        synthetic high-frequency content.
-
-        Tangents are finite-difference (m_i = (p_{i+1} - p_{i-1}) /
-        (t_{i+1} - t_{i-1})), handling irregular Quest timestamps. At
-        the start/end of the buffer we fall back to one-sided
-        differences so the spline degenerates cleanly to Hermite-with-
-        linear-tangents at the boundaries.
+        Each interior segment is a cubic Hermite with endpoint tangents
+        derived from the neighbor samples — adjacent segments share
+        velocity at the joining sample, so the rendered trajectory has
+        no slope discontinuities at Quest-frame boundaries. (Bare
+        linear interpolation, the previous behavior, had a velocity
+        step at every sample, which the operator felt as a stop-start
+        rhythm at the cadence of Quest's frame rate.)
 
         Edge cases:
-        * Empty buffer → None (caller skips).
+        * Empty buffer → None.
+        * Single entry → hold at it.
         * t before oldest entry → hold at oldest (stream warmup).
-        * t after newest entry → hold at newest (operator paused; arm
-          coasts to the last buffered target and stops).
+        * t after newest entry → forward-extrapolate using the last
+          segment's slope for up to ``_STREAM_EXTRAP_S``, capped at
+          one segment span of overshoot. Lets the arm coast through
+          brief Quest input gaps instead of stopping at the newest
+          sample and re-accelerating when the next one lands.
+        * Fewer than 4 points → fall back to linear (Catmull-Rom
+          needs four control points).
         """
         h = self._stream_history
         if not h:
             return None
-        # Evict old entries we'll never sample again. Leave at least
-        # four so the spline always has a full window around any
-        # bracket point.
         cutoff = t - _STREAM_HISTORY_WINDOW_S
+        # Keep at least 4 samples so the spline always has neighbors.
         while len(h) > 4 and h[1][0] < cutoff:
             h.popleft()
         n = len(h)
@@ -424,52 +535,35 @@ class XArmBackend:
         if t <= h[0][0]:
             return list(h[0][1])
         if t >= h[-1][0]:
+            if n >= 2 and (t - h[-1][0]) < _STREAM_EXTRAP_S:
+                t0, j0 = h[-2]
+                t1, j1 = h[-1]
+                span = t1 - t0
+                if span > 0.0:
+                    # Cap overshoot at one full segment span — bounds
+                    # the worst case if the operator actually stopped
+                    # between the last two samples.
+                    alpha = min((t - t1) / span, 1.0)
+                    return [j1[k] + alpha * (j1[k] - j0[k]) for k in range(6)]
             return list(h[-1][1])
-        # Find the bracket: t falls in [h[i][0], h[i+1][0]].
-        bracket = -1
-        for k in range(n - 1):
-            if h[k][0] <= t <= h[k + 1][0]:
-                bracket = k
-                break
-        if bracket < 0:
-            return list(h[-1][1])
-        i = bracket
-        t1, p1 = h[i]
-        t2, p2 = h[i + 1]
-        span = t2 - t1
-        if span <= 0.0:
-            return list(p2)
-        # Neighbours for tangent estimation. At the buffer ends we
-        # mirror so the one-sided tangent reduces to a forward /
-        # backward difference (the spline degenerates to linear there).
-        if i > 0:
-            t0, p0 = h[i - 1]
-        else:
-            t0 = t1 - span
-            p0 = p1
-        if i + 2 < n:
-            t3, p3 = h[i + 2]
-        else:
-            t3 = t2 + span
-            p3 = p2
-        u = (t - t1) / span
-        u2 = u * u
-        u3 = u2 * u
-        # Hermite basis (cubic).
-        h00 = 2.0 * u3 - 3.0 * u2 + 1.0
-        h10 = u3 - 2.0 * u2 + u
-        h01 = -2.0 * u3 + 3.0 * u2
-        h11 = u3 - u2
-        # Tangent denominators (Hermite expects tangents scaled to the
-        # [0,1] parameterisation of the current segment).
-        inv_t20 = span / (t2 - t0) if (t2 - t0) > 0.0 else 0.0
-        inv_t31 = span / (t3 - t1) if (t3 - t1) > 0.0 else 0.0
-        out = [0.0] * 6
-        for k in range(6):
-            m1 = (p2[k] - p0[k]) * inv_t20
-            m2 = (p3[k] - p1[k]) * inv_t31
-            out[k] = h00 * p1[k] + h10 * m1 + h01 * p2[k] + h11 * m2
-        return out
+        # Find segment containing t.
+        for i in range(n - 1):
+            t0, j0 = h[i]
+            t1, j1 = h[i + 1]
+            if t0 <= t <= t1:
+                span = t1 - t0
+                if span <= 0.0:
+                    return list(j1)
+                alpha = (t - t0) / span
+                if n < 4:
+                    return [j0[k] + alpha * (j1[k] - j0[k]) for k in range(6)]
+                # Neighbors for the cubic; clamp to endpoints at edges
+                # so the spline degenerates gracefully rather than
+                # reaching outside the buffer.
+                p0 = h[i - 1][1] if i > 0 else j0
+                p3 = h[i + 2][1] if (i + 2) < n else j1
+                return _catmull_rom6(p0, j0, j1, p3, alpha)
+        return list(h[-1][1])
 
     def _ensure_position_mode(self) -> bool:
         """Drop into position mode (0) so set_servo_angle / set_gripper /
@@ -508,18 +602,37 @@ class XArmBackend:
             try:
                 cur_deg = self._driver.read_joint_state()
                 cur_rad = [math.radians(j) for j in cur_deg[:6]]
+                seed_t = time.perf_counter()
                 with self._stream_target_lock:
                     self._stream_cmd = list(cur_rad)
                     self._stream_history.clear()
-                    self._stream_history.append(
-                        (time.perf_counter(), list(cur_rad))
-                    )
+                    self._stream_history.append((seed_t, list(cur_rad)))
+                    self._stream_vel = [0.0] * 6
+                    self._joint_filter.reset(x0=list(cur_rad), t0=seed_t)
             except Exception:
                 pass
         except Exception as exc:
             log.warning("xarm: restore servo mode failed: %s", exc)
         finally:
             self._stream_paused.clear()
+
+    def get_joint_filter_params(self) -> dict[str, float]:
+        """Read the current 1€ joint-filter params (min_cutoff Hz, beta)."""
+        with self._stream_target_lock:
+            return self._joint_filter.get_params()
+
+    def set_joint_filter_params(
+        self,
+        *,
+        min_cutoff: float | None = None,
+        beta: float | None = None,
+    ) -> dict[str, float]:
+        """Hot-update the 1€ joint filter from the dashboard. Lock-held
+        so a Quest sample being filtered mid-call can't read torn
+        values, and the filter's running state survives the change."""
+        with self._stream_target_lock:
+            self._joint_filter.set_params(min_cutoff=min_cutoff, beta=beta)
+            return self._joint_filter.get_params()
 
     @property
     def cameras(self) -> list[str]:
@@ -576,27 +689,7 @@ class XArmBackend:
                 target_pose = tuple(
                     float(current_pose[i]) + delta_pose[i] for i in range(6)
                 )
-
-                # IK first. If the solver rejected the pose (returns the
-                # previous target unchanged), bail out — better to surface a
-                # 409 than have the user click jog and see nothing happen.
-                current_joints_deg = self._driver.read_joint_state()[:6]
-                current_joints_rad = [math.radians(j) for j in current_joints_deg]
                 target_joints, _ = self._ik_for_pose(target_pose)
-                # Collapse wrap-arounds (UF850 wrist joints can sit past
-                # ±180° cumulative; the SDK's IK returns canonical
-                # [-π, π] which then looks like a 360° leap from the
-                # current state). Without this we reject perfectly valid
-                # small jogs as "elbow flips" — see the 53° false-positive
-                # the operator reported.
-                target_joints = self._unwrap_to(target_joints, current_joints_rad)
-                ik_delta = max(abs(target_joints[i] - current_joints_rad[i]) for i in range(6))
-                if ik_delta > _JOG_MAX_JOINT_DELTA_RAD:
-                    raise RuntimeError(
-                        f"jog rejected: IK picked a joint branch {math.degrees(ik_delta):.1f}° "
-                        f"away from current — likely an elbow flip. "
-                        f"Try a smaller step or a different axis."
-                    )
                 self._target_joints = target_joints
 
                 # Command joint angles directly. Using set_servo_angle (not
@@ -610,6 +703,7 @@ class XArmBackend:
                 code = api.set_servo_angle(
                     angle=list(target_joints),
                     speed=DEFAULT_JOINT_SPEED_RAD_S,
+                    mvacc=DEFAULT_JOINT_ACCEL_RAD_S2,
                     is_radian=True,
                     wait=False,
                 )
@@ -628,18 +722,13 @@ class XArmBackend:
         self,
         pose_mm_deg: tuple[float, float, float, float, float, float],
     ) -> dict[str, Any]:
-        """Update the GHOST arm only — IK the given TCP pose, store the
-        resulting joints as ``_target_joints``. The real arm is NOT
-        commanded. Used by the Quest teleop bridge to preview controller
-        orientation before any physical motion is allowed.
-
-        Branch-jump filter: reject IK solutions where any joint would
-        leap > 60° from the previous *target* in one frame. Compares
-        against the last accepted target (not the real arm joints) so a
-        smooth Quest stream stays smooth even when the real arm hasn't
-        caught up yet. Catches elbow flips / wrist roll-overs that would
-        let the rendered arm fold through itself.
-        """
+        """IK the given TCP pose and store the resulting joints as
+        ``_target_joints`` (drives the dashboard ghost arm) and as a
+        new entry in the stream history (drives the real arm when
+        ``drive_real_arm`` is on). Whatever branch the SDK IK picks is
+        what we use — the operator's hand motion is smooth enough in
+        practice that we don't need to filter out the rare branch
+        switches."""
         # Soft rate-cap at 200 Hz — protects the xArm SDK from being
         # hammered if Unity ever runs hotter than the network round-trip.
         now = time.perf_counter()
@@ -657,35 +746,6 @@ class XArmBackend:
                 "ik_fail": True,
                 "pose": list(pose_mm_deg),
             }
-        # Filter elbow-flip / branch-jump solutions against the previous
-        # accepted target — so smooth incremental motion stays smooth.
-        prev = self._target_joints
-        if prev is not None and len(prev) >= 6:
-            # First, collapse spurious wrap-arounds (+179° → -179° is the
-            # SAME physical joint position, just a different numerical
-            # encoding). Without this, every wrist-wrap registers as a
-            # 358° "jump" and the filter freezes the ghost arm even
-            # though the operator is moving smoothly.
-            target_joints = self._unwrap_to(target_joints, prev)
-            max_delta = max(abs(target_joints[i] - prev[i]) for i in range(6))
-            if max_delta > _GHOST_MAX_JOINT_JUMP_RAD:
-                self._ghost_reject_streak += 1
-                if self._ghost_reject_streak < _GHOST_REJECT_STREAK_MAX:
-                    return {
-                        "rejected": "ik_branch_jump",
-                        "max_delta_deg": math.degrees(max_delta),
-                        "streak": self._ghost_reject_streak,
-                    }
-                # Safety valve fired — fall through and accept this one.
-                # Better a single big jump than a permanent freeze.
-                log.warning(
-                    "ghost force-accepting after %d rejections "
-                    "(max_delta=%.1f°) — IK branch persistent",
-                    self._ghost_reject_streak,
-                    math.degrees(max_delta),
-                )
-        self._ghost_reject_streak = 0
-
         with self._lock:
             self._target_joints = target_joints
             self._last_snapshot["target_joints"] = list(target_joints)
@@ -693,11 +753,15 @@ class XArmBackend:
         # Append to the streaming thread's replay buffer. The loop will
         # render this (interpolated) _STREAM_DELAY_S from now. See
         # _stream_loop / _sample_history_locked.
+        #
+        # The joint vector goes through the 1€ filter first — its job
+        # is to knock the per-Quest-frame jitter out of the trajectory
+        # before the renderer commits to replaying it.
         if self._drive_real_arm and not self._estopped:
+            sample_t = time.perf_counter()
             with self._stream_target_lock:
-                self._stream_history.append(
-                    (time.perf_counter(), list(target_joints))
-                )
+                filtered = self._joint_filter(sample_t, target_joints)
+                self._stream_history.append((sample_t, list(filtered)))
         return {"target_joints": list(target_joints), "pose": list(pose_mm_deg)}
 
     def home(self) -> dict[str, Any]:
@@ -716,6 +780,7 @@ class XArmBackend:
                 code = api.set_servo_angle(
                     angle=list(target_joints),
                     speed=DEFAULT_JOINT_SPEED_RAD_S,
+                    mvacc=DEFAULT_JOINT_ACCEL_RAD_S2,
                     is_radian=True,
                     wait=False,
                 )
@@ -726,24 +791,6 @@ class XArmBackend:
                 if restore:
                     self._restore_servo_mode()
             return snap
-
-    @staticmethod
-    def _unwrap_to(joints: list[float], prev: list[float]) -> list[float]:
-        """Shift each joint by an integer multiple of 2π so it lands
-        within ±π of ``prev``. The xArm onboard IK returns the canonical
-        [-π, π] solution; if a joint is near the wrap boundary, two
-        consecutive calls can flip sign and look like a 2π jump. After
-        this normalisation, the delta reflects only the physical motion.
-        """
-        out = list(joints)
-        n = min(len(out), len(prev))
-        twopi = 2.0 * math.pi
-        for i in range(n):
-            d = out[i] - prev[i]
-            if d > math.pi or d < -math.pi:
-                # round-to-nearest multiple of 2π — handles multi-wrap.
-                out[i] -= twopi * round(d / twopi)
-        return out
 
     def _ik_for_pose(
         self, pose_mm_deg: tuple[float, ...]
@@ -774,22 +821,30 @@ class XArmBackend:
 
     def set_gripper(self, state: GripperState) -> dict[str, Any]:
         self._require_armed()
+        # The parallel gripper runs on its own SDK channel
+        # (set_gripper_mode / set_gripper_enable / set_gripper_position)
+        # and is mechanically independent of the arm's servo mode.
+        # Earlier this path flipped arm mode 1→0→1 around the SDK call
+        # "to be safe", which paused the stream thread and re-seeded
+        # both the history buffer and the 1€ filter from live joints —
+        # so squeezing the gripper mid-motion erased the in-flight
+        # Quest trajectory and produced a visible hitch on the other
+        # joints. Holding _lock is enough to serialize the SDK socket
+        # with the streaming thread; mode stays put.
         with self._lock:
-            # Gripper SDK calls expect position mode (0). If we're
-            # streaming (Quest teleop in mode 1), bounce briefly.
-            restore = self._ensure_position_mode()
-            try:
-                # wait=False so the poll thread can refresh gripper
-                # position (now read from the SDK) while the gripper is
-                # mid-travel — the rendered fingers in the dashboard
-                # animate live.
-                self._driver.set_gripper(state, wait=False)
-                snap = self._refresh_snapshot_locked()
-                snap["gripper"] = state
-                self._last_snapshot["gripper"] = state
-            finally:
-                if restore:
-                    self._restore_servo_mode()
+            # wait=False so the poll thread can refresh gripper
+            # position (now read from the SDK) while the gripper is
+            # mid-travel — the rendered fingers in the dashboard
+            # animate live.
+            self._driver.set_gripper(state, wait=False)
+            # NOTE: deliberately NOT calling _refresh_snapshot_locked
+            # here. The three SDK reads it does (~15 ms lock-hold)
+            # were the dominant latency between the operator's grip
+            # button and the gripper hardware starting to move. The
+            # background poll thread will pick up the new gripper
+            # position on its next tick (20 Hz, so ≤50 ms behind).
+            self._last_snapshot["gripper"] = state
+            snap = dict(self._last_snapshot)
         return snap
 
     # ── safety ────────────────────────────────────────────────────────────
@@ -829,12 +884,13 @@ class XArmBackend:
                 with self._lock:
                     cur_deg = self._driver.read_joint_state()
                 cur_rad = [math.radians(j) for j in cur_deg[:6]]
+                seed_t = time.perf_counter()
                 with self._stream_target_lock:
                     self._stream_cmd = list(cur_rad)
                     self._stream_history.clear()
-                    self._stream_history.append(
-                        (time.perf_counter(), list(cur_rad))
-                    )
+                    self._stream_history.append((seed_t, list(cur_rad)))
+                    self._stream_vel = [0.0] * 6
+                    self._joint_filter.reset(x0=list(cur_rad), t0=seed_t)
             except Exception:
                 pass
         self._stream_paused.clear()
@@ -947,12 +1003,56 @@ class XArmBackend:
         }
         return dict(self._last_snapshot)
 
-    def _poll_loop(self) -> None:
+    def _joint_poll_loop(self) -> None:
+        """250 Hz: just joint_state. Matches the xArm controller's
+        internal mode-1 cycle — polling faster than this just returns
+        the same value. Mutates only the joints/t fields of
+        _last_snapshot so the slow poll's tcp_pose / gripper_pos
+        updates don't get clobbered. Each read is one TCP roundtrip
+        (~1–2 ms) and is serialized via _lock with the stream thread."""
         while not self._poll_stop.is_set():
             try:
-                self._refresh_snapshot()
+                with self._lock:
+                    joints_deg = self._driver.read_joint_state()
+                joints_rad = [math.radians(j) for j in joints_deg[:6]]
+                with self._lock:
+                    if self._target_joints is None:
+                        self._target_joints = list(joints_rad)
+                    self._last_snapshot["joints"] = joints_rad
+                    self._last_snapshot["t"] = time.time()
             except Exception:
                 pass
-            self._poll_stop.wait(0.2)  # ~5 Hz background refresh
+            self._poll_stop.wait(0.004)  # 250 Hz
+
+    def _slow_poll_loop(self) -> None:
+        """10 Hz: tcp_pose + gripper_position. Both change slowly enough
+        that pushing faster just burns SDK socket time the streaming
+        thread and IK queries need. Each iteration mutates fields, not
+        the whole dict, so it cooperates with the fast joint poller."""
+        while not self._poll_stop.is_set():
+            try:
+                with self._lock:
+                    pose_mm_deg = self._driver.read_tcp_pose()
+                with self._lock:
+                    raw_grip = self._driver.read_gripper_position()
+                tcp_pos_mm = [
+                    float(pose_mm_deg[0]),
+                    float(pose_mm_deg[1]),
+                    float(pose_mm_deg[2]),
+                ]
+                tcp_rpy = [math.radians(float(v)) for v in pose_mm_deg[3:6]]
+                grip01: float | None
+                if not math.isnan(raw_grip):
+                    grip01 = max(0.0, min(1.0, 1.0 - raw_grip / 850.0))
+                else:
+                    grip01 = None
+                with self._lock:
+                    self._last_snapshot["tcp_pos_mm"] = tcp_pos_mm
+                    self._last_snapshot["tcp_rpy"] = tcp_rpy
+                    if grip01 is not None:
+                        self._last_snapshot["gripper_pos"] = grip01
+            except Exception:
+                pass
+            self._poll_stop.wait(0.1)  # 10 Hz
 
 

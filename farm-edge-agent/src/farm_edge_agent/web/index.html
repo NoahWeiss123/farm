@@ -157,6 +157,46 @@
       border: 1px solid var(--soft); border-radius: 4px;
       background: #fff;
     }
+    /* ── Smoothing (1€) stepper rows ──────────────────────────────────── */
+    #filter .row { margin-top: 10px; }
+    #filter .row:first-child { margin-top: 0; }
+    #filter .lab {
+      display: block; font-size: 11px; color: var(--muted);
+      margin-bottom: 4px;
+    }
+    #filter .lab .unit { color: var(--muted); opacity: 0.8; }
+    #filter .stepper { display: flex; align-items: stretch; }
+    #filter .stepper .step-btn {
+      width: 28px; height: 28px; padding: 0;
+      background: #fff; color: var(--text);
+      border: 1px solid var(--soft);
+      font: 600 14px/1 inherit; cursor: pointer;
+      user-select: none;
+      transition: background 80ms;
+    }
+    #filter .stepper .step-btn:hover { background: #f3f3f3; }
+    #filter .stepper .step-btn:active { background: #e6e6e6; }
+    #filter .stepper .step-btn:first-child {
+      border-radius: 4px 0 0 4px; border-right: none;
+    }
+    #filter .stepper .step-btn:last-child {
+      border-radius: 0 4px 4px 0; border-left: none;
+    }
+    #filter .stepper input[type=number] {
+      flex: 1; min-width: 0; height: 28px; padding: 0 4px;
+      text-align: center; font-variant-numeric: tabular-nums;
+      font-family: inherit; font-size: 12px; color: var(--text);
+      border: 1px solid var(--soft); background: #fff;
+    }
+    #filter .stepper input[type=number]:focus {
+      outline: 2px solid #888; outline-offset: -2px;
+    }
+    /* hide the native browser spinner — our buttons replace it */
+    #filter .stepper input[type=number]::-webkit-outer-spin-button,
+    #filter .stepper input[type=number]::-webkit-inner-spin-button {
+      -webkit-appearance: none; margin: 0;
+    }
+    #filter .stepper input[type=number] { -moz-appearance: textfield; }
 
     /* ── Top-right camera stack ───────────────────────────────────────── */
     #cams {
@@ -210,6 +250,138 @@
       color: rgba(0,0,0,0.4); font-size: 11px;
     }
 
+    /* ── Bottom-middle episode strip ──────────────────────────────────── */
+    #episodes {
+      position: fixed; bottom: var(--pad); left: 50%;
+      transform: translateX(-50%); z-index: 10;
+      width: min(880px, calc(100vw - 540px));
+      padding: 10px 12px;
+      font-size: 12px;
+    }
+    #episodesHeader {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 8px; font-size: 10px; letter-spacing: 0.12em;
+      text-transform: uppercase; color: #888; font-weight: 600;
+    }
+    #episodesHeader .count { color: var(--muted); letter-spacing: 0.04em; text-transform: none; }
+    #episodesStrip {
+      display: flex; gap: 8px; overflow-x: auto; overflow-y: hidden;
+      padding-bottom: 4px;
+    }
+    #episodesStrip::-webkit-scrollbar { height: 6px; }
+    #episodesStrip::-webkit-scrollbar-thumb { background: var(--soft); border-radius: 3px; }
+    #episodesStrip .empty {
+      color: var(--muted); font-style: italic; padding: 8px 4px;
+    }
+    .ep-tile {
+      flex: 0 0 auto; width: 132px; cursor: pointer;
+      border: 1px solid var(--soft); border-radius: 6px;
+      background: #fff; padding: 4px; transition: border-color 80ms, transform 80ms;
+    }
+    .ep-tile:hover { border-color: var(--line); transform: translateY(-1px); }
+    .ep-tile .thumb {
+      width: 100%; height: 74px; background: #000;
+      border-radius: 4px; overflow: hidden; position: relative;
+    }
+    .ep-tile .thumb img {
+      width: 100%; height: 100%; object-fit: cover; display: block;
+    }
+    .ep-tile .thumb .nothumb {
+      position: absolute; inset: 0; display: flex; align-items: center;
+      justify-content: center; color: rgba(255,255,255,0.5);
+      font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+    }
+    .ep-tile .meta {
+      margin-top: 4px;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 10px; line-height: 1.4; color: var(--fg);
+      display: flex; justify-content: space-between; gap: 4px;
+    }
+    .ep-tile .meta .when { color: var(--muted); }
+
+    /* ── Episode viewer modal ─────────────────────────────────────────── */
+    #viewer {
+      position: fixed; inset: 0; z-index: 100; display: none;
+      align-items: center; justify-content: center;
+      background: rgba(20,20,20,0.55); padding: 24px;
+    }
+    #viewer.open { display: flex; }
+    #viewer .vcard {
+      background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.25);
+      width: min(1080px, 100%); max-height: calc(100vh - 48px);
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    #viewer .vhead {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px; border-bottom: 1px solid var(--soft);
+    }
+    #viewer .vhead h2 {
+      font-size: 13px; font-weight: 600; letter-spacing: 0.04em;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    }
+    #viewer .vhead .sub { color: var(--muted); font-size: 11px; margin-top: 2px; }
+    #viewer .vhead .actions { display: flex; gap: 8px; }
+    #viewer .vhead .actions .btn { width: auto; height: 30px; padding: 0 14px; margin: 0; font-size: 12px; }
+    #viewer .vbody {
+      padding: 14px 16px; display: grid; gap: 14px;
+      grid-template-columns: 1fr; overflow-y: auto;
+    }
+    #viewer .vcams {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+    }
+    #viewer .vcams figure {
+      margin: 0; background: #000; border-radius: 6px;
+      border: 1px solid var(--line); overflow: hidden;
+      aspect-ratio: 4 / 3; position: relative;
+    }
+    #viewer .vcams img {
+      width: 100%; height: 100%; object-fit: cover; display: block;
+      background: #000;
+    }
+    #viewer .vcams figcaption {
+      position: absolute; top: 8px; left: 10px;
+      font-size: 10px; font-weight: 600; letter-spacing: 0.12em;
+      text-transform: uppercase; color: #fff;
+      padding: 3px 7px; border-radius: 4px;
+      background: rgba(0,0,0,0.55);
+    }
+    #viewer .vcams .nofeed {
+      position: absolute; inset: 0; display: flex; align-items: center;
+      justify-content: center; color: rgba(255,255,255,0.5);
+      font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+    }
+    #viewer .vctrl {
+      display: grid; grid-template-columns: 32px 1fr 110px; gap: 10px;
+      align-items: center;
+    }
+    #viewer .vctrl button.playBtn {
+      width: 32px; height: 32px; padding: 0; border-radius: 4px;
+      border: 1px solid var(--line); background: #fff; cursor: pointer;
+      font-size: 14px; line-height: 1;
+    }
+    #viewer .vctrl button.playBtn:hover { background: #f3f3f3; }
+    #viewer .vctrl input[type=range] {
+      width: 100%; accent-color: var(--accent);
+    }
+    #viewer .vctrl .tcode {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 11px; color: var(--muted); text-align: right;
+    }
+    #viewer .vchart {
+      width: 100%; height: 160px; border: 1px solid var(--soft);
+      border-radius: 6px; background: #fafafa;
+    }
+    #viewer .vchart-label {
+      display: flex; gap: 12px; flex-wrap: wrap;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 10px; color: var(--muted); margin-top: 4px;
+    }
+    #viewer .vchart-label span { display: inline-flex; align-items: center; gap: 4px; }
+    #viewer .vchart-label i {
+      width: 10px; height: 2px; display: inline-block; background: #000;
+    }
+
     /* ── E-STOP top centre ────────────────────────────────────────────── */
     #estopBar {
       position: fixed; top: var(--pad); left: 50%; transform: translateX(-50%);
@@ -232,6 +404,26 @@
     }
     body.estopped #estopClearBtn { display: inline-block; }
     body.estopped #ui { border-color: var(--red); }
+
+    /* Error banner — replaces blocking alert() with a persistent,
+       dismissable toast at the top of the viewport. Positioned below
+       the E-STOP bar so it doesn't overlap. */
+    #errorBar {
+      position: fixed; top: 70px; left: 50%; transform: translateX(-50%);
+      z-index: 60; background: #fff; color: var(--red);
+      border: 2px solid var(--red); padding: 10px 14px 10px 16px;
+      border-radius: 6px; display: flex; align-items: center; gap: 12px;
+      font-size: 13px; font-weight: 600; max-width: 70vw;
+      box-shadow: 0 4px 12px rgba(192,57,43,0.25);
+    }
+    #errorBar.hidden { display: none; }
+    #errorMsg { white-space: pre-wrap; word-break: break-word; }
+    #errorDismissBtn {
+      background: none; border: none; color: var(--red);
+      font-size: 20px; line-height: 1; cursor: pointer;
+      padding: 0 4px; font-weight: 700;
+    }
+    #errorDismissBtn:hover { color: #6b1a13; }
   </style>
   <script type="importmap">
   {
@@ -246,6 +438,10 @@
   <div id="estopBar">
     <button id="estopBtn">■ E-STOP</button>
     <button id="estopClearBtn">Clear e-stop</button>
+  </div>
+  <div id="errorBar" class="hidden" role="alert">
+    <span id="errorMsg"></span>
+    <button id="errorDismissBtn" title="Dismiss" aria-label="Dismiss">×</button>
   </div>
 
   <div id="ui" class="panel">
@@ -304,6 +500,27 @@
         </div>
       </div>
     </div>
+    <div class="section">
+      <div class="section-label">Smoothing (1€ filter)</div>
+      <div id="filter">
+        <div class="row">
+          <span class="lab">min_cutoff <span class="unit">Hz</span></span>
+          <div class="stepper">
+            <button type="button" class="step-btn" data-target="minCutoff" data-delta="-0.05">−</button>
+            <input id="minCutoff" type="number" min="0.1" max="5" step="0.05" value="1.50">
+            <button type="button" class="step-btn" data-target="minCutoff" data-delta="0.05">+</button>
+          </div>
+        </div>
+        <div class="row">
+          <span class="lab">beta</span>
+          <div class="stepper">
+            <button type="button" class="step-btn" data-target="beta" data-delta="-0.005">−</button>
+            <input id="beta" type="number" min="0" max="0.5" step="0.005" value="0.100">
+            <button type="button" class="step-btn" data-target="beta" data-delta="0.005">+</button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div id="cams">
@@ -324,10 +541,68 @@
 
   <div id="help">jog steps the TCP · SPACE = toggle e-stop · ESC = e-stop · drag scene to orbit</div>
 
+  <div id="episodes" class="panel">
+    <div id="episodesHeader">
+      <span>Recorded episodes</span>
+      <span class="count" id="episodesCount">—</span>
+    </div>
+    <div id="episodesStrip"><div class="empty">no episodes yet</div></div>
+  </div>
+
+  <div id="viewer" role="dialog" aria-modal="true">
+    <div class="vcard">
+      <div class="vhead">
+        <div>
+          <h2 id="vTitle">episode</h2>
+          <div class="sub" id="vSub">—</div>
+        </div>
+        <div class="actions">
+          <button class="btn danger" id="vDelete">Delete</button>
+          <button class="btn" id="vClose">Close</button>
+        </div>
+      </div>
+      <div class="vbody">
+        <div class="vcams">
+          <figure id="vFigBase">
+            <img id="vCamBase" alt="base camera frame">
+            <div class="nofeed">no frame</div>
+            <figcaption>Base</figcaption>
+          </figure>
+          <figure id="vFigWrist">
+            <img id="vCamWrist" alt="wrist camera frame">
+            <div class="nofeed">no frame</div>
+            <figcaption>Wrist</figcaption>
+          </figure>
+        </div>
+        <div class="vctrl">
+          <button class="playBtn" id="vPlay" title="Play / pause (space)">▶</button>
+          <input id="vScrub" type="range" min="0" max="0" value="0" step="1">
+          <div class="tcode" id="vTcode">0 / 0 · 0.00s</div>
+        </div>
+        <svg id="vChart" class="vchart" preserveAspectRatio="none"></svg>
+        <div class="vchart-label" id="vChartLabel"></div>
+      </div>
+    </div>
+  </div>
+
   <script type="module">
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+
+    // ── Error banner ────────────────────────────────────────────────────
+    // Non-modal replacement for alert(): persistent toast at the top
+    // of the viewport that the operator dismisses with × when ready.
+    const errorBarEl = document.getElementById('errorBar');
+    const errorMsgEl = document.getElementById('errorMsg');
+    function showError(msg) {
+      errorMsgEl.textContent = String(msg);
+      errorBarEl.classList.remove('hidden');
+    }
+    function dismissError() {
+      errorBarEl.classList.add('hidden');
+    }
+    document.getElementById('errorDismissBtn').addEventListener('click', dismissError);
 
     // ── Scene ────────────────────────────────────────────────────────────
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -786,9 +1061,16 @@
     const recSaveBtn = document.getElementById('recSaveBtn');
     const recCancelBtn = document.getElementById('recCancelBtn');
 
+    let wasRecording = false;
     function paintRecording(snap) {
       const r = snap.recording;
       const recording = !!(r && r.recording);
+      if (wasRecording && !recording) {
+        // Recording just stopped — episode list may have a new entry
+        // (saved) or one fewer (cancel cleaned up the directory).
+        refreshEpisodes();
+      }
+      wasRecording = recording;
       if (recording) {
         const s = Math.floor(r.elapsed_s || 0);
         const mm = String(Math.floor(s / 60)).padStart(2, '0');
@@ -933,10 +1215,91 @@
         const stepDeg = parseFloat(document.getElementById('stepDeg').value) || 2;
         const body = { axis, sign, step_mm: stepMm, step_rad: stepDeg * Math.PI / 180 };
         try { await postJSON('/v1/teleop/jog', body); }
-        catch (e) { console.error('jog failed', e); alert(`jog failed: ${e.message}`); }
+        catch (e) { console.error('jog failed', e); showError(`jog failed: ${e.message}`); }
         btn.classList.remove('busy');
       });
     });
+
+    // ── 1€ smoothing tuner ─────────────────────────────────────────────
+    (() => {
+      const inputs = {
+        minCutoff: document.getElementById('minCutoff'),
+        beta: document.getElementById('beta'),
+      };
+      // Decimal places derived from each input's step, so the displayed
+      // value never has more precision than the user can step through.
+      const decimalsOf = (inp) => {
+        const step = parseFloat(inp.step) || 0.01;
+        return Math.max(0, Math.min(6, Math.round(-Math.log10(step))));
+      };
+      const clamp = (inp, v) => {
+        const min = parseFloat(inp.min);
+        const max = parseFloat(inp.max);
+        if (isFinite(min) && v < min) v = min;
+        if (isFinite(max) && v > max) v = max;
+        return v;
+      };
+      const format = (inp, v) => v.toFixed(decimalsOf(inp));
+
+      let pending = null;
+      let inFlight = false;
+      const push = async () => {
+        if (inFlight) return;  // coalesce — we'll re-fire on completion
+        const body = {
+          min_cutoff: parseFloat(inputs.minCutoff.value),
+          beta: parseFloat(inputs.beta.value),
+        };
+        if (!isFinite(body.min_cutoff) || !isFinite(body.beta)) return;
+        inFlight = true;
+        try { await postJSON('/v1/teleop/filter', body); }
+        catch (e) { console.error('filter push failed', e); }
+        inFlight = false;
+        if (pending) { pending = null; push(); }
+      };
+      const schedule = () => { if (inFlight) pending = true; else push(); };
+
+      // − / + steppers
+      document.querySelectorAll('#filter .step-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const inp = inputs[btn.dataset.target];
+          if (!inp) return;
+          const delta = parseFloat(btn.dataset.delta);
+          const cur = parseFloat(inp.value);
+          const base = isFinite(cur) ? cur : (parseFloat(inp.min) || 0);
+          inp.value = format(inp, clamp(inp, base + delta));
+          schedule();
+        });
+      });
+
+      // Typed input — push live as user types; on blur, clamp + reformat.
+      for (const inp of Object.values(inputs)) {
+        inp.addEventListener('input', () => {
+          const v = parseFloat(inp.value);
+          if (isFinite(v)) schedule();
+        });
+        inp.addEventListener('change', () => {
+          const v = parseFloat(inp.value);
+          if (!isFinite(v)) return;
+          inp.value = format(inp, clamp(inp, v));
+          schedule();
+        });
+      }
+
+      // Initial pull so the UI matches the running daemon.
+      (async () => {
+        try {
+          const r = await fetch('/v1/teleop/filter');
+          if (!r.ok) return;
+          const p = await r.json();
+          if (typeof p.min_cutoff === 'number') {
+            inputs.minCutoff.value = format(inputs.minCutoff, p.min_cutoff);
+          }
+          if (typeof p.beta === 'number') {
+            inputs.beta.value = format(inputs.beta, p.beta);
+          }
+        } catch (e) { /* defaults from HTML are fine */ }
+      })();
+    })();
 
     document.getElementById('estopBtn').addEventListener('click', async () => {
       try { await postJSON('/v1/teleop/estop'); }
@@ -948,10 +1311,352 @@
       catch (e) { console.error('estop clear failed', e); }
     });
 
+    // ── Episode browser + viewer ──────────────────────────────────────────
+    const episodesStrip = document.getElementById('episodesStrip');
+    const episodesCount = document.getElementById('episodesCount');
+    const viewerEl = document.getElementById('viewer');
+    const vTitle = document.getElementById('vTitle');
+    const vSub = document.getElementById('vSub');
+    const vCamBase = document.getElementById('vCamBase');
+    const vCamWrist = document.getElementById('vCamWrist');
+    const vFigBase = document.getElementById('vFigBase');
+    const vFigWrist = document.getElementById('vFigWrist');
+    const vPlay = document.getElementById('vPlay');
+    const vScrub = document.getElementById('vScrub');
+    const vTcode = document.getElementById('vTcode');
+    const vChart = document.getElementById('vChart');
+    const vChartLabel = document.getElementById('vChartLabel');
+    const vCloseBtn = document.getElementById('vClose');
+    const vDeleteBtn = document.getElementById('vDelete');
+
+    function fmtDuration(s) {
+      if (!Number.isFinite(s)) return '--';
+      if (s < 60) return s.toFixed(1) + 's';
+      const m = Math.floor(s / 60);
+      const r = Math.round(s - m * 60);
+      return `${m}m${String(r).padStart(2, '0')}s`;
+    }
+    function fmtTime(iso) {
+      if (!iso) return '';
+      try {
+        const d = new Date(iso);
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        const ss = String(d.getSeconds()).padStart(2, '0');
+        return `${hh}:${mm}:${ss}`;
+      } catch (_e) { return ''; }
+    }
+
+    async function refreshEpisodes() {
+      try {
+        const r = await fetchWithTimeout('/v1/episodes', { cache: 'no-store' }, 2000);
+        if (!r.ok) throw new Error('http ' + r.status);
+        const { episodes } = await r.json();
+        renderEpisodes(episodes || []);
+      } catch (e) {
+        console.warn('episode list failed', e);
+      }
+    }
+
+    function renderEpisodes(list) {
+      episodesCount.textContent = list.length === 0
+        ? 'none' : `${list.length} take${list.length === 1 ? '' : 's'}`;
+      if (list.length === 0) {
+        episodesStrip.innerHTML = '<div class="empty">no episodes yet</div>';
+        return;
+      }
+      episodesStrip.innerHTML = '';
+      for (const ep of list) {
+        const tile = document.createElement('div');
+        tile.className = 'ep-tile';
+        tile.title = ep.id;
+        const dur = fmtDuration(ep.duration_s);
+        const frames = ep.frame_count != null ? `${ep.frame_count}f` : '--';
+        const when = fmtTime(ep.start_iso);
+        tile.innerHTML = `
+          <div class="thumb">
+            <div class="nothumb">no thumb</div>
+            <img loading="lazy" alt="" />
+          </div>
+          <div class="meta">
+            <span>${dur} · ${frames}</span>
+            <span class="when">${when}</span>
+          </div>
+        `;
+        const img = tile.querySelector('img');
+        img.src = `/v1/episodes/${encodeURIComponent(ep.id)}/thumbnail.jpg`;
+        img.onerror = () => { img.style.display = 'none'; };
+        tile.addEventListener('click', () => openViewer(ep));
+        episodesStrip.appendChild(tile);
+      }
+    }
+
+    // ── Viewer state ─────────────────────────────────────────────────────
+    let viewerEp = null;       // episode meta object
+    let viewerFrames = [];     // joint rows from frames.jsonl
+    let viewerFps = 30;
+    let viewerCams = [];
+    let viewerCur = 0;
+    let viewerPlaying = false;
+    let viewerStartT = 0;
+    let viewerStartFrame = 0;
+    let viewerRaf = null;
+
+    async function openViewer(ep) {
+      viewerEp = ep;
+      viewerFrames = [];
+      viewerCams = [];
+      viewerCur = 0;
+      viewerPlaying = false;
+      vPlay.textContent = '▶';
+      vTitle.textContent = ep.id;
+      vSub.textContent = '';
+      vCamBase.removeAttribute('src');
+      vCamWrist.removeAttribute('src');
+      vFigBase.style.display = '';
+      vFigWrist.style.display = '';
+      vScrub.value = '0';
+      vScrub.max = '0';
+      vChart.innerHTML = '';
+      vChartLabel.innerHTML = '';
+      vTcode.textContent = '0 / 0 · 0.00s';
+      viewerEl.classList.add('open');
+
+      // Fire meta + frames in parallel; either failing should still let
+      // the user see what's available.
+      const id = encodeURIComponent(ep.id);
+      let meta = null;
+      try {
+        const r = await fetchWithTimeout(`/v1/episodes/${id}/meta.json`, {}, 3000);
+        if (r.ok) meta = await r.json();
+      } catch (_e) {}
+      try {
+        const r = await fetchWithTimeout(`/v1/episodes/${id}/frames.jsonl`, {}, 5000);
+        if (r.ok) {
+          const text = await r.text();
+          viewerFrames = text.split('\n').filter(Boolean).map(line => {
+            try { return JSON.parse(line); } catch (_e) { return null; }
+          }).filter(Boolean);
+        }
+      } catch (_e) {}
+
+      const cams = (meta && meta.cameras) || ep.cameras || [];
+      viewerCams = cams;
+      viewerFps = (meta && meta.fps) || ep.fps || 30;
+      const frameCount = viewerFrames.length
+        || (meta && meta.frame_count)
+        || ep.frame_count || 0;
+
+      const dur = (meta && meta.duration_s) ?? ep.duration_s;
+      vSub.textContent = `${cams.length ? cams.join(' + ') : 'no cameras'} · ${frameCount} frames · ${fmtDuration(dur)} · ${viewerFps} fps`;
+
+      vScrub.max = String(Math.max(0, frameCount - 1));
+
+      // Pick which cameras populate the two slots. Default mapping is
+      // base→left, wrist→right; if names don't match, fill in order.
+      const baseCam = cams.includes('base') ? 'base'
+        : (cams[0] || null);
+      const wristCam = cams.includes('wrist') ? 'wrist'
+        : (cams.find(c => c !== baseCam) || null);
+      vFigBase.dataset.cam = baseCam || '';
+      vFigWrist.dataset.cam = wristCam || '';
+      vFigBase.style.display = baseCam ? '' : 'none';
+      vFigWrist.style.display = wristCam ? '' : 'none';
+
+      drawJointChart();
+      showFrame(0);
+    }
+
+    function closeViewer() {
+      viewerEl.classList.remove('open');
+      viewerPlaying = false;
+      if (viewerRaf !== null) { cancelAnimationFrame(viewerRaf); viewerRaf = null; }
+      viewerEp = null;
+      viewerFrames = [];
+    }
+
+    function showFrame(idx) {
+      if (!viewerEp) return;
+      const total = parseInt(vScrub.max, 10) + 1;
+      if (total <= 0) return;
+      idx = Math.max(0, Math.min(total - 1, idx | 0));
+      viewerCur = idx;
+      vScrub.value = String(idx);
+      const id = encodeURIComponent(viewerEp.id);
+      const pad = String(idx).padStart(6, '0');
+      const baseCam = vFigBase.dataset.cam;
+      const wristCam = vFigWrist.dataset.cam;
+      if (baseCam) vCamBase.src = `/v1/episodes/${id}/cameras/${baseCam}/${pad}.jpg`;
+      if (wristCam) vCamWrist.src = `/v1/episodes/${id}/cameras/${wristCam}/${pad}.jpg`;
+      const t = (viewerFrames[idx] && viewerFrames[idx].t)
+        ?? (idx / Math.max(1, viewerFps));
+      vTcode.textContent = `${idx + 1} / ${total} · ${(t || 0).toFixed(2)}s`;
+      updateChartCursor(idx, total);
+    }
+
+    function playLoop(now) {
+      if (!viewerPlaying) return;
+      const total = parseInt(vScrub.max, 10) + 1;
+      if (total <= 0) { viewerPlaying = false; vPlay.textContent = '▶'; return; }
+      const elapsed = (now - viewerStartT) / 1000;
+      const target = viewerStartFrame + Math.floor(elapsed * viewerFps);
+      if (target >= total) {
+        // Loop playback — easier to inspect a take twice without futzing
+        // with the scrub bar.
+        viewerStartT = now;
+        viewerStartFrame = 0;
+        showFrame(0);
+      } else if (target !== viewerCur) {
+        showFrame(target);
+      }
+      viewerRaf = requestAnimationFrame(playLoop);
+    }
+
+    vPlay.addEventListener('click', () => {
+      if (!viewerEp) return;
+      viewerPlaying = !viewerPlaying;
+      vPlay.textContent = viewerPlaying ? '❚❚' : '▶';
+      if (viewerPlaying) {
+        viewerStartT = performance.now();
+        viewerStartFrame = viewerCur;
+        viewerRaf = requestAnimationFrame(playLoop);
+      } else if (viewerRaf !== null) {
+        cancelAnimationFrame(viewerRaf);
+        viewerRaf = null;
+      }
+    });
+    vScrub.addEventListener('input', () => {
+      // Scrubbing pauses playback so the user's drag doesn't fight the
+      // raf-driven advance.
+      if (viewerPlaying) {
+        viewerPlaying = false;
+        vPlay.textContent = '▶';
+        if (viewerRaf !== null) { cancelAnimationFrame(viewerRaf); viewerRaf = null; }
+      }
+      showFrame(parseInt(vScrub.value, 10) || 0);
+    });
+    vCloseBtn.addEventListener('click', closeViewer);
+    viewerEl.addEventListener('click', (e) => {
+      if (e.target === viewerEl) closeViewer();
+    });
+    vDeleteBtn.addEventListener('click', async () => {
+      if (!viewerEp) return;
+      if (!confirm(`Delete ${viewerEp.id}? This cannot be undone.`)) return;
+      const id = encodeURIComponent(viewerEp.id);
+      try {
+        const r = await fetch(`/v1/episodes/${id}`, { method: 'DELETE' });
+        if (!r.ok) throw new Error(`http ${r.status}`);
+      } catch (e) {
+        showError(`delete failed: ${e.message}`);
+        return;
+      }
+      closeViewer();
+      refreshEpisodes();
+    });
+
+    // ── Joint angle chart (SVG, 6 lines + cursor) ────────────────────────
+    const JOINT_COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b'];
+    let chartCursor = null;
+    let chartWidth = 1;
+
+    function drawJointChart() {
+      vChart.innerHTML = '';
+      vChartLabel.innerHTML = '';
+      if (viewerFrames.length < 2) {
+        const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        t.setAttribute('x', '12');
+        t.setAttribute('y', '24');
+        t.setAttribute('font-size', '11');
+        t.setAttribute('fill', '#999');
+        t.textContent = 'no joint data';
+        vChart.appendChild(t);
+        return;
+      }
+      const W = 1000, H = 160, pad = 6;
+      vChart.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      chartWidth = W;
+      // Collect series.
+      const series = [[], [], [], [], [], []];
+      let lo = Infinity, hi = -Infinity;
+      for (const row of viewerFrames) {
+        const js = row.joints;
+        if (!Array.isArray(js)) continue;
+        for (let i = 0; i < 6; i++) {
+          const v = js[i];
+          if (typeof v !== 'number') continue;
+          series[i].push(v);
+          if (v < lo) lo = v;
+          if (v > hi) hi = v;
+        }
+      }
+      if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi === lo) {
+        const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        t.setAttribute('x', '12');
+        t.setAttribute('y', '24');
+        t.setAttribute('font-size', '11');
+        t.setAttribute('fill', '#999');
+        t.textContent = 'joints are flat';
+        vChart.appendChild(t);
+        return;
+      }
+      const n = viewerFrames.length;
+      const sx = (W - 2 * pad) / Math.max(1, n - 1);
+      const sy = (H - 2 * pad) / (hi - lo);
+      for (let i = 0; i < 6; i++) {
+        const pts = series[i];
+        if (pts.length < 2) continue;
+        const d = pts.map((v, k) =>
+          `${k === 0 ? 'M' : 'L'}${(pad + k * sx).toFixed(2)},${(H - pad - (v - lo) * sy).toFixed(2)}`
+        ).join(' ');
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', d);
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', JOINT_COLORS[i]);
+        path.setAttribute('stroke-width', '1.4');
+        path.setAttribute('stroke-linejoin', 'round');
+        vChart.appendChild(path);
+      }
+      // Cursor line.
+      chartCursor = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      chartCursor.setAttribute('y1', '0');
+      chartCursor.setAttribute('y2', String(H));
+      chartCursor.setAttribute('stroke', '#000');
+      chartCursor.setAttribute('stroke-width', '1');
+      chartCursor.setAttribute('stroke-dasharray', '3 3');
+      chartCursor.setAttribute('x1', String(pad));
+      chartCursor.setAttribute('x2', String(pad));
+      vChart.appendChild(chartCursor);
+      // Legend.
+      for (let i = 0; i < 6; i++) {
+        const s = document.createElement('span');
+        const sw = document.createElement('i');
+        sw.style.background = JOINT_COLORS[i];
+        s.appendChild(sw);
+        s.appendChild(document.createTextNode(`j${i + 1}`));
+        vChartLabel.appendChild(s);
+      }
+    }
+
+    function updateChartCursor(idx, total) {
+      if (!chartCursor || total < 2) return;
+      const W = chartWidth, pad = 6;
+      const x = pad + (idx / (total - 1)) * (W - 2 * pad);
+      chartCursor.setAttribute('x1', x.toFixed(2));
+      chartCursor.setAttribute('x2', x.toFixed(2));
+    }
+
     // Keyboard: Space toggles E-STOP; Esc forces stop.
     document.addEventListener('keydown', async (ev) => {
       const t = ev.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      // Viewer-local shortcuts when the modal is open.
+      if (viewerEl.classList.contains('open')) {
+        if (ev.code === 'Escape') { ev.preventDefault(); closeViewer(); return; }
+        if (ev.code === 'Space') { ev.preventDefault(); vPlay.click(); return; }
+        if (ev.code === 'ArrowLeft') { ev.preventDefault(); showFrame(viewerCur - 1); return; }
+        if (ev.code === 'ArrowRight') { ev.preventDefault(); showFrame(viewerCur + 1); return; }
+        if (ev.code === 'Delete' || ev.code === 'Backspace') { ev.preventDefault(); vDeleteBtn.click(); return; }
+      }
       if (ev.code === 'Escape') {
         ev.preventDefault();
         try { await postJSON('/v1/teleop/estop'); } catch (_e) {}
@@ -963,6 +1668,8 @@
         try { await postJSON(url); } catch (_e) {}
       }
     });
+
+    refreshEpisodes();
   </script>
 </body>
 </html>
