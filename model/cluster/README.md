@@ -5,7 +5,7 @@ with **three interchangeable fine-tuning architectures** you can run and
 compare. Assumes:
 
 * Dataset on the Hub at **`NoahWeiss/farm_uf850_bottle`** (200 episodes, 2 tasks,
-  59,183 frames — see `tools/HUGGINGFACE_UPLOAD.md` to push it).
+  59,183 frames — see `model/HUGGINGFACE_UPLOAD.md` to push it).
 * openpi cloned + the FARM configs registered by the patch scripts here
   (`setup.sh` does this, step 3).
 * Cluster access via the Omniva kubeconfig (see `.claude/CLAUDE.md`).
@@ -14,7 +14,7 @@ compare. Assumes:
 
 All three fine-tune the same `pi05_base` checkpoint on the same dataset, output
 `action_horizon=10` absolute joint targets, and serve/eval through the same
-path (`serve_pi05.sbatch` + `tools/eval_pi05.py`) — so they are directly
+path (`serve_pi05.sbatch` + `model/eval_pi05.py`) — so they are directly
 comparable. They differ only in *which* parameters adapt and *how*:
 
 | Config | What trains | GPUs | Why |
@@ -23,7 +23,7 @@ comparable. They differ only in *which* parameters adapt and *how*:
 | `pi05_farm_uf850_lora` | LoRA adapters + action expert | 1 | preserves the base; **under-adapts** when precise control is needed |
 | `pi05_farm_uf850_gse` | SVD experts + action expert | 1 | **VLA-GSE** (arXiv:2605.06175): preserves the dominant subspace (generalized expert) *and* adapts residual subspaces (specialized experts) — best of both |
 
-See `tools/FINDINGS.md` for the full diagnosis of why full FT alone
+See `model/FINDINGS.md` for the full diagnosis of why full FT alone
 underperforms here, and `openpi_gse.py` for the GSE method. The patch scripts
 register all three; the default sbatch trains full FT, and there are dedicated
 1-GPU sbatches for LoRA and GSE.
@@ -53,7 +53,7 @@ for f in setup.sh push_checkpoints.py \
          openpi_gse.py patch_openpi_gse.py patch_openpi_config_pi05_gse.py \
          train_pi05.sbatch train_pi05_lora.sbatch train_pi05_gse.sbatch \
          serve_pi05.sbatch; do
-  kubectl cp tools/cluster/$f $DST/$f -c login
+  kubectl cp model/cluster/$f $DST/$f -c login
 done
 ```
 
@@ -85,7 +85,7 @@ sbatch train_pi05.sbatch
 sbatch train_pi05_lora.sbatch
 
 # GSE — 1 GPU, batch 32, 10k steps → NoahWeiss/farm_uf850_pi05_gse
-#   ⚠ Smoke-test first (see tools/FINDINGS.md) — GSE is syntax+math-validated
+#   ⚠ Smoke-test first (see model/FINDINGS.md) — GSE is syntax+math-validated
 #   but not yet GPU-tested.
 sbatch train_pi05_gse.sbatch
 ```
@@ -111,13 +111,13 @@ sshare -u $USER                            # fairshare / usage
 Checkpoints stream to the per-architecture HF repo, tagged `step-<N>`
 (full FT: 5000/10000/15000/19999 — openpi names the final at step N-1; LoRA/GSE:
 every 2000). **Select by held-out performance, not the last step** — earlier
-checkpoints often generalize better (see `tools/FINDINGS.md`). Pull any:
+checkpoints often generalize better (see `model/FINDINGS.md`). Pull any:
 
 ```bash
 hf download NoahWeiss/farm_uf850_pi05 --include 'step-19999/*' --local-dir ~/farm_pi05_step19999
 ```
 
-To serve + run on the arm, see `DEPLOYMENT.md`. The serve sbatch + `tools/eval_pi05.py`
+To serve + run on the arm, see `DEPLOYMENT.md`. The serve sbatch + `model/eval_pi05.py`
 work unchanged for all three (same obs/action contract).
 
 ## Iterating on hyperparameters
@@ -136,6 +136,6 @@ run bump `--time` (max 24h on `small`, 5d on `medium`).
 | `JSON parse error` in container init | You used `docker.io#library/<name>`; switch to `nvcr.io#…` or the bare name |
 | `CUDA out of memory` (full FT) | Drop `batch_size` 64→32 in `patch_openpi_config_pi05.py`, re-run setup.sh |
 | `Unknown config pi05_farm_uf850*` | Patches didn't apply — re-run `bash setup.sh <token>`, check the verify step |
-| GSE: shape/JIT error on first step | Run the smoke test in `tools/FINDINGS.md`; GSE's integration is validated for syntax/math but not yet on GPU |
+| GSE: shape/JIT error on first step | Run the smoke test in `model/FINDINGS.md`; GSE's integration is validated for syntax/math but not yet on GPU |
 | `HF 401 Unauthorized` | Token expired / wrong scope; re-run setup.sh with a fresh **write** token |
 | Job pending forever | Out of fairshare/budget — `sshare -u $USER` |

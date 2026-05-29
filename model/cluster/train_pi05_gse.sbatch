@@ -6,8 +6,8 @@
 # LoRA (train_pi05_lora.sbatch). GSE (VLA-GSE, arXiv:2605.06175) SVD-splits each
 # VLM weight: dominant spectrum → a preserved "generalized" adapter, residual
 # spectrum → "specialized" adapters — getting LoRA's knowledge preservation plus
-# closer-to-full-FT control adaptation. See tools/cluster/openpi_gse.py and
-# tools/FINDINGS.md.
+# closer-to-full-FT control adaptation. See model/cluster/openpi_gse.py and
+# model/FINDINGS.md.
 #
 # Prereq: setup.sh registered pi05_farm_uf850_gse (it runs patch_openpi_gse.py
 # + patch_openpi_config_pi05_gse.py when openpi_gse.py is staged alongside).
@@ -15,7 +15,7 @@
 #
 # SMOKE TEST FIRST (cheap): the GSE integration is syntax-validated but not
 # GPU-tested. Before the full run, sanity-check that it builds + trains a few
-# steps — see tools/FINDINGS.md "GSE smoke test".
+# steps — see model/FINDINGS.md "GSE smoke test".
 #
 # Submit:    sbatch train_pi05_gse.sbatch
 # Pull:      hf download NoahWeiss/farm_uf850_pi05_gse --revision step-9999

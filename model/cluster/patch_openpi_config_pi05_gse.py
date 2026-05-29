@@ -17,8 +17,8 @@ the dominant subspace is kept as an SVD-initialized "generalized" adapter (so
 the prior is preserved, not discarded like LoRA's random init), and residual
 subspaces become "specialized" adapters that adapt control — getting LoRA's
 knowledge-preservation AND closer-to-full-FT adaptation. See
-``tools/cluster/openpi_gse.py`` for the implementation and
-``tools/FINDINGS.md`` for the comparison plan + smoke test.
+``model/cluster/openpi_gse.py`` for the implementation and
+``model/FINDINGS.md`` for the comparison plan + smoke test.
 
 Config choices: VLM = ``gemma_2b_gse`` (GSE adapters on attention; LoRA on FFN);
 action expert = ``gemma_300m`` full fine-tuned (the paper's "action head fully

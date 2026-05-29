@@ -12,24 +12,27 @@ cluster → serve the checkpoint and drive the arm from the policy. The
 laptop side is a clean MuJoCo sim (stand-in for the arm), an aiohttp
 dashboard + episode-review app, and a ROS-TCP-Endpoint bridge the Quest
 client speaks to. The model pipeline (export, cluster training, eval)
-lives in `tools/` — see `tools/README.md` and `tools/FINDINGS.md`.
+lives in `model/` — see `model/README.md` and `model/FINDINGS.md`.
 
 Note: an *older* planner stack (GPT planner → Pi0.5 → safety gates → arm)
 was deleted on 2026-05-25; the current π0.5 work is an imitation-learning
-fine-tune in `tools/`, unrelated to that removed code (see "What was
+fine-tune in `model/`, unrelated to that removed code (see "What was
 deleted" below).
 
 ## Common commands
 
 ```bash
 source .venv/bin/activate
-pip install -e ./farm-shared -e ./farm-edge-agent
+# install in two steps — the edge-agent's direct-reference dep on farm-shared
+# conflicts with a single combined `pip install -e` invocation
+pip install -e ./shared
+pip install -e ./teleop/edge-agent
 
 # run the local daemon (sim + dashboard + ROS-TCP bridge)
 farm serve
 
 # tests
-pytest farm-edge-agent/tests
+pytest teleop/edge-agent/tests
 
 # lint
 ruff check .
@@ -43,34 +46,36 @@ optional cloud server.
 
 ### Packages & components
 
-- **`farm-edge-agent/`** — the daemon (`farm serve`). Owns: the MuJoCo sim,
+- **`teleop/edge-agent/`** — the daemon (`farm serve`). Owns: the MuJoCo sim,
   the real-arm (xArm) backend, the HTTP/SSE server (aiohttp), the
   ROS-TCP-Endpoint wire bridge, the dashboard + episode-review app, the
   teleop recorder, the CLI.
-- **`farm-shared/`** — shared error catalog (`ErrorCode` enum with
+- **`shared/`** — shared error catalog (`ErrorCode` enum with
   format-string templates).
-- **`farm-quest/`** — Quest VR teleop client (Unity); publishes controller
+- **`teleop/quest/`** — Quest VR teleop client (Unity); publishes controller
   poses over ROS-TCP. Fix it in place (don't resurrect the old standalone
   collector project).
-- **`tools/`** — model workstream: `export_lerobot.py`, `analyze_dataset.py`,
+- **`ui/`** — the browser dashboard + episode-review app (`index.html`,
+  `review.html`). Served by the daemon from the repo-level `ui/` folder.
+- **`model/`** — model workstream: `export_lerobot.py`, `analyze_dataset.py`,
   `eval_pi05.py`, and `cluster/` (the three π0.5 fine-tune configs — full FT,
-  LoRA, GSE — + serve). See `tools/README.md`.
-- **`farm-cloud/`** — optional Modal-hosted policy server (alternative to the
-  cluster serve job).
+  LoRA, GSE — + serve) + `cloud/` (optional Modal server). See `model/README.md`.
 
 ### Key directories
 
 ```
-farm-edge-agent/src/farm_edge_agent/
+teleop/edge-agent/src/farm_edge_agent/
 ├── cli/           # Click CLI: farm {serve, config, version}
 ├── config/        # YAML config loading + validation
 ├── drivers/       # base protocol + real-arm xArm driver
 ├── sim/           # lean MuJoCo backend (Sim, jog, render, IK)
 ├── ros_bridge/    # ROS-TCP-Endpoint-compatible TCP listener + message codecs
 ├── server/        # aiohttp daemon (app, supervisor, event bus)
-├── web/           # webviz-style dashboard (index.html, single-file)
 └── errors.py
 ```
+
+The dashboard is **not** inside the package — it lives at the repo-level
+`ui/` folder and the daemon serves it from there (`UI_DIR` in `server/app.py`).
 
 ### How a control loop flows
 
@@ -111,12 +116,12 @@ that strips AI tells.
 
 ## Scope discipline
 
-Daemon work happens in `farm-edge-agent/`; model/training work in `tools/`
+Daemon work happens in `teleop/edge-agent/`; model/training work in `model/`
 (the cluster scripts patch a separate openpi checkout — they don't import
-the daemon). The error catalog in `farm-shared/` rarely changes; if you add
+the daemon). The error catalog in `shared/` rarely changes; if you add
 a new error code there, update the severity map in
 `farm_edge_agent/errors.py` too. Datasets live on the HF Hub, not in git
-(`Dataset*/`, `datasets_lerobot/` are gitignored).
+(everything under `datasets/` is gitignored).
 
 ## What was deleted (2026-05-25 rewrite)
 
@@ -125,6 +130,6 @@ Removed during the laptop-side rewrite: the GPT **planner**, the old Pi0.5
 primitives, and the original 834-line MuJoCo SimDriver. Don't resurrect
 that deleted code in place; design fresh.
 
-(The current π0.5 work in `tools/` is unrelated — it's a fresh imitation-
+(The current π0.5 work in `model/` is unrelated — it's a fresh imitation-
 learning fine-tune of the policy on teleop demos, not the removed
 planner→policy→safety stack.)

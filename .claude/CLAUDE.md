@@ -1,6 +1,6 @@
 # Cluster environment
 
-Context for working on FARM's cluster code (`tools/cluster/`): how to reach the
+Context for working on FARM's cluster code (`model/cluster/`): how to reach the
 CS153 H100 cluster and run training/serving jobs. All GPU work goes through
 `sbatch`; the login pod is a CPU shell reached via `kubectl exec`.
 

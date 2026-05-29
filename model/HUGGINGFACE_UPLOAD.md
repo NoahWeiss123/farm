@@ -1,6 +1,6 @@
 # Pushing `farm_uf850_bottle` to the HuggingFace Hub
 
-The dataset under `datasets_lerobot/farm_uf850_bottle/` is LeRobot-v2.0 shaped
+The dataset under `datasets/lerobot/farm_uf850_bottle/` is LeRobot-v2.0 shaped
 and ready to upload. **200 episodes · 2 tasks · 59,183 frames · 30 fps.**
 Total size ~796 MB (7 MB parquet + 788 MB videos).
 
@@ -26,7 +26,7 @@ hf auth whoami        # confirm you're logged in
 
 The dataset repo id used everywhere downstream (openpi config, sbatch,
 eval) is **`NoahWeiss/farm_uf850_bottle`** — keep it unless you change it in
-`tools/cluster/patch_openpi_config*.py` and `tools/cluster/train_pi05.sbatch`
+`model/cluster/patch_openpi_config*.py` and `model/cluster/train_pi05.sbatch`
 as well.
 
 ## 2. Create the dataset repo
@@ -45,7 +45,7 @@ hf repo create NoahWeiss/farm_uf850_bottle --repo-type dataset
 # 788 MB of video; expect a few minutes on a home connection. Resumable —
 # re-run the same command if it drops.
 HF_HUB_ENABLE_HF_TRANSFER=1 hf upload NoahWeiss/farm_uf850_bottle \
-    datasets_lerobot/farm_uf850_bottle \
+    datasets/lerobot/farm_uf850_bottle \
     . \
     --repo-type dataset \
     --commit-message "bottle pick-and-place: 200 episodes, 2 tasks, 59183 frames, 30 fps"
@@ -85,9 +85,9 @@ torch.Size([3, 480, 640])
 ## 5. Train
 
 The repo id is already baked into the cluster config
-(`tools/cluster/patch_openpi_config_pi05.py` → `repo_id="NoahWeiss/farm_uf850_bottle"`),
+(`model/cluster/patch_openpi_config_pi05.py` → `repo_id="NoahWeiss/farm_uf850_bottle"`),
 so once the dataset is on the Hub there's nothing else to wire up. Follow
-`tools/cluster/README.md`:
+`model/cluster/README.md`:
 
 ```bash
 # on the login pod, after staging the launcher files + running setup.sh:
@@ -107,5 +107,5 @@ encoding) is already done locally and shipped in this upload.
   to the model repo (writing needs auth even for a public repo) — not for
   reading this dataset.
 * **Updating after re-collection**: re-run
-  `python tools/export_lerobot.py --src Dataset3 --out datasets_lerobot/farm_uf850_bottle --fps 30 --force`,
+  `python model/export_lerobot.py --src datasets/dataset3 --out datasets/lerobot/farm_uf850_bottle --fps 30 --force`,
   then re-run the `hf upload` above (it overwrites).

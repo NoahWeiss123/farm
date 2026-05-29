@@ -1,17 +1,17 @@
 # tools/
 
 The FARM model workstream: turn teleop recordings into a trained π0.5 policy and
-run it on the arm. (The teleop **daemon** + dashboard live in `farm-edge-agent/`;
-the Quest client in `farm-quest/`.)
+run it on the arm. (The teleop **daemon** + dashboard live in `teleop/edge-agent/`;
+the Quest client in `teleop/quest/`.)
 
 ## Pipeline
 
 ```
-farm serve  ──teleop──▶  Dataset3/episode_*        (recorded on the real UF850)
+farm serve  ──teleop──▶  datasets/dataset3/episode_*        (recorded on the real UF850)
      │                         │
      │              export_lerobot.py
      ▼                         ▼
-  review.html         datasets_lerobot/  ──push──▶  HF: NoahWeiss/farm_uf850_bottle
+  review.html         datasets/lerobot/  ──push──▶  HF: NoahWeiss/farm_uf850_bottle
                                                           │
                                               cluster/ (train on H100s)
                                                           ▼
@@ -26,7 +26,7 @@ farm serve  ──teleop──▶  Dataset3/episode_*        (recorded on the re
 
 | Path | What |
 |---|---|
-| `export_lerobot.py` | `Dataset3/` raw episodes → LeRobot v2.0 dataset |
+| `export_lerobot.py` | `datasets/dataset3/` raw episodes → LeRobot v2.0 dataset |
 | `analyze_dataset.py` | audit a LeRobot dataset (action alignment, smoothness, gripper, tasks) — no GPU |
 | `eval_pi05.py` | live eval client: reads `farm serve` obs, queries the policy server, drives the arm |
 | `eval_pi05_episode_check.py` | open-loop check of one recorded episode through the served policy |

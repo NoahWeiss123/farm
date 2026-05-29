@@ -1,7 +1,7 @@
 """Audit a FARM LeRobot v2.0 dataset for VLA-training quality signals.
 
 Reads the parquet shards under ``<dataset>/data/`` (the output of
-``tools/export_lerobot.py``) and reports the things that actually move
+``model/export_lerobot.py``) and reports the things that actually move
 π0.5 fine-tune quality:
 
 * action/state alignment — confirms ``action[t] == state[t+1]`` (no off-by-one)
@@ -16,8 +16,8 @@ Reads the parquet shards under ``<dataset>/data/`` (the output of
 Nothing here needs a GPU, openpi, or the cluster — it runs on the laptop
 against the local export.
 
-    python tools/analyze_dataset.py --dataset datasets_lerobot/farm_uf850_bottle
-    python tools/analyze_dataset.py --dataset datasets_lerobot/farm_uf850_bottle --raw Dataset3
+    python model/analyze_dataset.py --dataset datasets/lerobot/farm_uf850_bottle
+    python model/analyze_dataset.py --dataset datasets/lerobot/farm_uf850_bottle --raw datasets/dataset3
 """
 from __future__ import annotations
 
@@ -144,7 +144,7 @@ def main() -> int:
     ap.add_argument("--dataset", type=Path, default=Path("datasets/lerobot/farm_uf850_bottle"),
                     help="LeRobot v2.0 dataset dir (export_lerobot.py output)")
     ap.add_argument("--raw", type=Path, default=None,
-                    help="optional raw episode dir (e.g. Dataset3) for frame-timestamp regularity")
+                    help="optional raw episode dir (e.g. datasets/dataset3) for frame-timestamp regularity")
     args = ap.parse_args()
 
     if not (args.dataset / "data").is_dir():

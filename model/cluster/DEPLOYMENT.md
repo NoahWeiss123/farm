@@ -45,7 +45,7 @@ Trained and on HF (`step-19999`). The serve job auto-resolves the checkpoint
 ```bash
 USER_NAME=<your-cluster-username>
 POD=$(kubectl get pod -n slurm -l stanford/user=${USER_NAME} -o jsonpath='{.items[0].metadata.name}')
-kubectl cp tools/cluster/serve_pi05.sbatch slurm/$POD:/home/$USER_NAME/farm-train/serve_pi05.sbatch -c login
+kubectl cp model/cluster/serve_pi05.sbatch slurm/$POD:/home/$USER_NAME/farm-train/serve_pi05.sbatch -c login
 ```
 (`.hf_env` from training is already on the pod and is only used if the HF-download fallback runs.)
 
@@ -79,7 +79,7 @@ source .venv/bin/activate && farm serve     # arm + cameras on http://127.0.0.1:
 ### F. Run the control loop
 ```bash
 # Dry-run first (prints joint targets, does NOT move the arm) — always verify before live:
-python tools/eval_pi05.py \
+python model/eval_pi05.py \
     --task "Picking up the bottle and placing it on the box" \
     --policy-url ws://127.0.0.1:8000 \
     --daemon-url http://127.0.0.1:8787 \

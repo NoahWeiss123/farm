@@ -11,7 +11,7 @@ mismatch.
 
 Usage::
 
-    python tools/eval_pi05_episode_check.py \\
+    python model/eval_pi05_episode_check.py \\
         --policy-url ws://127.0.0.1:8000 \\
         --episode 0 \\
         --frames 0,30,60,120,200
@@ -98,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--policy-url", default="ws://127.0.0.1:8000")
     ap.add_argument("--episode", type=int, default=0,
-                    help="episode_index to load from datasets_lerobot")
+                    help="episode_index to load from datasets/lerobot")
     ap.add_argument(
         "--frames", default="0,20,60,120",
         help="comma-separated frame indices to probe",

@@ -14,7 +14,7 @@ GET  /v1/policy/prompt          — current language prompt for the eval client
 POST /v1/policy/prompt          — {prompt: str} (dashboard input field)
 GET  /v1/policy/heartbeat       — last heartbeat the eval client posted
 POST /v1/policy/heartbeat       — eval client → daemon: alive + policy server health
-POST /v1/policy/run             — spawn tools/eval_pi05.py (live by default)
+POST /v1/policy/run             — spawn model/eval_pi05.py (live by default)
 POST /v1/policy/stop            — SIGTERM the eval subprocess
 GET  /v1/policy/run/state       — {running, pid, exit_code?, args, log[]}
 POST /v1/teleop/estop           — software emergency stop
@@ -253,7 +253,7 @@ async def get_policy_prompt(request: web.Request) -> web.Response:
     """Return the latest language prompt set from the dashboard input.
 
     The prompt lives in app state (not on the backend) — it's a hint for
-    the external eval client (``tools/eval_pi05.py``), not arm state.
+    the external eval client (``model/eval_pi05.py``), not arm state.
     Empty string means the dashboard hasn't set one yet; the eval client
     falls back to its ``--task`` CLI default in that case.
     """
@@ -335,7 +335,7 @@ def _drain_eval_output(proc: subprocess.Popen, log_deque: collections.deque[str]
 
 
 async def post_policy_run(request: web.Request) -> web.Response:
-    """Spawn ``tools/eval_pi05.py`` as a subprocess. Body fields override
+    """Spawn ``model/eval_pi05.py`` as a subprocess. Body fields override
     defaults; all optional::
 
         {
@@ -1050,7 +1050,7 @@ def build_app(*, backend: RobotBackend | None = None) -> web.Application:
     app["bus"] = bus
     app["supervisor"] = supervisor
     app["recorder"] = recorder
-    # Live-typed language prompt for the eval client (tools/eval_pi05.py).
+    # Live-typed language prompt for the eval client (model/eval_pi05.py).
     # See get_policy_prompt / post_policy_prompt.
     app["policy_prompt"] = ""
     # Most recent eval-client heartbeat (raw dict + server_ts). See the

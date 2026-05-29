@@ -1,4 +1,4 @@
-# farm-quest
+# Quest teleop client
 
 Quest 3 VR client for FARM. Passthrough view + right controller pose
 published to the FARM daemon over WiFi. Forked from the parent project's
@@ -30,10 +30,10 @@ Requires Unity 6000.2.13f1 (the parent project's version — override with
 in Unity Hub.
 
 ```bash
-cd farm-quest
+cd teleop/quest
 
 # 1) Start the FARM daemon on this Mac
-(cd ../farm-edge-agent && farm serve --backend xarm --arm-ip 192.168.1.220 --no-envelope)
+(cd ../edge-agent && farm serve --backend xarm --arm-ip 192.168.1.220 --no-envelope)
 
 # 2) Build + deploy + launch the APK on the paired Quest 3
 ./build.sh install run
@@ -57,7 +57,7 @@ isn't reaching the bridge — same WiFi network, no firewall on :10000.
 ## Folder layout
 
 ```
-farm-quest/
+teleop/quest/
 ├── build.sh                       # macOS → APK + adb install
 ├── UnityProject/
 │   ├── Assets/

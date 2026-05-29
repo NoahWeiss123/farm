@@ -2,7 +2,7 @@
 
 Deploy:
     pip install modal && modal token new
-    modal deploy farm-cloud/modal/pi05_serve.py
+    modal deploy model/cloud/modal/pi05_serve.py
 
 The deploy command prints a URL like
     https://<your-workspace>--farm-pi05-infer.modal.run

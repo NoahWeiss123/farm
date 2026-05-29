@@ -5,7 +5,7 @@ Audit done 2026-05-29 against the deployed full-FT `pi05_farm_uf850`
 tasks, **complete failure** outside training, and **jittery** motion.
 
 Everything below was found by static review + local data analysis
-(`tools/analyze_dataset.py`) — no GPU required. The training-recipe changes
+(`model/analyze_dataset.py`) — no GPU required. The training-recipe changes
 are validated for *syntax* only; they must be confirmed on the cluster.
 
 ## TL;DR
@@ -18,16 +18,16 @@ are validated for *syntax* only; they must be confirmed on the cluster.
 | **4. More diverse data** (more objects/verbs) | data collection | the only real fix for *broad* generality |
 | **5. Tuned RTC alone for smoothness** | serve flag | ↓ jitter at chunk seams |
 
-**Three fine-tuning architectures are now set up** in `tools/cluster/`, all
+**Three fine-tuning architectures are now set up** in `model/cluster/`, all
 directly comparable (same base, data, action contract, serve/eval path):
 `pi05_farm_uf850` (full FT, the current ~30% model), `pi05_farm_uf850_lora`
 (LoRA — preserves the base), and `pi05_farm_uf850_gse` (VLA-GSE — SVD spectral
 experts, the principled middle ground; see `openpi_gse.py`). Train each with its
-sbatch and compare on held-out + novel positions. See `tools/cluster/README.md`.
+sbatch and compare on held-out + novel positions. See `model/cluster/README.md`.
 
 ## What is NOT wrong (ruled out)
 
-Run `python tools/analyze_dataset.py --dataset datasets_lerobot/farm_uf850_bottle --raw Dataset3`:
+Run `python model/analyze_dataset.py --dataset datasets/lerobot/farm_uf850_bottle --raw datasets/dataset3`:
 
 - **Action labels are correct.** `action[t] == state[t+1]` to 0.00e+00 — no
   off-by-one, absolute next-state joint targets exactly as the config expects.
@@ -79,14 +79,14 @@ uv run python ~/farm-train/offline_eval.py ~/farm-train/eval_episode
 ```
 
 **Fix B (1 GPU): LoRA fine-tune.** Added as `pi05_farm_uf850_lora`
-(`tools/cluster/patch_openpi_config_pi05_lora.py`, registered by `setup.sh`).
+(`model/cluster/patch_openpi_config_pi05_lora.py`, registered by `setup.sh`).
 Freezes the backbone, trains low-rank adapters → preserves the base. Fits on a
 single H100, so it respects the shared-cluster gpu:1 norm. Same serve/eval path
 (action_horizon=10, absolute actions) — no client changes.
 
 ```bash
 # after setup.sh has registered it:
-sbatch tools/cluster/train_pi05_lora.sbatch        # → NoahWeiss/farm_uf850_pi05_lora
+sbatch model/cluster/train_pi05_lora.sbatch        # → NoahWeiss/farm_uf850_pi05_lora
 ```
 
 The full-FT config is unchanged and still the default — LoRA is opt-in so you

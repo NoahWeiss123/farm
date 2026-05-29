@@ -83,7 +83,7 @@ and the eval client (this script) runs on the laptop. Connect them with
 
 5. Run this script::
 
-       python tools/eval_pi05.py --task "Picking up the bottle and placing it on the box" \\
+       python model/eval_pi05.py --task "Picking up the bottle and placing it on the box" \\
            --policy-url ws://127.0.0.1:8000 \\
            --dry-run
 

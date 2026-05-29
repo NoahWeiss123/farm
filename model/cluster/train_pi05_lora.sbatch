@@ -5,7 +5,7 @@
 # LoRA freezes the ~3.3B pretrained backbone and trains low-rank adapters, so
 # π0.5's pretrained priors survive a 2-task transfer (the full FT memorizes the
 # two trajectories and erodes them). See patch_openpi_config_pi05_lora.py and
-# tools/FINDINGS.md for the why.
+# model/FINDINGS.md for the why.
 #
 # Sized for 1× H100 — a π0.5 LoRA fits on one 80GB GPU (no FSDP), which is the
 # polite default on the shared cluster. ~10k steps; checkpoints every 2k.

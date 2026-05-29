@@ -3,7 +3,7 @@
 #
 # THIS IS THE STEP THAT ACTIVATES A GPU. Everything else (model staged,
 # client ready, network path documented) is set up ahead of this — see
-# tools/cluster/DEPLOYMENT.md. Submit this only when you're ready to run.
+# model/cluster/DEPLOYMENT.md. Submit this only when you're ready to run.
 #
 # Sized for 1× H100 — batch-1 inference of a ~3.3B π0.5 is trivial; the
 # whole node isn't needed. 4h walltime (resubmit for longer sessions).

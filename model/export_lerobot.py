@@ -23,9 +23,9 @@ Features:
 
 Run::
 
-    python tools/export_lerobot.py \\
-        --src Dataset3 \\
-        --out datasets_lerobot/farm_uf850_bottle \\
+    python model/export_lerobot.py \\
+        --src datasets/dataset3 \\
+        --out datasets/lerobot/farm_uf850_bottle \\
         --fps 30
 """
 from __future__ import annotations

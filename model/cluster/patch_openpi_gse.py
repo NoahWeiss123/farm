@@ -17,7 +17,7 @@ Idempotent, self-verifying (py_compiles every file it touches). Run this BEFORE
    SVD-initializes the attention-input GSE adapters and adjusts the backbone.
 
 See ``openpi_gse.py`` for the method. NOTE: syntax-validated only (no GPU here);
-run the smoke test in ``tools/FINDINGS.md`` before a full training run.
+run the smoke test in ``model/FINDINGS.md`` before a full training run.
 """
 from __future__ import annotations
 

@@ -58,7 +58,7 @@ TRAIN_CONFIG_INSERT = f'''    #
     # transfer. Fits on ONE H100 (no fsdp_devices) — set the sbatch to
     # --gres=gpu:1 when training this. Absolute actions + continuous state +
     # action_horizon=10, identical to the full-FT config so the same
-    # serve/eval path (tools/eval_pi05.py) works unchanged.
+    # serve/eval path (model/eval_pi05.py) works unchanged.
     TrainConfig(
         name="pi05_farm_uf850_lora",
         model=pi0_config.Pi0Config({_MODEL_KWARGS}),
