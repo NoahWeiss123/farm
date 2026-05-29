@@ -12,4 +12,4 @@ cd /home/nhweiss/farm-train/openpi
 srun --container-image='nvcr.io#nvidia/pytorch:24.12-py3' \
      --container-mounts=/home/nhweiss:/home/nhweiss \
      --container-workdir=/home/nhweiss/farm-train/openpi \
-     bash -lc 'set -e; export HOME=/home/nhweiss; export JAX_PLATFORMS=cuda; export TF_CPP_MIN_LOG_LEVEL=3; pip install -q uv 2>/dev/null; cd /home/nhweiss/farm-train/openpi; uv run python /home/nhweiss/farm-train/rtc_unit_test.py'
+     bash -lc 'set -e; export HOME=/home/nhweiss; export JAX_PLATFORMS=cuda; export TF_CPP_MIN_LOG_LEVEL=3; pip install -q uv 2>/dev/null; cd /home/nhweiss/farm-train/openpi; uv run python /home/nhweiss/farm-train/unit_test.py'

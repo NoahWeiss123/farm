@@ -26,7 +26,7 @@ the soft region, while the plain chunk deviates freely — biggest at the seam
 Runs on the login pod (reaches the serve node directly), openpi env, PIL for
 JPEGs (no ffmpeg needed):
 
-    uv run python rtc_offline_check.py /home/nhweiss/farm-train/eval_episode \\
+    uv run python offline_check.py /home/nhweiss/farm-train/eval_episode \\
         --host slinky-3 --offset 3 --delay 2
 """
 import argparse

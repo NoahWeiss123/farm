@@ -13,7 +13,7 @@ the model's sampling variance. Tests both the eager model method and the jitted
 policy._sample_actions (exactly what Policy.infer calls).
 
 Run on a GPU:
-  srun --gres=gpu:1 --container-image=... uv run python rtc_unit_test.py
+  srun --gres=gpu:1 --container-image=... uv run python unit_test.py
 """
 import jax
 import jax.numpy as jnp
