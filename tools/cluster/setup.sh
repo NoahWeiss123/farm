@@ -59,6 +59,13 @@ python3 "$WORK/patch_openpi_config_pi05.py"
 if [[ -f "$WORK/patch_openpi_config_pi05_lora.py" ]]; then
   python3 "$WORK/patch_openpi_config_pi05_lora.py"
 fi
+# Register the GSE variant (opt-in). Installs the GSE module + wiring
+# (patch_openpi_gse.py needs openpi_gse.py staged beside it) then the config.
+# Both idempotent + self-py_compile. Train it with train_pi05_gse.sbatch.
+if [[ -f "$WORK/patch_openpi_gse.py" && -f "$WORK/openpi_gse.py" ]]; then
+  python3 "$WORK/patch_openpi_gse.py" --openpi-root "$WORK/openpi"
+  python3 "$WORK/patch_openpi_config_pi05_gse.py"
+fi
 
 # 4) Verify the patch is syntactically valid and the config name landed.
 #    py_compile checks syntax WITHOUT importing openpi's heavy deps
@@ -75,6 +82,9 @@ done
 echo "    ok: pi05_farm_uf850 + LeRobotFarmDataConfig registered, config.py compiles"
 if grep -q '"pi05_farm_uf850_lora"' "$OPENPI_CONFIG_PY"; then
   echo "    ok: pi05_farm_uf850_lora (LoRA variant) also registered"
+fi
+if grep -q '"pi05_farm_uf850_gse"' "$OPENPI_CONFIG_PY"; then
+  echo "    ok: pi05_farm_uf850_gse (GSE variant) also registered"
 fi
 
 # 5) Stash the HF token in a private env file the sbatch script sources.
