@@ -13,10 +13,17 @@ are validated for *syntax* only; they must be confirmed on the cluster.
 | Lever | Effort | Expected impact |
 |---|---|---|
 | **1. Pick an earlier checkpoint** (5k/10k vs 19999) | none (ckpts exist) | ↑ generalization, ↓ canned-motion, ↓ jitter |
-| **2. LoRA fine-tune instead of full FT** | 1 GPU run | ↑↑ OOD generalization, ↓ memorization |
+| **2. Compare 3 fine-tunes** (full FT / LoRA / **GSE**) | 1 GPU each | preserve the base → ↑↑ OOD generalization, ↓ memorization |
 | **3. Prompt/paraphrase augmentation** | data/transform | ↑ language generalization |
 | **4. More diverse data** (more objects/verbs) | data collection | the only real fix for *broad* generality |
 | **5. Tuned RTC alone for smoothness** | serve flag | ↓ jitter at chunk seams |
+
+**Three fine-tuning architectures are now set up** in `tools/cluster/`, all
+directly comparable (same base, data, action contract, serve/eval path):
+`pi05_farm_uf850` (full FT, the current ~30% model), `pi05_farm_uf850_lora`
+(LoRA — preserves the base), and `pi05_farm_uf850_gse` (VLA-GSE — SVD spectral
+experts, the principled middle ground; see `openpi_gse.py`). Train each with its
+sbatch and compare on held-out + novel positions. See `tools/cluster/README.md`.
 
 ## What is NOT wrong (ruled out)
 
@@ -136,8 +143,37 @@ Validate RTC on **uncertain** obs (it has little to fix on confident
 in-distribution frames). See `project_rtc_smooth_motion` notes.
 
 ## Suggested experiment order
-1. Eval checkpoints 5k/10k/15k/19999 → pick best on held-out + novel positions. *(no GPU-train)*
-2. `sbatch train_pi05_lora.sbatch` → A/B LoRA vs the chosen full-FT checkpoint.
+1. Eval the existing full-FT checkpoints 5k/10k/15k/19999 → pick best on held-out
+   + novel positions. *(no GPU-train; checkpoints already on HF)*
+2. Train + compare the three architectures and pick the winner on held-out:
+   `sbatch train_pi05_lora.sbatch`, `sbatch train_pi05_gse.sbatch`
+   (GSE: run the smoke test below first), vs the chosen full-FT checkpoint.
 3. If language is the gap, add prompt-paraphrase aug and retrain the winner.
 4. Collect more diverse demos — this is the lever for true generality.
 5. Only after the policy is solid: re-enable tuned RTC for the last bit of smoothness.
+
+## GSE smoke test (run before the full GSE training run)
+
+The GSE integration (`openpi_gse.py` + `patch_openpi_gse.py`) is validated for
+**syntax** (every patched openpi file py-compiles) and for **math** (the SVD
+init exactly reconstructs each weight block to ~1e-14, verified against all
+Gemma einsum equations; the dense forward equals the base at init). It is **not
+yet GPU-tested**. Before committing a multi-hour run, confirm it builds and
+takes a few optimization steps on one GPU:
+
+```bash
+# on the login pod, after setup.sh registered pi05_farm_uf850_gse:
+srun --partition=small --gres=gpu:1 --cpus-per-task=16 \
+  --container-image='nvcr.io#nvidia/pytorch:24.12-py3' \
+  --container-mounts="$HOME:$HOME" --container-workdir="$HOME/farm-train/openpi" \
+  bash -lc 'export HOME='"$HOME"'; export JAX_PLATFORMS=cuda; pip install -q uv; uv sync --frozen;
+    uv run scripts/compute_norm_stats.py --config-name=pi05_farm_uf850_gse;
+    uv run python scripts/train.py pi05_farm_uf850_gse --exp-name=gse_smoke \
+        --overwrite --no-wandb-enabled --num-train-steps=5'
+```
+
+Expect: model builds, `GSESVDWeightLoader` runs the SVD init, 5 steps log a
+finite decreasing loss. If a shape/JIT error appears it will be in the GSE
+adapter wiring — the most likely spots are the routed path (which defaults OFF;
+keep `route=False`) and the FFN adapters. The dense (non-routed) attention path
+is the validated core.
