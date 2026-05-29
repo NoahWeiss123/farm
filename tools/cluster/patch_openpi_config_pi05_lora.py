@@ -75,20 +75,22 @@ TRAIN_CONFIG_INSERT = f'''    #
         freeze_filter=pi0_config.Pi0Config({_MODEL_KWARGS}).get_freeze_filter(),
         # EMA off for LoRA (matches openpi's *_lora templates).
         ema_decay=None,
-        # batch 32 fits a single 80GB H100 for a π0.5 LoRA. 10k steps ≈ 5.4
-        # epochs over 59,183 frames — enough for adapters to fit 2 tasks
-        # without the over-training the 21-epoch full-FT run does.
+        # batch 32 fits a single 80GB H100 for a π0.5 LoRA. 18k steps ≈ 9.7
+        # epochs over 59,183 frames — PEFT adapters need more passes to adapt
+        # than a full FT, and with the backbone frozen they overfit far less,
+        # so a higher epoch budget than full-FT's 21 is safe. Checkpoints every
+        # 3k let you select the best (don't assume the last is best).
         batch_size=32,
-        num_train_steps=10_000,
+        num_train_steps=18_000,
         lr_schedule=_optimizer.CosineDecaySchedule(
-            warmup_steps=500,
+            warmup_steps=750,
             peak_lr=1e-4,
-            decay_steps=10_000,
+            decay_steps=18_000,
             decay_lr=1e-5,
         ),
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
-        save_interval=2_000,
-        keep_period=2_000,
+        save_interval=3_000,
+        keep_period=3_000,
         num_workers=16,
     ),
 '''

@@ -73,21 +73,24 @@ TRAIN_CONFIG_INSERT = '''    #
             action_expert_variant="gemma_300m",
         ).get_freeze_filter(),
         ema_decay=None,
+        # batch 32 on one H100. 18k steps ≈ 9.7 epochs — same budget as the
+        # LoRA config for a fair comparison; PEFT overfits little with the
+        # backbone frozen. Checkpoints every 3k for selection.
         batch_size=32,
-        num_train_steps=10_000,
+        num_train_steps=18_000,
         # Single LR (3e-5) — a compromise between the paper's decoupled GSE
         # (1e-5) and action-head (1e-4) rates, which openpi's single-schedule
         # optimizer doesn't separate. Gentle enough to adapt the SVD subspace
         # without destabilizing it; decoupling is a documented refinement.
         lr_schedule=_optimizer.CosineDecaySchedule(
-            warmup_steps=500,
+            warmup_steps=750,
             peak_lr=3e-5,
-            decay_steps=10_000,
+            decay_steps=18_000,
             decay_lr=3e-6,
         ),
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
-        save_interval=2_000,
-        keep_period=2_000,
+        save_interval=3_000,
+        keep_period=3_000,
         num_workers=16,
     ),
 '''
