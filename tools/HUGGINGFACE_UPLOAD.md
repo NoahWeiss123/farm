@@ -91,7 +91,8 @@ so once the dataset is on the Hub there's nothing else to wire up. Follow
 
 ```bash
 # on the login pod, after staging the launcher files + running setup.sh:
-sbatch ~/farm-train/train_pi05.sbatch     # π0.5 FULL fine-tune, 4× H100
+sbatch ~/farm-train/train_pi05.sbatch     # π0.5 FULL fine-tune, 8× H100
+# or train_pi05_lora.sbatch / train_pi05_gse.sbatch (1 GPU each) — see cluster/README.md
 ```
 
 The GPU node only **pulls** the dataset and runs `compute_norm_stats.py`
