@@ -40,6 +40,13 @@ Run `python tools/analyze_dataset.py --dataset datasets_lerobot/farm_uf850_bottl
 all 6 RGB channels. Harmless: openpi recomputes its own norm stats and
 normalizes images inside the vision tower, so it never reads those.)
 
+Minor data hygiene (cheap, low impact): one episode is only 31 frames (likely
+an aborted demo — consider dropping it), and episodes carry ~8 leading idle
+frames on average (the arm sitting still before motion). Trimming leading idle
+in `export_lerobot.py` would slightly sharpen start-of-episode behavior. Image
+exposure is excellent and consistent (brightness σ≈0.017, no dark/bright
+outliers), so lighting/camera is not a factor.
+
 ## Root causes (ranked)
 
 ### 1 & 2 — Full fine-tune of 3.3B π0.5 on 2 tasks → memorization + forgetting
@@ -80,10 +87,22 @@ can A/B them. If LoRA *underfits* the trained tasks (offline_eval MAE stays
 high), the backbone genuinely needs to move for this embodiment → go back to
 full FT but with an earlier checkpoint and/or fewer steps.
 
-### 3 — Prompt overfitting (2 fixed strings)
+### 3 — Prompt overfitting (2 fixed strings), and the tasks alias at the boundaries
 Training sees only the 2 exact task strings, so the language pathway
-degenerates and novel phrasings are out-of-distribution. Add paraphrase
-augmentation: keep several rephrasings per task and sample one per example
+degenerates and novel phrasings are out-of-distribution.
+
+This is *especially* damaging here because **the two tasks are visually
+ambiguous at their endpoints** (from `/tmp` deep analysis, now folded into the
+diagnosis): every episode starts AND ends with the gripper open (~0.001), start
+poses overlap (|Δmean|/σ < 0.4 on all joints), and the end-state of task 0
+(bottle on the box, gripper open) is essentially the *start-state* of task 1.
+So "place it on the box" vs "move it to the desk" can only be told apart by the
+**prompt** — and full FT erodes exactly the language conditioning that has to
+make that call. Preserving the base (fix 2) + paraphrase aug (below) together
+protect this.
+
+Add paraphrase augmentation: keep several rephrasings per task and sample one
+per example
 (e.g. "put the bottle on the box", "place the bottle onto the box", "pick up
 the bottle and set it on the box"). Cleanest insertion point is a small
 prompt-rewrite transform in `LeRobotFarmDataConfig.create` (prepend to the
