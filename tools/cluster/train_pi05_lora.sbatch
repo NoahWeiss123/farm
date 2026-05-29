@@ -21,7 +21,7 @@
 #SBATCH --partition=small
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=32
-#SBATCH --time=06:00:00
+#SBATCH --time=10:00:00
 #SBATCH --output=train-lora-%j.out
 
 set -euo pipefail
