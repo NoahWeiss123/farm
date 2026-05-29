@@ -1,11 +1,13 @@
-Drop this file at the root of your project repo so Claude Code (or any AI coding assistant) understands the cluster environment you're working on. Edit the `nhweiss` line before checking in.
+# Cluster environment
 
----
+Context for working on FARM's cluster code (`tools/cluster/`): how to reach the
+CS153 H100 cluster and run training/serving jobs. All GPU work goes through
+`sbatch`; the login pod is a CPU shell reached via `kubectl exec`.
 
 ## Environment
 
 - **Cluster**: shared 32× H100 SLURM cluster, 4 nodes × 8 GPUs (H100 80GB HBM3).
-- **My username on the cluster**: `nhweiss` ← edit this
+- **My username on the cluster**: `nhweiss`
 - **My home directory**: `/home/nhweiss` (on a shared Weka filesystem mounted on the login pod and all workers).
 - **Access**: via Omniva-issued kubeconfig. Connection model is `kubectl exec` into my LoginSet pod; there is no SSH and no port-forward to external services.
 - **My login pod selector**: `kubectl get pod -n slurm -l stanford/user=nhweiss`

@@ -4,13 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-FARM — a UF850 sim + teleop harness. CS153 final project.
+FARM — a UF850 teleop + π0.5 imitation-learning harness. CS153 final project.
 
-The previous incarnation (GPT planner → Pi0.5 → safety gates → arm) was
-deleted on 2026-05-25 in favor of a leaner laptop side: a clean MuJoCo
-sim, a webviz-style browser dashboard, and a ROS-TCP-Endpoint bridge
-wired up so a Quest VR teleop client can plug in unmodified. The Quest
-client itself is a separate workstream.
+The loop: VR-teleop the arm to record demos (`farm serve` + the Quest
+client) → export to a LeRobot dataset → fine-tune π0.5 on the H100
+cluster → serve the checkpoint and drive the arm from the policy. The
+laptop side is a clean MuJoCo sim (stand-in for the arm), an aiohttp
+dashboard + episode-review app, and a ROS-TCP-Endpoint bridge the Quest
+client speaks to. The model pipeline (export, cluster training, eval)
+lives in `tools/` — see `tools/README.md` and `tools/FINDINGS.md`.
+
+Note: an *older* planner stack (GPT planner → Pi0.5 → safety gates → arm)
+was deleted on 2026-05-25; the current π0.5 work is an imitation-learning
+fine-tune in `tools/`, unrelated to that removed code (see "What was
+deleted" below).
 
 ## Common commands
 
@@ -31,15 +38,25 @@ ruff check --fix .
 
 ## Architecture
 
-Two Python packages.
+Two Python packages, plus the Quest client, the model tooling, and an
+optional cloud server.
 
-### Packages
+### Packages & components
 
-- **`farm-edge-agent/`** — the daemon. Owns: the MuJoCo sim, the HTTP/SSE
-  server (aiohttp), the ROS-TCP-Endpoint wire bridge, the browser
-  dashboard, the CLI.
+- **`farm-edge-agent/`** — the daemon (`farm serve`). Owns: the MuJoCo sim,
+  the real-arm (xArm) backend, the HTTP/SSE server (aiohttp), the
+  ROS-TCP-Endpoint wire bridge, the dashboard + episode-review app, the
+  teleop recorder, the CLI.
 - **`farm-shared/`** — shared error catalog (`ErrorCode` enum with
   format-string templates).
+- **`farm-quest/`** — Quest VR teleop client (Unity); publishes controller
+  poses over ROS-TCP. Fix it in place (don't resurrect the old standalone
+  collector project).
+- **`tools/`** — model workstream: `export_lerobot.py`, `analyze_dataset.py`,
+  `eval_pi05.py`, and `cluster/` (the three π0.5 fine-tune configs — full FT,
+  LoRA, GSE — + serve). See `tools/README.md`.
+- **`farm-cloud/`** — optional Modal-hosted policy server (alternative to the
+  cluster serve job).
 
 ### Key directories
 
@@ -94,15 +111,20 @@ that strips AI tells.
 
 ## Scope discipline
 
-Most work happens in `farm-edge-agent/`. The error catalog in
-`farm-shared/` rarely changes. If you add a new error code there, update
-the severity map in `farm_edge_agent/errors.py` too.
+Daemon work happens in `farm-edge-agent/`; model/training work in `tools/`
+(the cluster scripts patch a separate openpi checkout — they don't import
+the daemon). The error catalog in `farm-shared/` rarely changes; if you add
+a new error code there, update the severity map in
+`farm_edge_agent/errors.py` too. Datasets live on the HF Hub, not in git
+(`Dataset*/`, `datasets_lerobot/` are gitignored).
 
 ## What was deleted (2026-05-25 rewrite)
 
-Removed during the laptop-side rewrite: the GPT planner, Pi0.5 client,
-skill library, safety gates, run loop, recovery primitives, and the
-original 834-line MuJoCo SimDriver. If you reach for any of those, you're
-probably looking at the wrong shape — they'll come back as separate
-modules (or not) once the new sim and teleop bridge settle. Don't
-resurrect deleted code in place; design fresh.
+Removed during the laptop-side rewrite: the GPT **planner**, the old Pi0.5
+*planner* client, skill library, safety gates, run loop, recovery
+primitives, and the original 834-line MuJoCo SimDriver. Don't resurrect
+that deleted code in place; design fresh.
+
+(The current π0.5 work in `tools/` is unrelated — it's a fresh imitation-
+learning fine-tune of the policy on teleop demos, not the removed
+planner→policy→safety stack.)
