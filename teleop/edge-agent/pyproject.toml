@@ -8,7 +8,7 @@ version = "0.0.1"
 description = "FARM Edge Agent — Pi0.5 + UFactory 850 agent harness."
 requires-python = ">=3.12"
 dependencies = [
-    "farm-shared @ {root:uri}/../farm-shared",
+    "farm-shared @ {root:uri}/../../shared",
     "click>=8.1",
     "pydantic>=2.7",
     "pyyaml>=6.0",
@@ -36,6 +36,6 @@ allow-direct-references = true
 packages = ["src/farm_edge_agent", "src/farm"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src", "../farm-shared/src"]
+pythonpath = ["src", "../../shared/src"]
 testpaths = ["tests"]
 asyncio_mode = "auto"

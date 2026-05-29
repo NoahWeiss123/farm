@@ -141,7 +141,7 @@ def report_raw_timing(raw: Path, limit: int = 80) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--dataset", type=Path, default=Path("datasets_lerobot/farm_uf850_bottle"),
+    ap.add_argument("--dataset", type=Path, default=Path("datasets/lerobot/farm_uf850_bottle"),
                     help="LeRobot v2.0 dataset dir (export_lerobot.py output)")
     ap.add_argument("--raw", type=Path, default=None,
                     help="optional raw episode dir (e.g. Dataset3) for frame-timestamp regularity")

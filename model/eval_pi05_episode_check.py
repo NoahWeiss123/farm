@@ -37,7 +37,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from eval_pi05 import WebSocketPolicy  # noqa: E402
 
-DATASET_ROOT = HERE.parent / "datasets_lerobot" / "farm_uf850_bottle"
+DATASET_ROOT = HERE.parent / "datasets" / "lerobot" / "farm_uf850_bottle"
 JOINT_NAMES = ("j1", "j2", "j3", "j4", "j5", "j6", "grip")
 
 

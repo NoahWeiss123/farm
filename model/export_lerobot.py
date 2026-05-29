@@ -126,8 +126,8 @@ def scalar_stats(arr: np.ndarray) -> dict[str, Any]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--src", type=Path, default=Path("Dataset3"))
-    ap.add_argument("--out", type=Path, default=Path("datasets_lerobot/farm_uf850_bottle"))
+    ap.add_argument("--src", type=Path, default=Path("datasets/dataset3"))
+    ap.add_argument("--out", type=Path, default=Path("datasets/lerobot/farm_uf850_bottle"))
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--robot-type", default="uf850")
     ap.add_argument("--force", action="store_true",

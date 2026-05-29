@@ -57,12 +57,15 @@ SSE_HEADERS = {
     "X-Accel-Buffering": "no",
 }
 
-WEB_DIR = Path(__file__).resolve().parents[1] / "web"
-# parents: server → farm_edge_agent → src → farm-edge-agent → CS153 repo
+# parents: server → farm_edge_agent → src → edge-agent → teleop → repo root
+REPO_ROOT = Path(__file__).resolve().parents[5]
+# URDF + STL meshes ship inside the package (edge-agent/assets/…).
 ASSETS_DIR = Path(__file__).resolve().parents[3] / "assets"
-DATASETS_DIR = Path(__file__).resolve().parents[4] / "Dataset3"
-REPO_ROOT = Path(__file__).resolve().parents[4]
-EVAL_SCRIPT = REPO_ROOT / "tools" / "eval_pi05.py"
+# The dashboard lives at the repo-level ui/ folder; the daemon serves it from there.
+UI_DIR = REPO_ROOT / "ui"
+# Teleop recordings land here (gitignored, under the consolidated datasets/ dir).
+DATASETS_DIR = REPO_ROOT / "datasets" / "dataset3"
+EVAL_SCRIPT = REPO_ROOT / "model" / "eval_pi05.py"
 _VALID_AXES = {"x", "y", "z", "rx", "ry", "rz"}
 DEFAULT_STEP_MM = 5.0
 DEFAULT_STEP_RAD = math.radians(2.0)
@@ -993,7 +996,7 @@ async def clip_episode(request: web.Request) -> web.Response:
 
 
 async def serve_review(_: web.Request) -> web.Response:
-    review = WEB_DIR / "review.html"
+    review = UI_DIR / "review.html"
     if not review.is_file():
         return web.Response(text="review app missing (web/review.html)", status=500)
     return web.Response(body=review.read_bytes(), content_type="text/html")
@@ -1020,7 +1023,7 @@ async def delete_episode(request: web.Request) -> web.Response:
 
 
 async def serve_dashboard(_: web.Request) -> web.Response:
-    index = WEB_DIR / "index.html"
+    index = UI_DIR / "index.html"
     if not index.is_file():
         return web.Response(text="dashboard not built (missing web/index.html)", status=500)
     return web.Response(body=index.read_bytes(), content_type="text/html")
@@ -1126,8 +1129,8 @@ def build_app(*, backend: RobotBackend | None = None) -> web.Application:
     for route in routes:
         app.router.add_route(route.method, route.path, route.handler)
 
-    if WEB_DIR.is_dir():
-        app.router.add_static("/web/", path=str(WEB_DIR), show_index=False)
+    if UI_DIR.is_dir():
+        app.router.add_static("/ui/", path=str(UI_DIR), show_index=False)
     # Serve the URDF + STL meshes so the in-browser Three.js scene can load
     # them. The URDF references its meshes by relative path so this single
     # static route covers everything (uf850.urdf, meshes/visual/*.stl, etc.).

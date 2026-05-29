@@ -52,19 +52,18 @@ runs/
 checkpoints/
 *.mp4
 
-# Teleop episode recordings + converted datasets — hosted on the HF Hub
-# (NoahWeiss/farm_uf850_bottle), not in git. The recorder writes to
-# Dataset*/; export_lerobot.py emits datasets_lerobot/.
-Dataset*/
-datasets/
-datasets_lerobot/
+# All datasets — raw teleop recordings + LeRobot exports — live under
+# datasets/ and are hosted on the HF Hub (NoahWeiss/farm_uf850_bottle), not
+# in git. The recorder writes to datasets/dataset3/; export_lerobot.py emits
+# datasets/lerobot/.
+/datasets/
 *.parquet
 
 # Claude Code runtime lock (per-session, not source)
 .claude/scheduled_tasks.lock
 
 # Unity IL2CPP / CMake build intermediates (Quest Android build)
-farm-quest/UnityProject/.utmp/
+teleop/quest/UnityProject/.utmp/
 
 # Playwright session artifacts
 .playwright-mcp/

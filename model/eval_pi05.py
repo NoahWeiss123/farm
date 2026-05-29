@@ -129,7 +129,8 @@ DEFAULT_MOTION_SCALE = 0.25
 DEFAULT_MAX_STEPS = 1800
 DEFAULT_IMAGE_SHAPE = (224, 224)    # pi 0.5 paligemma vision tower input
 
-TASKS_PATH = Path(__file__).resolve().parent.parent / "datasets_lerobot" / "farm_uf850_bottle" / "meta" / "tasks.jsonl"
+_LEROBOT_ROOT = Path(__file__).resolve().parent.parent / "datasets" / "lerobot" / "farm_uf850_bottle"
+TASKS_PATH = _LEROBOT_ROOT / "meta" / "tasks.jsonl"
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
