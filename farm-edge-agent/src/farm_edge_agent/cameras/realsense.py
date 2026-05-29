@@ -89,6 +89,15 @@ class _CamProc:
     _LAST_START_T: float = 0.0
     MIN_INTER_START_GAP_S = 3.0
 
+    # Keep the most-recent good JPEG to serve during transient fetch
+    # failures (subprocess HTTP stall, 503 between pipeline restarts,
+    # empty-body race at startup). Without this, every blip lets the
+    # dashboard fall into its "no signal" path and the tile flickers.
+    # Short window: long enough to absorb a sub-frame stall, short
+    # enough that a real freeze becomes visible quickly instead of
+    # masquerading as a paused live feed.
+    STALE_CACHE_S = 2.0
+
     def __init__(
         self,
         serial: str,
@@ -107,6 +116,8 @@ class _CamProc:
         self._url_health = f"http://127.0.0.1:{self._port}/healthz"
         self._restarts = 0
         self._last_restart_t = 0.0
+        self._last_blob: bytes | None = None
+        self._last_blob_t: float = 0.0
 
     def start(self) -> None:
         argv = [
@@ -158,14 +169,29 @@ class _CamProc:
         """Fetch the latest JPEG bytes from the subprocess.
 
         Short timeout so a wedged subprocess doesn't stall the parent.
-        On error returns None — the HTTP layer above falls back to a
-        placeholder image rather than crashing.
+        On transient failure (timeout, 503 between pipeline restarts,
+        empty-body race during subprocess warmup) returns the last good
+        JPEG so the dashboard tile doesn't flicker — but only if the
+        cache is recent enough (``STALE_CACHE_S``); past that we report
+        the real failure so a dead camera goes visibly black.
         """
+        blob: bytes | None
         try:
             with urllib.request.urlopen(self._url_frame, timeout=1.0) as r:
-                return r.read()
+                blob = r.read()
         except Exception:
-            return None
+            blob = None
+        # Empty body = subprocess raced; treat the same as a failure.
+        if blob:
+            self._last_blob = blob
+            self._last_blob_t = time.time()
+            return blob
+        if (
+            self._last_blob is not None
+            and (time.time() - self._last_blob_t) < self.STALE_CACHE_S
+        ):
+            return self._last_blob
+        return None
 
 
 class RealsenseGrabber:
@@ -183,7 +209,7 @@ class RealsenseGrabber:
         *,
         width: int = 640,
         height: int = 480,
-        fps: int = 15,
+        fps: int = 30,
     ) -> None:
         devs = list_devices()
         if not devs:

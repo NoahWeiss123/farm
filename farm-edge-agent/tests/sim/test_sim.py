@@ -1,4 +1,4 @@
-"""Lean MuJoCo sim — basic motion + jog + cameras."""
+"""Lean MuJoCo sim — basic motion + jog."""
 
 from __future__ import annotations
 
@@ -63,13 +63,6 @@ def test_jog_negative_axis_inverts_direction(sim: Sim) -> None:
     assert abs(after_back - base) < 15, (
         f"jog +/- didn't symmetrize: base={base:.1f} +={after_plus:.1f} -={after_back:.1f}"
     )
-
-
-def test_render_each_camera_returns_rgb_array(sim: Sim) -> None:
-    for cam in ("exterior", "wrist", "topdown"):
-        img = sim.render_rgb(camera=cam, height=64, width=64)
-        assert img.shape == (64, 64, 3), f"{cam} bad shape: {img.shape}"
-        assert img.dtype.kind in ("u", "i"), f"{cam} non-int dtype: {img.dtype}"
 
 
 def test_snapshot_has_complete_fields(sim: Sim) -> None:

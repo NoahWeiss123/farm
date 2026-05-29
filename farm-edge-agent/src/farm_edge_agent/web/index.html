@@ -157,6 +157,132 @@
       border: 1px solid var(--soft); border-radius: 4px;
       background: #fff;
     }
+    /* ── Motion-ratio dropdown ──────────────────────────────────────── */
+    #motionScaleRow {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 8px; margin-top: 8px; font-size: 12px; color: var(--muted);
+    }
+    #motionScaleSel {
+      height: 28px; padding: 0 6px;
+      font-family: inherit; font-size: 12px; color: var(--text);
+      border: 1px solid var(--soft); border-radius: 4px;
+      background: #fff; cursor: pointer;
+    }
+    #motionScaleSel:focus { outline: 2px solid #888; outline-offset: -2px; }
+    /* ── Eval / Policy panel (bottom-left slide-in) ───────────────────── */
+    #evalPanelToggle {
+      position: fixed; bottom: var(--pad); left: var(--pad); z-index: 13;
+      height: 32px; padding: 0 14px;
+      font-family: inherit; font-size: 12px; letter-spacing: 0.04em;
+      background: #fff; color: var(--fg);
+      border: 1px solid var(--soft); border-radius: 4px;
+      cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+      display: inline-flex; align-items: center; gap: 8px;
+    }
+    #evalPanelToggle:hover { background: #f3f3f3; }
+    #evalPanelToggle .pt-dot {
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+      background: var(--muted);
+    }
+    #evalPanelToggle.healthy .pt-dot { background: #2da44e; }
+    #evalPanelToggle.warn .pt-dot    { background: #d99416; }
+    #evalPanelToggle.bad .pt-dot     { background: #b3261e; }
+    body.evalPanelOpen #evalPanelToggle { display: none; }
+    #evalPanel {
+      position: fixed; bottom: var(--pad); left: var(--pad); z-index: 12;
+      width: 340px; max-height: calc(100vh - 32px);
+      background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.18);
+      display: none; flex-direction: column; overflow: hidden;
+    }
+    body.evalPanelOpen #evalPanel { display: flex; }
+    #evalPanel .ep-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px; border-bottom: 1px solid var(--soft);
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 12px; font-weight: 600; letter-spacing: 0.04em;
+    }
+    #evalPanel .ep-head .ep-close {
+      width: 24px; height: 24px; padding: 0;
+      background: transparent; border: 0; cursor: pointer;
+      color: var(--muted); font-size: 18px; line-height: 1;
+    }
+    #evalPanel .ep-head .ep-close:hover { color: var(--fg); }
+    #evalPanel .ep-body {
+      padding: 12px 14px; display: flex; flex-direction: column; gap: 12px;
+      overflow-y: auto;
+    }
+    #evalPanel .ep-section-label {
+      font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--muted); margin-bottom: 4px;
+    }
+    #evalStatusList { display: flex; flex-direction: column; gap: 4px; }
+    .ep-stat {
+      display: grid; grid-template-columns: 12px 1fr auto;
+      align-items: center; gap: 8px;
+      padding: 4px 0;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 11px;
+    }
+    .ep-stat .ep-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--muted);
+    }
+    .ep-stat.ok    .ep-dot { background: #2da44e; }
+    .ep-stat.warn  .ep-dot { background: #d99416; }
+    .ep-stat.bad   .ep-dot { background: #b3261e; }
+    .ep-stat .ep-label { color: var(--fg); }
+    .ep-stat .ep-val   { color: var(--muted); text-align: right; }
+    .ep-stat.ok  .ep-val { color: #1a7f37; }
+    .ep-stat.bad .ep-val { color: #b3261e; }
+    /* ── Policy prompt input (lives inside the eval panel) ────────────── */
+    #promptInput {
+      width: 100%; box-sizing: border-box;
+      height: 30px; padding: 0 8px; margin-top: 4px;
+      font-family: inherit; font-size: 12px; color: var(--text);
+      border: 1px solid var(--soft); border-radius: 4px;
+      background: #fff;
+    }
+    #promptInput:focus { outline: 2px solid #888; outline-offset: -2px; }
+    #promptStatus {
+      margin-top: 6px; font-size: 11px; color: var(--muted);
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #promptStatus.set { color: var(--accent); }
+    /* ── Eval run/stop button + log tail ──────────────────────────────── */
+    #evalRunRow {
+      display: flex; gap: 8px; align-items: center; margin-top: 10px;
+    }
+    #evalRunBtn {
+      flex: 1; height: 32px; padding: 0 12px;
+      font-family: inherit; font-size: 12px; font-weight: 600;
+      letter-spacing: 0.04em;
+      border: 1px solid var(--soft); border-radius: 4px;
+      background: #fff; color: var(--fg); cursor: pointer;
+    }
+    #evalRunBtn:hover { background: #f3f3f3; }
+    #evalRunBtn.running {
+      background: #b3261e; color: #fff; border-color: #b3261e;
+    }
+    #evalRunBtn.running:hover { background: #a32d22; }
+    #evalRunBtn:disabled { opacity: 0.55; cursor: not-allowed; }
+    #evalRunMode {
+      width: 92px; height: 32px; padding: 0 6px;
+      font-family: inherit; font-size: 11px; color: var(--fg);
+      border: 1px solid var(--soft); border-radius: 4px;
+      background: #fff; cursor: pointer;
+    }
+    #evalLog {
+      margin-top: 8px;
+      max-height: 140px; overflow-y: auto;
+      padding: 8px;
+      background: #0a0a0a; color: #d6d6d6;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 10px; line-height: 1.5;
+      border-radius: 4px;
+      white-space: pre-wrap; word-break: break-all;
+    }
+    #evalLog:empty { display: none; }
     /* ── Smoothing (1€) stepper rows ──────────────────────────────────── */
     #filter .row { margin-top: 10px; }
     #filter .row:first-child { margin-top: 0; }
@@ -244,9 +370,9 @@
       white-space: pre; pointer-events: none;
     }
 
-    /* ── Bottom-left help ─────────────────────────────────────────────── */
+    /* ── Bottom-left help (nudged above the Eval/Policy toggle) ───────── */
     #help {
-      position: fixed; bottom: var(--pad); left: var(--pad);
+      position: fixed; bottom: calc(var(--pad) + 44px); left: var(--pad);
       color: rgba(0,0,0,0.4); font-size: 11px;
     }
 
@@ -300,17 +426,23 @@
     .ep-tile .meta .when { color: var(--muted); }
 
     /* ── Episode viewer modal ─────────────────────────────────────────── */
+    /* Docked to the right so the 3D scene stays visible to the left and
+       the replay can drive the URDF arm — see applyReplayFrame() below.
+       pointer-events:none on the wrapper lets orbit-controls keep working
+       through the empty area; the card re-enables pointer-events. */
     #viewer {
       position: fixed; inset: 0; z-index: 100; display: none;
-      align-items: center; justify-content: center;
-      background: rgba(20,20,20,0.55); padding: 24px;
+      align-items: stretch; justify-content: flex-end;
+      background: transparent; padding: 16px;
+      pointer-events: none;
     }
     #viewer.open { display: flex; }
     #viewer .vcard {
       background: var(--card); border: 1px solid var(--line); border-radius: 10px;
       box-shadow: 0 8px 30px rgba(0,0,0,0.25);
-      width: min(1080px, 100%); max-height: calc(100vh - 48px);
+      width: min(640px, 60vw); max-height: calc(100vh - 32px);
       display: flex; flex-direction: column; overflow: hidden;
+      pointer-events: auto;
     }
     #viewer .vhead {
       display: flex; align-items: center; justify-content: space-between;
@@ -463,6 +595,19 @@
       <button id="resetBtn" class="btn primary">Reset to home</button>
       <button id="gripperBtn" class="btn">Gripper: open</button>
       <button id="driveModeBtn" class="btn">Mode: digital only</button>
+      <div id="motionScaleRow">
+        <label for="motionScaleSel">Motion ratio</label>
+        <select id="motionScaleSel">
+          <option value="0.2">0.2 : 1</option>
+          <option value="0.5">0.5 : 1</option>
+          <option value="0.75">0.75 : 1</option>
+          <option value="1" selected>1 : 1</option>
+          <option value="1.5">1.5 : 1</option>
+          <option value="2">2 : 1</option>
+          <option value="3">3 : 1</option>
+          <option value="4">4 : 1</option>
+        </select>
+      </div>
     </div>
     <div class="section">
       <div class="section-label">Recording</div>
@@ -536,6 +681,85 @@
     </figure>
   </div>
   <button id="swapCamsBtn" title="swap which D435 is base vs wrist">⇆ swap</button>
+
+  <!-- ─── Eval / Policy panel (toggle + slide-in) ───────────────────────── -->
+  <button id="evalPanelToggle" title="open eval / policy panel">
+    <span class="pt-dot"></span> Eval
+  </button>
+  <div id="evalPanel" role="dialog" aria-label="Eval / Policy panel">
+    <div class="ep-head">
+      <span>Eval / Policy</span>
+      <button class="ep-close" id="evalPanelClose" title="close">×</button>
+    </div>
+    <div class="ep-body">
+      <div>
+        <div class="ep-section-label">Status</div>
+        <div id="evalStatusList">
+          <div class="ep-stat" data-stat="daemon">
+            <span class="ep-dot"></span>
+            <span class="ep-label">Daemon</span>
+            <span class="ep-val">…</span>
+          </div>
+          <div class="ep-stat" data-stat="arm">
+            <span class="ep-dot"></span>
+            <span class="ep-label">Arm</span>
+            <span class="ep-val">…</span>
+          </div>
+          <div class="ep-stat" data-stat="estop">
+            <span class="ep-dot"></span>
+            <span class="ep-label">E-stop</span>
+            <span class="ep-val">…</span>
+          </div>
+          <div class="ep-stat" data-stat="drive">
+            <span class="ep-dot"></span>
+            <span class="ep-label">Drive mode</span>
+            <span class="ep-val">…</span>
+          </div>
+          <div class="ep-stat" data-stat="camBase">
+            <span class="ep-dot"></span>
+            <span class="ep-label">Camera · base</span>
+            <span class="ep-val">…</span>
+          </div>
+          <div class="ep-stat" data-stat="camWrist">
+            <span class="ep-dot"></span>
+            <span class="ep-label">Camera · wrist</span>
+            <span class="ep-val">…</span>
+          </div>
+          <div class="ep-stat" data-stat="jointsEp">
+            <span class="ep-dot"></span>
+            <span class="ep-label">/v1/teleop/joints</span>
+            <span class="ep-val">…</span>
+          </div>
+          <div class="ep-stat" data-stat="evalClient">
+            <span class="ep-dot"></span>
+            <span class="ep-label">Eval client</span>
+            <span class="ep-val">…</span>
+          </div>
+          <div class="ep-stat" data-stat="policyServer">
+            <span class="ep-dot"></span>
+            <span class="ep-label">Policy server</span>
+            <span class="ep-val">…</span>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="ep-section-label">Policy prompt</div>
+        <input id="promptInput" type="text"
+               value="pick up the cube and place it on the box"
+               placeholder="task for eval client (Enter to send)"
+               autocomplete="off">
+        <div id="promptStatus">press Enter to push to the eval client</div>
+        <div id="evalRunRow">
+          <select id="evalRunMode" title="dry-run = print only · live = POST joints to daemon">
+            <option value="live" selected>Live</option>
+            <option value="dry">Dry-run</option>
+          </select>
+          <button id="evalRunBtn" type="button">▶ Run</button>
+        </div>
+        <div id="evalLog"></div>
+      </div>
+    </div>
+  </div>
 
   <div id="readout" class="panel">pose readout waiting…</div>
 
@@ -961,6 +1185,10 @@
     }
 
     function paintControllerGizmo(snap) {
+      // Suppressed while the viewer is open — applyReplayFrame paints
+      // the gizmo from the recorded controller_pose so it matches the
+      // replayed arm rather than the (now-irrelevant) live pose.
+      if (viewerActive) return;
       const cp = snap.controller_pose;
       if (!cp || !Array.isArray(cp.xyz_mm) || !Array.isArray(cp.rpy)) {
         ctrlGizmo.visible = false;
@@ -982,6 +1210,10 @@
     const ARM_JOINT_NAMES = ['joint1','joint2','joint3','joint4','joint5','joint6'];
     function applySnapshot(snap) {
       if (!jointRotors || !Array.isArray(snap.joints)) return;
+      // While the episode viewer is open, the URDF is driven by the
+      // replayed frame (see applyReplayFrame). Bail before painting the
+      // live joint bars too — they should reflect what's on screen.
+      if (viewerActive) return;
 
       // ── Solid arm: real-time current joint state ────────────────────
       const pos = {};
@@ -1054,6 +1286,353 @@
     driveModeBtn.addEventListener('click', async () => {
       try { await postJSON('/v1/teleop/drive_mode'); } catch (e) {}
     });
+
+    // ── Motion-ratio dropdown ────────────────────────────────────────────
+    (() => {
+      const sel = document.getElementById('motionScaleSel');
+      if (!sel) return;
+      const snapToOption = (scale) => {
+        // Pick the option closest to `scale` so a server-side value
+        // outside the preset list still lands on something sensible.
+        let best = sel.options[0];
+        let bestDiff = Infinity;
+        for (const opt of sel.options) {
+          const v = parseFloat(opt.value);
+          const d = Math.abs(v - scale);
+          if (d < bestDiff) { bestDiff = d; best = opt; }
+        }
+        sel.value = best.value;
+      };
+      sel.addEventListener('change', async () => {
+        const scale = parseFloat(sel.value);
+        if (!isFinite(scale)) return;
+        try { await postJSON('/v1/teleop/motion_scale', { scale }); }
+        catch (e) { console.error('motion_scale push failed', e); }
+      });
+      (async () => {
+        try {
+          const r = await fetch('/v1/teleop/motion_scale');
+          if (!r.ok) return;
+          const p = await r.json();
+          if (typeof p.scale === 'number') snapToOption(p.scale);
+        } catch (e) { /* defaults from HTML are fine */ }
+      })();
+    })();
+
+    // ── Eval / Policy panel toggle + status indicators ────────────────────
+    (() => {
+      const toggle = document.getElementById('evalPanelToggle');
+      const panel = document.getElementById('evalPanel');
+      const close = document.getElementById('evalPanelClose');
+      if (!toggle || !panel || !close) return;
+      const open = () => document.body.classList.add('evalPanelOpen');
+      const shut = () => document.body.classList.remove('evalPanelOpen');
+      toggle.addEventListener('click', open);
+      close.addEventListener('click', shut);
+      document.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape' && document.body.classList.contains('evalPanelOpen')) {
+          shut();
+        }
+      });
+    })();
+
+    (() => {
+      // Status indicators. Each entry: row element + setter that takes
+      // ({class: 'ok'|'warn'|'bad', val: 'text'}). The summary class on
+      // the toggle button itself ('healthy'/'warn'/'bad') is the worst
+      // of every row except eval/policy-server (those are optional —
+      // having no eval client running shouldn't bait the user into
+      // thinking something is wrong).
+      const list = document.getElementById('evalStatusList');
+      const toggleBtn = document.getElementById('evalPanelToggle');
+      if (!list || !toggleBtn) return;
+      const rows = {};
+      list.querySelectorAll('.ep-stat').forEach((el) => {
+        rows[el.dataset.stat] = el;
+      });
+      const set = (key, cls, val) => {
+        const row = rows[key];
+        if (!row) return;
+        row.classList.remove('ok', 'warn', 'bad');
+        if (cls) row.classList.add(cls);
+        const v = row.querySelector('.ep-val');
+        if (v) v.textContent = val;
+      };
+      const updateSummary = () => {
+        // Only consider rows that are required for normal operation.
+        // Eval client + policy server are "ok if green, neutral if
+        // missing" — leave the toggle dot grey rather than yellow when
+        // eval isn't running, to avoid false alarms.
+        const required = ['daemon', 'arm', 'estop', 'camBase', 'camWrist', 'jointsEp'];
+        let worst = 'ok';
+        for (const k of required) {
+          if (rows[k]?.classList.contains('bad')) { worst = 'bad'; break; }
+          if (rows[k]?.classList.contains('warn')) worst = 'warn';
+        }
+        toggleBtn.classList.remove('healthy', 'warn', 'bad');
+        toggleBtn.classList.add(worst === 'ok' ? 'healthy' : worst);
+      };
+
+      // Daemon is "up" iff we can fetch /healthz. We're effectively
+      // already up if this JS is running, but the periodic check still
+      // catches a freeze where the page is loaded but the daemon died.
+      const refreshDaemon = async () => {
+        try {
+          const r = await fetch('/healthz', { cache: 'no-store' });
+          if (r.ok) set('daemon', 'ok', 'up');
+          else set('daemon', 'bad', `HTTP ${r.status}`);
+        } catch (e) { set('daemon', 'bad', 'unreachable'); }
+      };
+
+      // Arm / estop / drive from /v1/world.
+      const refreshWorld = async () => {
+        try {
+          const r = await fetch('/v1/world', { cache: 'no-store' });
+          if (!r.ok) {
+            set('arm', 'bad', `HTTP ${r.status}`);
+            set('estop', 'bad', '?');
+            set('drive', 'bad', '?');
+            return;
+          }
+          const w = await r.json();
+          const backend = w.backend || '?';
+          const ip = w.arm_ip || '';
+          set('arm', 'ok', ip ? `${backend} · ${ip}` : backend);
+          if (w.estopped) set('estop', 'bad', 'ENGAGED');
+          else set('estop', 'ok', 'clear');
+          set('drive', w.drive_real_arm ? 'warn' : 'ok',
+              w.drive_real_arm ? 'digital + real' : 'digital only');
+        } catch (e) {
+          set('arm', 'bad', 'fetch failed');
+          set('estop', 'bad', '?');
+          set('drive', 'bad', '?');
+        }
+      };
+
+      // Cameras: prefer the cheap /v1/hud alive-flags; fall back to
+      // probing the JPEG endpoint if HUD is unavailable.
+      const refreshCams = async () => {
+        try {
+          const r = await fetch('/v1/hud', { cache: 'no-store' });
+          if (!r.ok) throw new Error('hud');
+          const h = await r.json();
+          const byName = Object.fromEntries((h.cameras || []).map((c) => [c.name, c]));
+          for (const [name, key] of [['base', 'camBase'], ['wrist', 'camWrist']]) {
+            const c = byName[name];
+            if (!c) set(key, 'bad', 'absent');
+            else if (c.alive) set(key, 'ok', 'alive');
+            else set(key, 'bad', 'dead');
+          }
+        } catch (e) {
+          set('camBase', 'warn', 'no HUD');
+          set('camWrist', 'warn', 'no HUD');
+        }
+      };
+
+      // /v1/teleop/joints presence: one OPTIONS-equivalent — actually a
+      // tiny POST with a body the backend will accept-and-no-op against
+      // the *current* joint targets. We use the supervisor's snapshot
+      // joints so the ghost arm doesn't visibly jump. Only fires once
+      // (cached forever in this page session); a 404 means the daemon
+      // is running pre-restart and needs to be restarted to pick up the
+      // new route.
+      let jointsEpChecked = false;
+      const refreshJointsEndpoint = async () => {
+        if (jointsEpChecked) return;
+        try {
+          const sn = await (await fetch('/v1/world', { cache: 'no-store' })).json();
+          const cur = sn.joints || [0, 0, 0, 0, 0, 0];
+          const r = await fetch('/v1/teleop/joints', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ joints: cur.slice(0, 6) }),
+          });
+          if (r.status === 200) set('jointsEp', 'ok', 'present');
+          else if (r.status === 404) set('jointsEp', 'bad', 'missing (restart daemon)');
+          else set('jointsEp', 'warn', `HTTP ${r.status}`);
+        } catch (e) {
+          set('jointsEp', 'warn', 'probe failed');
+        } finally {
+          jointsEpChecked = true;
+        }
+      };
+
+      // Eval client + policy server come from /v1/policy/heartbeat.
+      const refreshHeartbeat = async () => {
+        try {
+          const r = await fetch('/v1/policy/heartbeat', { cache: 'no-store' });
+          if (!r.ok) {
+            set('evalClient', '', 'no heartbeat');
+            set('policyServer', '', 'no heartbeat');
+            return;
+          }
+          const h = await r.json();
+          if (!h.present) {
+            set('evalClient', '', 'not running');
+            set('policyServer', '', 'no eval client');
+            return;
+          }
+          const age = Number(h.age_s ?? 999);
+          if (age <= 5) set('evalClient', 'ok', `seen ${age.toFixed(1)}s ago`);
+          else if (age <= 30) set('evalClient', 'warn', `stale ${age.toFixed(0)}s`);
+          else set('evalClient', 'bad', `lost ${age.toFixed(0)}s ago`);
+          const purl = h.policy_url || 'unset';
+          if (h.policy_ok === true) set('policyServer', 'ok', purl);
+          else if (h.policy_ok === false) set('policyServer', 'bad', `${purl} down`);
+          else set('policyServer', 'warn', purl);
+        } catch (e) {
+          set('evalClient', 'warn', 'fetch failed');
+          set('policyServer', 'warn', 'fetch failed');
+        }
+      };
+
+      const tick = async () => {
+        await Promise.all([
+          refreshDaemon(),
+          refreshWorld(),
+          refreshCams(),
+          refreshJointsEndpoint(),
+          refreshHeartbeat(),
+        ]);
+        updateSummary();
+      };
+      tick();
+      setInterval(tick, 2000);
+    })();
+
+    // ── Policy prompt input (for the eval client) ─────────────────────────
+    (() => {
+      const input = document.getElementById('promptInput');
+      const status = document.getElementById('promptStatus');
+      if (!input || !status) return;
+      const setStatus = (prompt, mode) => {
+        if (mode === 'pushed') {
+          status.textContent = `pushed → ${prompt}`;
+          status.classList.add('set');
+        } else if (mode === 'live') {
+          status.textContent = `live → ${prompt}`;
+          status.classList.add('set');
+        } else if (mode === 'empty') {
+          status.textContent = '(no prompt set — eval client uses its --task default)';
+          status.classList.remove('set');
+        } else {
+          status.textContent = 'press Enter to push to the eval client';
+          status.classList.remove('set');
+        }
+      };
+      const push = async () => {
+        const prompt = input.value.trim();
+        try {
+          const r = await fetch('/v1/policy/prompt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt }),
+          });
+          if (!r.ok) {
+            console.error('prompt push failed', r.status);
+            status.textContent = `push failed (${r.status})`;
+            return;
+          }
+          setStatus(prompt || '(cleared)', prompt ? 'pushed' : 'empty');
+        } catch (e) {
+          console.error('prompt push failed', e);
+          status.textContent = 'push failed (network)';
+        }
+      };
+      input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') { ev.preventDefault(); push(); }
+      });
+      // Pre-populate the daemon with the input's default value on page
+      // load so a freshly started eval client picks it up without the
+      // user having to hit Enter first.
+      (async () => {
+        try {
+          const r = await fetch('/v1/policy/prompt');
+          if (r.ok) {
+            const p = await r.json();
+            const live = (typeof p.prompt === 'string') ? p.prompt : '';
+            if (live) {
+              // Daemon already has a prompt (e.g. another tab pushed it) —
+              // adopt it so two tabs don't fight over what's "current".
+              input.value = live;
+              setStatus(live, 'live');
+              return;
+            }
+          }
+        } catch (e) { /* fall through to push the HTML default */ }
+        await push();
+      })();
+    })();
+
+    // ── Eval Run/Stop button + log tail ───────────────────────────────────
+    (() => {
+      const btn = document.getElementById('evalRunBtn');
+      const mode = document.getElementById('evalRunMode');
+      const logEl = document.getElementById('evalLog');
+      if (!btn || !mode || !logEl) return;
+
+      let running = false;
+
+      const paint = (isRunning) => {
+        running = isRunning;
+        btn.classList.toggle('running', isRunning);
+        btn.textContent = isRunning ? '■ Stop' : '▶ Run';
+        // Mode dropdown only matters when starting, so dim while running.
+        mode.disabled = isRunning;
+      };
+      paint(false);
+
+      const handle = async () => {
+        btn.disabled = true;
+        try {
+          if (running) {
+            await fetch('/v1/policy/stop', { method: 'POST' });
+          } else {
+            const body = { live: mode.value === 'live' };
+            const r = await fetch('/v1/policy/run', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+            if (r.status === 409) {
+              // Already running. Sync the button state on the next tick.
+              console.warn('policy already running');
+            } else if (!r.ok) {
+              const text = await r.text();
+              logEl.textContent = `start failed: HTTP ${r.status}\n${text}`;
+            }
+          }
+        } catch (e) {
+          logEl.textContent = `network error: ${e}`;
+        } finally {
+          btn.disabled = false;
+          // Force an immediate poll so the UI reflects the new state.
+          tick();
+        }
+      };
+      btn.addEventListener('click', handle);
+
+      const tick = async () => {
+        try {
+          const r = await fetch('/v1/policy/run/state', { cache: 'no-store' });
+          if (!r.ok) return;
+          const s = await r.json();
+          paint(!!s.running);
+          if (Array.isArray(s.log) && s.log.length) {
+            // Show the last ~25 lines so the panel doesn't grow forever.
+            const tail = s.log.slice(-25).join('\n');
+            if (logEl.textContent !== tail) {
+              logEl.textContent = tail;
+              logEl.scrollTop = logEl.scrollHeight;
+            }
+          } else if (!running) {
+            logEl.textContent = '';
+          }
+        } catch (e) { /* ignore — next tick will catch up */ }
+      };
+      tick();
+      setInterval(tick, 1500);
+    })();
 
     // ── Recording UI ──────────────────────────────────────────────────────
     const recStateEl = document.getElementById('recState');
@@ -1161,7 +1740,7 @@
         clearWatchdog();
         img.classList.add('live');
         figure.classList.add('live');
-        setTimeout(tick, 80);  // ~12 Hz
+        setTimeout(tick, 33);  // ~30 Hz — match camera native fps
       };
       img.onerror = () => {
         // 503 (no camera) or transient error: paint black, retry in 1 s.
@@ -1401,9 +1980,13 @@
     let viewerStartT = 0;
     let viewerStartFrame = 0;
     let viewerRaf = null;
+    // True while the viewer is open. Gates applySnapshot / paintControllerGizmo
+    // so the live pollWorld stream doesn't fight applyReplayFrame for the URDF.
+    let viewerActive = false;
 
     async function openViewer(ep) {
       viewerEp = ep;
+      viewerActive = true;
       viewerFrames = [];
       viewerCams = [];
       viewerCur = 0;
@@ -1473,6 +2056,13 @@
       if (viewerRaf !== null) { cancelAnimationFrame(viewerRaf); viewerRaf = null; }
       viewerEp = null;
       viewerFrames = [];
+      viewerActive = false;
+      // Hide the replay controller gizmo immediately. The next pollWorld
+      // tick will re-show it from live state if a Quest is attached.
+      ctrlGizmo.visible = false;
+      // Hide the ghost arm too — it can be left visible at a stale pose
+      // by the last replay frame; the next applySnapshot will rebuild it.
+      if (ghostRoot) ghostRoot.visible = false;
     }
 
     function showFrame(idx) {
@@ -1492,6 +2082,88 @@
         ?? (idx / Math.max(1, viewerFps));
       vTcode.textContent = `${idx + 1} / ${total} · ${(t || 0).toFixed(2)}s`;
       updateChartCursor(idx, total);
+      applyReplayFrame(viewerFrames[idx]);
+    }
+
+    // Drive the URDF arm (and ghost) from a single recorded frame so
+    // the user can eyeball whether the saved joint angles make sense.
+    // Mirrors applySnapshot's joint/gripper/ghost handling but reads
+    // from the frames.jsonl row instead of the live snapshot.
+    function applyReplayFrame(row) {
+      if (!jointRotors || !row) return;
+      const joints = Array.isArray(row.joints) ? row.joints : null;
+      if (!joints) return;
+      const pos = {};
+      joints.forEach((v, i) => {
+        const n = ARM_JOINT_NAMES[i];
+        if (n === undefined || typeof v !== 'number') return;
+        pos[n] = v;
+        setJoint(n, v);
+        paintJoint(n, v);
+      });
+      // Prefer the continuous gripper_pos (0=open, 1=closed); fall back
+      // to the discrete state string if the float wasn't recorded.
+      let grip01 = 0;
+      if (typeof row.gripper_pos === 'number') {
+        grip01 = Math.max(0, Math.min(1, row.gripper_pos));
+      } else if (row.gripper === 'closed') {
+        grip01 = 1;
+      }
+      const [glo, ghi] = jointLimits['drive_joint'] || DEFAULT_RANGE['drive_joint'];
+      const driveVal = glo + grip01 * (ghi - glo);
+      pos['drive_joint'] = driveVal;
+      setJoint('drive_joint', driveVal);
+      paintJoint('drive_joint', driveVal);
+      for (const [mj, spec] of Object.entries(mimics)) {
+        const src = pos[spec.source];
+        if (src !== undefined) setJoint(mj, src * spec.mult + spec.off);
+      }
+
+      // Ghost arm: recorded target_joints if they exist and meaningfully
+      // differ from measured — same threshold the live view uses.
+      if (ghostJointRotors && ghostRoot) {
+        const haveTarget = Array.isArray(row.target_joints)
+          && row.target_joints.length;
+        const targets = haveTarget ? row.target_joints : joints;
+        let maxDiff = 0;
+        if (haveTarget) {
+          for (let i = 0; i < ARM_JOINT_NAMES.length; i++) {
+            const d = Math.abs((targets[i] ?? 0) - (joints[i] ?? 0));
+            if (d > maxDiff) maxDiff = d;
+          }
+        }
+        ghostRoot.visible = maxDiff > GHOST_HIDE_TOL_RAD;
+        const gpos = {};
+        targets.forEach((v, i) => {
+          const n = ARM_JOINT_NAMES[i];
+          if (n === undefined || typeof v !== 'number') return;
+          gpos[n] = v;
+          setGhostJoint(n, v);
+        });
+        gpos['drive_joint'] = driveVal;
+        setGhostJoint('drive_joint', driveVal);
+        for (const [mj, spec] of Object.entries(ghostMimics)) {
+          const src = gpos[spec.source];
+          if (src !== undefined) setGhostJoint(mj, src * spec.mult + spec.off);
+        }
+      }
+
+      // Recorded Quest controller pose — same gizmo as the live view,
+      // amber/green tinted exactly the same way.
+      const cp = row.controller_pose;
+      if (cp && Array.isArray(cp.xyz_mm) && Array.isArray(cp.rpy)) {
+        ctrlGizmo.visible = true;
+        ctrlGizmo.position.set(
+          cp.xyz_mm[0] / 1000.0,
+          cp.xyz_mm[1] / 1000.0,
+          cp.xyz_mm[2] / 1000.0,
+        );
+        _ctrlEuler.set(cp.rpy[0], cp.rpy[1], cp.rpy[2], 'ZYX');
+        ctrlGizmo.quaternion.setFromEuler(_ctrlEuler);
+        ctrlBoxMat.color.setHex(cp.trigger_held ? 0x44dd66 : 0xee9933);
+      } else {
+        ctrlGizmo.visible = false;
+      }
     }
 
     function playLoop(now) {

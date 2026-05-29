@@ -69,6 +69,11 @@ class RosTcpBridge:
         # picks a fresh anchor wherever the arm currently is.
         self._trigger_held = False
         self._anchor_armed = False
+        # Motion-scale ratio between controller delta and arm delta.
+        # 1.0 means 1:1; 2.0 means the arm moves twice as far as the
+        # hand. Applied to both the dashboard gizmo and the real arm
+        # so the visualization stays consistent with hardware.
+        self._motion_scale: float = 1.0
         # Rising-edge bookkeeping for the Quest's command inputs:
         #   right A button (button_lower) → start / save recording
         #   right B button (button_upper) → cancel recording (only while
@@ -161,6 +166,17 @@ class RosTcpBridge:
     def client_count(self) -> int:
         with self._clients_lock:
             return len(self._clients)
+
+    @property
+    def motion_scale(self) -> float:
+        return self._motion_scale
+
+    @motion_scale.setter
+    def motion_scale(self, value: float) -> None:
+        v = float(value)
+        if not math.isfinite(v) or v <= 0.0:
+            raise ValueError("motion_scale must be a positive finite number")
+        self._motion_scale = v
 
     # ── accept + per-client read loop ───────────────────────────────────────
 
@@ -359,10 +375,11 @@ class RosTcpBridge:
                 float(cq.x), float(cq.y), float(cq.z), float(cq.w),
             )
 
-        # Position: arm_anchor + (ctrl_now - ctrl_anchor)
-        dx_mm = (float(cp.x) - self._viz_ctrl_anchor[0]) * 1000.0
-        dy_mm = (float(cp.y) - self._viz_ctrl_anchor[1]) * 1000.0
-        dz_mm = (float(cp.z) - self._viz_ctrl_anchor[2]) * 1000.0
+        # Position: arm_anchor + scale * (ctrl_now - ctrl_anchor)
+        scale = self._motion_scale
+        dx_mm = (float(cp.x) - self._viz_ctrl_anchor[0]) * 1000.0 * scale
+        dy_mm = (float(cp.y) - self._viz_ctrl_anchor[1]) * 1000.0 * scale
+        dz_mm = (float(cp.z) - self._viz_ctrl_anchor[2]) * 1000.0 * scale
         self._last_ctrl_xyz_mm = (
             self._viz_arm_anchor_mm[0] + dx_mm,
             self._viz_arm_anchor_mm[1] + dy_mm,
@@ -429,9 +446,10 @@ class RosTcpBridge:
         # The dashboard gizmo confirms the raw Quest pose already sits in
         # arm-base coordinates (controller moves forward = gizmo moves +X
         # in the arm frame). So delta-add directly — no axis flip.
-        dx = (ctrl_pos[0] - self._anchor_ctrl_pos[0]) * 1000.0
-        dy = (ctrl_pos[1] - self._anchor_ctrl_pos[1]) * 1000.0
-        dz = (ctrl_pos[2] - self._anchor_ctrl_pos[2]) * 1000.0
+        scale = self._motion_scale
+        dx = (ctrl_pos[0] - self._anchor_ctrl_pos[0]) * 1000.0 * scale
+        dy = (ctrl_pos[1] - self._anchor_ctrl_pos[1]) * 1000.0 * scale
+        dz = (ctrl_pos[2] - self._anchor_ctrl_pos[2]) * 1000.0 * scale
         new_x = self._anchor_arm_xyz_mm[0] + dx
         new_y = self._anchor_arm_xyz_mm[1] + dy
         new_z = self._anchor_arm_xyz_mm[2] + dz

@@ -77,17 +77,19 @@ async def test_gripper_endpoint(client: TestClient) -> None:
     assert r2.status == 200
 
 
-async def test_camera_jpeg(client: TestClient) -> None:
-    r = await client.get("/v1/cameras/exterior.jpg")
-    assert r.status == 200
-    assert r.headers["Content-Type"] == "image/jpeg"
-    body = await r.read()
-    assert body[:3] == b"\xff\xd8\xff", "JPEG magic bytes missing"
+async def test_camera_jpeg_503_without_hardware(client: TestClient) -> None:
+    # Camera tiles are physical hardware only — there is no sim render
+    # fallback. With no RealSense attached the endpoint returns 503 and
+    # the dashboard paints a black tile.
+    r = await client.get("/v1/cameras/base.jpg")
+    assert r.status == 503
 
 
-async def test_camera_unknown_name_returns_404(client: TestClient) -> None:
+async def test_camera_unknown_name_also_503(client: TestClient) -> None:
+    # Every camera name resolves through the same grabber, so without
+    # hardware they all 503 (the old per-name 404 path is gone).
     r = await client.get("/v1/cameras/nope.jpg")
-    assert r.status == 404
+    assert r.status == 503
 
 
 async def test_world_stream_emits_at_least_one_snapshot(client: TestClient) -> None:

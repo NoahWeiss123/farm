@@ -127,9 +127,25 @@ _STREAM_EXTRAP_S = 0.060
 # visible ease-in over ~¼ second. Steady-state ramp-tracking lag =
 # Kd·V/Kp = (2/ω)·V ≈ 0.133·V rad ≈ 7.6° per (rad/s) of joint speed;
 # perceptible but acceptable for the smoother stop.
+#
+# This is the QUEST-tuned default. The policy-driving path swaps to a
+# faster ω (see _STREAM_OMEGA_POLICY_RAD_S below) so the arm tracks the
+# policy's intended joint trajectory at full speed instead of being
+# lowpass-attenuated by the slow Quest tracker.
 _STREAM_OMEGA_RAD_S = 15.0
 _STREAM_KP = _STREAM_OMEGA_RAD_S * _STREAM_OMEGA_RAD_S
 _STREAM_KD = 2.0 * _STREAM_OMEGA_RAD_S
+# Policy-driven tracker. ω = 30 rad/s → 4/ω ≈ 133 ms settling, ~3 Hz
+# tracking bandwidth. ~2× the Quest-tuned bandwidth so the arm actually
+# moves at the policy's commanded velocity instead of getting
+# lowpass-smoothed below recognisable. Critically damped (Kd = 2ω) so
+# it never overshoots grasp targets. Steady-state ramp lag = (2/ω)·V
+# ≈ 0.067·V rad ≈ 3.8° per (rad/s). The previous attempt at ω=35
+# oscillated on hardware (likely exciting arm/payload resonance); 30
+# keeps a safe margin from that.
+_STREAM_OMEGA_POLICY_RAD_S = 30.0
+_STREAM_KP_POLICY = _STREAM_OMEGA_POLICY_RAD_S * _STREAM_OMEGA_POLICY_RAD_S
+_STREAM_KD_POLICY = 2.0 * _STREAM_OMEGA_POLICY_RAD_S
 # Software acceleration cap on the PD tracker — effectively unbounded
 # (5000 rad/s², ~4× the worst-case Kp·err of the PD tracker). The
 # previous low cap (15 rad/s²) made fast hand motion feel like it was
@@ -246,6 +262,19 @@ class XArmBackend:
         # teleop). Default off so booting can't surprise-move the arm.
         self._drive_real_arm = False
         self._streaming_active = False
+        # Which upstream pushed the most recent stream sample. The
+        # stream loop reads this each tick and picks Quest-tuned (ω=15)
+        # vs. policy-tuned (ω=25) PD gains. Keeps Quest's "ease-in"
+        # feel while letting policy commands run at full speed.
+        self._policy_drive_active = False
+        # Most recent gripper SDK position commanded (0..850 raw). The
+        # policy path sends a gripper value per chunk action (≥30 Hz)
+        # but the parallel gripper hardware takes ~500 ms to travel a
+        # full range — spamming the SDK at 30 Hz with near-identical
+        # values keeps re-targeting the controller and slows the close
+        # cycle. Skip the SDK call when the new value differs by < 5 %
+        # of full travel from the last one sent.
+        self._last_gripper_sdk_pos: int | None = None
         # The *digital* desired joint state — what we last commanded.
         # Diverges from ``_last_snapshot["joints"]`` while the real arm is
         # still slewing to a fresh target. The dashboard's ghost arm reads
@@ -463,6 +492,16 @@ class XArmBackend:
                     # the operator never feels the discontinuity. State:
                     # _stream_vel holds the per-joint commanded vel
                     # carried across cycles.
+                    #
+                    # Two PD configs: Quest-tuned (ω=15, slow ease-in)
+                    # and policy-tuned (ω=25, faster tracking). Picked
+                    # per tick based on which upstream last pushed.
+                    if self._policy_drive_active:
+                        kp = _STREAM_KP_POLICY
+                        kd = _STREAM_KD_POLICY
+                    else:
+                        kp = _STREAM_KP
+                        kd = _STREAM_KD
                     vel_state = (
                         list(self._stream_vel)
                         if self._stream_vel is not None
@@ -473,8 +512,8 @@ class XArmBackend:
                     for i in range(6):
                         err = target[i] - cmd[i]
                         a = (
-                            _STREAM_KP * err
-                            - _STREAM_KD * vel_state[i]
+                            kp * err
+                            - kd * vel_state[i]
                         )
                         if a > _STREAM_MAX_ACCEL_RAD_S2:
                             a = _STREAM_MAX_ACCEL_RAD_S2
@@ -777,9 +816,90 @@ class XArmBackend:
         if self._drive_real_arm and not self._estopped:
             sample_t = time.perf_counter()
             with self._stream_target_lock:
+                # Quest path: hand input + IK noise needs filtering;
+                # Quest-tuned PD provides the "ease-in" coast.
+                self._policy_drive_active = False
                 filtered = self._joint_filter(sample_t, target_joints)
                 self._stream_history.append((sample_t, list(filtered)))
         return {"target_joints": list(target_joints), "pose": list(pose_mm_deg)}
+
+    def set_joint_target(
+        self,
+        joints_rad: list[float] | tuple[float, ...],
+        *,
+        gripper: float | None = None,
+    ) -> dict[str, Any]:
+        """Sibling of ``set_ghost_target_pose`` that skips IK — the caller
+        already has joint targets (e.g. from a learned policy that
+        outputs joint deltas). Same downstream plumbing: updates the
+        ghost arm's ``_target_joints``, and when ``drive_real_arm`` is on
+        pushes the joints through the 1€ filter into the stream history
+        so the 250 Hz tracker replays them onto the real arm.
+
+        ``gripper`` is the LeRobot ``gripper_pos`` convention (0 = fully
+        open, 1 = fully closed). Forwarded straight to the SDK's
+        ``set_gripper_position`` (continuous 0–850 scale) so a policy
+        can command intermediate jaw widths."""
+        if self._estopped:
+            return {"error": "estopped"}
+        joints = list(joints_rad)
+        if len(joints) != 6:
+            return {"error": f"joints must have length 6, got {len(joints)}"}
+        try:
+            joints = [float(j) for j in joints]
+        except (TypeError, ValueError):
+            return {"error": "joints must be numeric"}
+
+        with self._lock:
+            self._target_joints = list(joints)
+            self._last_snapshot["target_joints"] = list(joints)
+
+        applied_gripper: float | None = None
+        if gripper is not None:
+            try:
+                g = max(0.0, min(1.0, float(gripper)))
+            except (TypeError, ValueError):
+                return {"error": "gripper must be numeric in [0, 1]"}
+            applied_gripper = g
+            # Mirror the snapshot's "gripper" Literal so the dashboard's
+            # state pill matches what the policy commanded.
+            self._last_snapshot["gripper"] = "closed" if g > 0.5 else "open"
+            self._last_snapshot["gripper_pos"] = g
+            api = getattr(self._driver, "_api", None)
+            if api is not None and hasattr(api, "set_gripper_position"):
+                # SDK convention: 0 = closed, 850 = open. Our 0–1
+                # follows the snapshot's (0=open, 1=closed), so invert.
+                sdk_pos = int(round((1.0 - g) * 850.0))
+                # Dedupe: only re-issue the SDK call if the commanded
+                # position moved by ≥ 40 (≈ 5 % of full travel = 4.7 mm
+                # jaw movement). Otherwise we're re-targeting the
+                # gripper controller faster than it can move, which
+                # interferes with its own close cycle.
+                last = self._last_gripper_sdk_pos
+                if last is None or abs(sdk_pos - last) >= 40:
+                    self._last_gripper_sdk_pos = sdk_pos
+                    try:
+                        with self._lock:
+                            api.set_gripper_position(sdk_pos, wait=False)
+                    except Exception as exc:
+                        log.debug("set_gripper_position(%s) failed: %s", sdk_pos, exc)
+
+        if self._drive_real_arm and not self._estopped:
+            sample_t = time.perf_counter()
+            with self._stream_target_lock:
+                # Policy path: same 1€ filter as Quest (handles the
+                # tiny numerical/chunk-boundary jitter) but the stream
+                # loop will use the faster policy-tuned PD so the arm
+                # actually tracks the policy's commanded velocity
+                # instead of being lowpass-smoothed.
+                self._policy_drive_active = True
+                filtered = self._joint_filter(sample_t, joints)
+                self._stream_history.append((sample_t, list(filtered)))
+        return {
+            "target_joints": list(joints),
+            "applied_gripper": applied_gripper,
+            "drive_real_arm": bool(self._drive_real_arm),
+        }
 
     def home(self) -> dict[str, Any]:
         self._require_armed()

@@ -127,6 +127,12 @@ class Supervisor:
             return {"error": "backend has no ghost target"}
         return fn(pose_mm_deg)
 
+    def set_joint_target(self, joints_rad, *, gripper: float | None = None) -> dict[str, Any]:
+        fn = getattr(self._backend, "set_joint_target", None)
+        if fn is None:
+            return {"error": "backend has no joint target"}
+        return fn(joints_rad, gripper=gripper)
+
     def swap_cameras(self) -> dict[str, str]:
         swapper = getattr(self._backend, "swap_cameras", None)
         if swapper is None:

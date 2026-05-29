@@ -9,6 +9,14 @@ GET  /v1/world/stream           — SSE stream of world snapshots
 POST /v1/teleop/jog             — {axis, sign, step_mm?, step_rad?}
 POST /v1/teleop/home            — drive arm to backend home pose
 POST /v1/teleop/gripper         — {state: "open"|"closed"}
+POST /v1/teleop/joints          — {joints: [..6 rad], gripper?: 0..1}
+GET  /v1/policy/prompt          — current language prompt for the eval client
+POST /v1/policy/prompt          — {prompt: str} (dashboard input field)
+GET  /v1/policy/heartbeat       — last heartbeat the eval client posted
+POST /v1/policy/heartbeat       — eval client → daemon: alive + policy server health
+POST /v1/policy/run             — spawn tools/eval_pi05.py (live by default)
+POST /v1/policy/stop            — SIGTERM the eval subprocess
+GET  /v1/policy/run/state       — {running, pid, exit_code?, args, log[]}
 POST /v1/teleop/estop           — software emergency stop
 POST /v1/teleop/estop/clear     — re-arm after e-stop
 GET  /v1/teleop/filter          — current 1€ joint-filter params
@@ -19,11 +27,17 @@ GET  /v1/cameras/{name}.jpg     — live JPEG from a backend camera (placeholder
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
 import logging
 import math
+import os
 import re
 import shutil
+import subprocess
+import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -46,7 +60,9 @@ SSE_HEADERS = {
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 # parents: server → farm_edge_agent → src → farm-edge-agent → CS153 repo
 ASSETS_DIR = Path(__file__).resolve().parents[3] / "assets"
-DATASETS_DIR = Path(__file__).resolve().parents[4] / "datasets"
+DATASETS_DIR = Path(__file__).resolve().parents[4] / "Dataset3"
+REPO_ROOT = Path(__file__).resolve().parents[4]
+EVAL_SCRIPT = REPO_ROOT / "tools" / "eval_pi05.py"
 _VALID_AXES = {"x", "y", "z", "rx", "ry", "rz"}
 DEFAULT_STEP_MM = 5.0
 DEFAULT_STEP_RAD = math.radians(2.0)
@@ -189,6 +205,262 @@ async def post_ghost_pose(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+async def post_joint_target(request: web.Request) -> web.Response:
+    """Joint-space sibling of ``/v1/teleop/ghost`` for learned-policy
+    eval. Body: ``{"joints": [j1..j6 in radians], "gripper": optional 0-1}``.
+    Bypasses IK — the joints are pushed straight into the same stream
+    history buffer the Quest teleop path writes to (after IK), so the
+    real arm follows when ``drive_real_arm`` is on."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "body must be JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be a JSON object"}, status=400)
+    joints = body.get("joints")
+    if not (isinstance(joints, list) and len(joints) == 6):
+        return web.json_response(
+            {"error": "body must include 'joints' as a list of 6 floats (radians)"},
+            status=400,
+        )
+    try:
+        joints = [float(j) for j in joints]
+    except (TypeError, ValueError):
+        return web.json_response({"error": "joints must be numeric"}, status=400)
+    grip_raw = body.get("gripper")
+    gripper: float | None = None
+    if grip_raw is not None:
+        try:
+            gripper = float(grip_raw)
+        except (TypeError, ValueError):
+            return web.json_response(
+                {"error": "gripper must be a number in [0, 1] or omitted"},
+                status=400,
+            )
+    supervisor: Supervisor = request.app["supervisor"]
+    result = await asyncio.to_thread(
+        supervisor.set_joint_target, joints, gripper=gripper
+    )
+    if isinstance(result, dict) and "error" in result:
+        return web.json_response(result, status=409)
+    return web.json_response(result)
+
+
+async def get_policy_prompt(request: web.Request) -> web.Response:
+    """Return the latest language prompt set from the dashboard input.
+
+    The prompt lives in app state (not on the backend) — it's a hint for
+    the external eval client (``tools/eval_pi05.py``), not arm state.
+    Empty string means the dashboard hasn't set one yet; the eval client
+    falls back to its ``--task`` CLI default in that case.
+    """
+    return web.json_response({"prompt": str(request.app.get("policy_prompt", ""))})
+
+
+async def post_policy_prompt(request: web.Request) -> web.Response:
+    """Set the language prompt the dashboard wants the eval client to use.
+
+    Body: ``{"prompt": "<string>"}``. Empty string clears the override.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "body must be JSON"}, status=400)
+    if not isinstance(body, dict) or "prompt" not in body:
+        return web.json_response({"error": "body must include 'prompt'"}, status=400)
+    prompt = body.get("prompt", "")
+    if not isinstance(prompt, str):
+        return web.json_response({"error": "prompt must be a string"}, status=400)
+    # Trim incidental whitespace so the dashboard input doesn't accidentally
+    # send a leading/trailing newline.
+    prompt = prompt.strip()
+    request.app["policy_prompt"] = prompt
+    log.info("policy prompt set: %r", prompt)
+    return web.json_response({"prompt": prompt})
+
+
+async def get_policy_heartbeat(request: web.Request) -> web.Response:
+    """Latest heartbeat the eval client posted, augmented with how stale
+    it is. Dashboard polls this to colour the "eval running?" indicator
+    without needing a websocket. Empty body if nothing posted yet.
+    """
+    hb = request.app.get("policy_heartbeat")
+    if not hb:
+        return web.json_response({"present": False})
+    age = max(0.0, time.time() - float(hb.get("server_ts", 0.0)))
+    return web.json_response({"present": True, "age_s": round(age, 2), **hb})
+
+
+async def post_policy_heartbeat(request: web.Request) -> web.Response:
+    """Eval client → daemon liveness ping. Optional fields document
+    what the eval client is doing right now; the dashboard surfaces them.
+
+    Body (all optional)::
+
+        {
+            "policy_url": str,
+            "policy_ok": bool,
+            "last_chunk_ms": float,
+            "last_action_idx": int,
+            "task_prompt": str,
+            "drive_real_arm": bool,
+            "dry_run": bool,
+            "note": str,
+        }
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    body["server_ts"] = time.time()
+    request.app["policy_heartbeat"] = body
+    return web.json_response({"ok": True, "server_ts": body["server_ts"]})
+
+
+def _drain_eval_output(proc: subprocess.Popen, log_deque: collections.deque[str]) -> None:
+    """Background thread: copy the eval subprocess's stdout into a
+    bounded deque so the dashboard can tail it. Closes when the process
+    exits, which makes ``proc.stdout.readline()`` return ``""``."""
+    try:
+        assert proc.stdout is not None
+        for line in iter(proc.stdout.readline, ""):
+            log_deque.append(line.rstrip("\n"))
+    except Exception as exc:
+        log_deque.append(f"<drain error: {exc}>")
+
+
+async def post_policy_run(request: web.Request) -> web.Response:
+    """Spawn ``tools/eval_pi05.py`` as a subprocess. Body fields override
+    defaults; all optional::
+
+        {
+            "policy_url":    "ws://127.0.0.1:8000",
+            "live":          true,            # else --dry-run
+            "max_steps":     600,
+            "steps_per_chunk": 3,
+            "rate_hz":       5.0,
+            "motion_scale":  0.25,
+            "action_mode":   "absolute",
+            "no_gripper":    false
+        }
+
+    Idempotent on the running state: returns 409 if already running."""
+    proc = request.app.get("eval_process")
+    if proc is not None and proc.poll() is None:
+        return web.json_response(
+            {"error": "already running", "pid": proc.pid}, status=409,
+        )
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    args: list[str] = [
+        sys.executable,
+        str(EVAL_SCRIPT),
+        "--policy-url", str(body.get("policy_url", "ws://127.0.0.1:8000")),
+        # 30 Hz native cadence + all 10 actions per chunk. This was
+        # what the model was trained against; going faster trades
+        # accuracy for speed (PD lag amplification).
+        "--max-steps", str(int(body.get("max_steps", 1800))),
+        "--steps-per-chunk", str(int(body.get("steps_per_chunk", 10))),
+        # Native 30 Hz cadence + all 10 actions per chunk — the config the model
+        # was trained against and that performed the task reliably. The
+        # smoothness experiments (15 Hz playback, 100 Hz client interpolation,
+        # RTC) regressed task performance when stacked, so they are OFF by
+        # default and opt-in per request: pass {"stream_hz": 100, "rate_hz": 15}
+        # and/or {"rtc": true} to re-enable, one at a time, with arm testing.
+        "--rate-hz", str(float(body.get("rate_hz", 30.0))),
+        "--stream-hz", str(float(body.get("stream_hz", 0.0))),
+        "--motion-scale", str(float(body.get("motion_scale", 0.25))),
+        "--action-mode", str(body.get("action_mode", "absolute")),
+        # Don't re-POST motion_scale — the dashboard already owns it.
+        "--no-daemon-motion-scale",
+    ]
+    args.append("--live" if body.get("live", True) else "--dry-run")
+    if not body.get("rtc", False):
+        args.append("--no-rtc")
+    if body.get("no_gripper"):
+        args.append("--no-gripper")
+
+    request.app["eval_log"].clear()
+    request.app["eval_log"].append(f"$ {' '.join(args)}")
+    try:
+        proc = subprocess.Popen(  # noqa: S603
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=1,
+            text=True,
+            cwd=str(REPO_ROOT),
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            start_new_session=True,  # so SIGINT to daemon doesn't kill us mid-cleanup
+        )
+    except Exception as exc:
+        return web.json_response({"error": f"spawn failed: {exc}"}, status=500)
+    request.app["eval_process"] = proc
+    request.app["eval_cmd"] = args
+    threading.Thread(
+        target=_drain_eval_output,
+        args=(proc, request.app["eval_log"]),
+        daemon=True, name="eval-drain",
+    ).start()
+    log.info("eval subprocess started · pid=%s · args=%s", proc.pid, args)
+    return web.json_response({"ok": True, "pid": proc.pid, "args": args})
+
+
+async def post_policy_stop(request: web.Request) -> web.Response:
+    """Terminate the eval subprocess (if any). SIGTERM first; SIGKILL
+    after a short grace period. The eval client's signal handler halts the
+    policy loop cleanly WITHOUT tripping an e-stop — the arm is
+    position-controlled, so it holds its last commanded pose. (Use the
+    dashboard E-STOP button for a real emergency halt.)"""
+    proc = request.app.get("eval_process")
+    if proc is None or proc.poll() is not None:
+        return web.json_response({"ok": True, "running": False, "note": "not running"})
+    pid = proc.pid
+    try:
+        proc.terminate()
+    except Exception:
+        pass
+    try:
+        proc.wait(timeout=3.0)
+    except subprocess.TimeoutExpired:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    request.app["eval_log"].append(f"[daemon] terminated pid={pid}")
+    log.info("eval subprocess stopped · pid=%s", pid)
+    return web.json_response({"ok": True, "running": False, "pid": pid})
+
+
+async def get_policy_run_state(request: web.Request) -> web.Response:
+    """Lightweight poll the dashboard uses to colour the Run button +
+    tail the last few log lines."""
+    proc = request.app.get("eval_process")
+    log_deque: collections.deque[str] = request.app.get("eval_log") or collections.deque()
+    log_lines = list(log_deque)
+    if proc is None:
+        return web.json_response({"running": False, "pid": None, "log": log_lines})
+    rc = proc.poll()
+    if rc is None:
+        return web.json_response({
+            "running": True, "pid": proc.pid,
+            "args": request.app.get("eval_cmd", []),
+            "log": log_lines,
+        })
+    return web.json_response({
+        "running": False, "pid": proc.pid, "exit_code": rc,
+        "args": request.app.get("eval_cmd", []),
+        "log": log_lines,
+    })
+
+
 async def post_cameras_swap(request: web.Request) -> web.Response:
     supervisor: Supervisor = request.app["supervisor"]
     result = await asyncio.to_thread(supervisor.swap_cameras)
@@ -288,6 +560,36 @@ async def post_filter_params(request: web.Request) -> web.Response:
     return web.json_response(params)
 
 
+async def get_motion_scale(request: web.Request) -> web.Response:
+    """Current controller→arm motion-scale ratio (1.0 = 1:1)."""
+    bridge = request.app.get("ros_bridge")
+    if bridge is None or not hasattr(bridge, "motion_scale"):
+        return web.json_response({"error": "ros bridge unavailable"}, status=503)
+    return web.json_response({"scale": float(bridge.motion_scale)})
+
+
+async def post_motion_scale(request: web.Request) -> web.Response:
+    """Set the controller→arm motion-scale ratio. Body: ``{"scale": <float>}``."""
+    bridge = request.app.get("ros_bridge")
+    if bridge is None or not hasattr(bridge, "motion_scale"):
+        return web.json_response({"error": "ros bridge unavailable"}, status=503)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict) or "scale" not in body:
+        return web.json_response({"error": "body must include 'scale'"}, status=400)
+    try:
+        scale = float(body["scale"])
+    except (TypeError, ValueError):
+        return web.json_response({"error": "scale must be a number"}, status=400)
+    try:
+        bridge.motion_scale = scale
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response({"scale": float(bridge.motion_scale)})
+
+
 async def post_recording_start(request: web.Request) -> web.Response:
     rec = request.app["supervisor"].recorder
     if rec is None:
@@ -368,6 +670,7 @@ def _list_episodes_sync() -> list[dict[str, Any]]:
             cam_root = p / "cameras"
             if cam_root.is_dir():
                 cameras = sorted(c.name for c in cam_root.iterdir() if c.is_dir())
+        desc = meta.get("description")
         out.append({
             "id": p.name,
             "start_iso": meta.get("start_iso"),
@@ -376,6 +679,8 @@ def _list_episodes_sync() -> list[dict[str, Any]]:
             "frame_count": meta.get("frame_count"),
             "cameras": list(cameras),
             "backend": meta.get("backend"),
+            "has_description": bool(desc and str(desc).strip()),
+            "description": desc if isinstance(desc, str) else None,
         })
     # Newest first: episode IDs embed the UTC timestamp so a lexicographic
     # sort matches chronological order without parsing meta.json.
@@ -464,6 +769,236 @@ async def get_episode_camera_frame(request: web.Request) -> web.Response:
     )
 
 
+def _camera_timing_sync(p: Path) -> dict[str, Any]:
+    """Per-camera timing for the review app's colorbars.
+
+    For each camera, walks ``frames.jsonl`` and, at each row, decides
+    whether that frame's JPEG is a *fresh* capture by checking:
+
+    * the JPEG file exists on disk (recorder couldn't write None blobs)
+    * its size differs from the previous fresh frame's size (the cam
+      subprocess cache returns identical bytes on a hiccup, so a size
+      match is a strong duplicate signal)
+
+    Returns ``{"fps_target": <hz>, "cameras": {<name>: {"dt_ms": [...]}}}``.
+    """
+    meta_path = p / "meta.json"
+    frames_path = p / "frames.jsonl"
+    if not meta_path.is_file() or not frames_path.is_file():
+        return {"fps_target": 30.0, "cameras": {}}
+    meta = json.loads(meta_path.read_text())
+    fps = float(meta.get("fps") or 30.0)
+    target_ms = 1000.0 / fps
+    cam_root = p / "cameras"
+    cameras = list(meta.get("cameras") or [])
+    if not cameras and cam_root.is_dir():
+        cameras = sorted(c.name for c in cam_root.iterdir() if c.is_dir())
+
+    # Load frame timestamps (just t and frame index — skip the rest).
+    rows: list[tuple[int, float]] = []
+    with frames_path.open("r") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+                rows.append((int(row.get("frame", -1)), float(row.get("t", 0.0))))
+            except Exception:
+                continue
+
+    out_cams: dict[str, dict[str, list[float]]] = {}
+    for cam in cameras:
+        cdir = cam_root / cam
+        dt_ms: list[float] = []
+        last_fresh_t: float | None = None
+        last_size: int | None = None
+        for idx, t in rows:
+            sz = -1
+            try:
+                sz = (cdir / f"{idx:06d}.jpg").stat().st_size
+            except (FileNotFoundError, OSError):
+                pass
+            is_fresh = sz > 0 and sz != last_size
+            if is_fresh:
+                dt = target_ms if last_fresh_t is None else (t - last_fresh_t) * 1000.0
+                dt_ms.append(round(dt, 2))
+                last_fresh_t = t
+                last_size = sz
+            else:
+                # Stale or missing tick: report the growing gap so the
+                # colorbar shows red until a fresh frame arrives.
+                gap_ms = (
+                    (t - last_fresh_t) * 1000.0
+                    if last_fresh_t is not None
+                    else target_ms * 100
+                )
+                dt_ms.append(round(gap_ms, 2))
+        out_cams[cam] = {"dt_ms": dt_ms}
+    return {"fps_target": fps, "cameras": out_cams}
+
+
+async def get_episode_camera_timing(request: web.Request) -> web.Response:
+    p = _episode_dir(request.match_info["id"])
+    if p is None:
+        return web.json_response({"error": "not found"}, status=404)
+    data = await asyncio.to_thread(_camera_timing_sync, p)
+    return web.json_response(data)
+
+
+async def patch_episode_meta(request: web.Request) -> web.Response:
+    """Update whitelisted fields in an episode's ``meta.json``.
+
+    Currently only the free-text ``description`` is editable from the
+    review UI. Other meta fields are derived from the recording and
+    should not be hand-edited.
+    """
+    p = _episode_dir(request.match_info["id"])
+    if p is None:
+        return web.json_response({"error": "not found"}, status=404)
+    meta_path = p / "meta.json"
+    if not meta_path.is_file():
+        return web.json_response({"error": "no meta"}, status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be a JSON object"}, status=400)
+
+    def _write() -> dict[str, Any]:
+        meta = json.loads(meta_path.read_text())
+        if "description" in body:
+            desc = body["description"]
+            if desc is None:
+                meta.pop("description", None)
+            else:
+                meta["description"] = str(desc)
+        meta_path.write_text(json.dumps(meta, indent=2))
+        return meta
+
+    meta = await asyncio.to_thread(_write)
+    return web.json_response(meta)
+
+
+async def clip_episode(request: web.Request) -> web.Response:
+    """Destructively trim an episode to the half-open frame range
+    ``[clip_in, clip_out)``. Drops out-of-range JSONL rows and JPEGs,
+    renumbers what remains starting at 0, and rewrites ``meta.json``
+    with the new frame count + duration. Refuses to operate on an
+    in-progress recording."""
+    p = _episode_dir(request.match_info["id"])
+    if p is None:
+        return web.json_response({"error": "not found"}, status=404)
+    rec = request.app["supervisor"].recorder
+    if rec is not None:
+        st = rec.state
+        if st.get("recording") and st.get("episode_id") == p.name:
+            return web.json_response(
+                {"error": "cannot clip an episode that is still recording"},
+                status=409,
+            )
+    meta_path = p / "meta.json"
+    frames_path = p / "frames.jsonl"
+    if not meta_path.is_file() or not frames_path.is_file():
+        return web.json_response({"error": "missing meta or frames"}, status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        clip_in = int(body["clip_in"])
+        clip_out = int(body["clip_out"])
+    except (KeyError, TypeError, ValueError):
+        return web.json_response(
+            {"error": "body must include integer clip_in and clip_out"}, status=400
+        )
+
+    def _clip() -> dict[str, Any]:
+        meta = json.loads(meta_path.read_text())
+        total = int(meta.get("frame_count", 0))
+        if not (0 <= clip_in < clip_out <= total):
+            raise ValueError(
+                f"clip range [{clip_in},{clip_out}) out of bounds for {total} frames"
+            )
+        if clip_in == 0 and clip_out == total:
+            return meta  # nothing to do
+
+        # Pass 1: filter frames.jsonl, re-index, rebase t.
+        kept: list[dict[str, Any]] = []
+        base_t: float | None = None
+        with frames_path.open("r") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                idx = int(row.get("frame", -1))
+                if not (clip_in <= idx < clip_out):
+                    continue
+                if base_t is None:
+                    base_t = float(row.get("t", 0.0))
+                row["frame"] = idx - clip_in
+                row["t"] = round(float(row.get("t", 0.0)) - (base_t or 0.0), 4)
+                kept.append(row)
+        # Atomic-ish rewrite via .tmp swap so a crash mid-write doesn't
+        # leave the episode unreadable.
+        tmp = frames_path.with_suffix(".jsonl.tmp")
+        with tmp.open("w") as fh:
+            for row in kept:
+                fh.write(json.dumps(row) + "\n")
+        tmp.replace(frames_path)
+
+        # Pass 2: prune + rename camera JPEGs. New_idx = old_idx - clip_in
+        # is always <= old_idx, so renaming low → high never collides.
+        cam_root = p / "cameras"
+        cameras = meta.get("cameras") or []
+        for cam in cameras:
+            cdir = cam_root / cam
+            if not cdir.is_dir():
+                continue
+            files = sorted(f for f in cdir.iterdir() if f.is_file())
+            for f in files:
+                try:
+                    idx = int(f.stem)
+                except ValueError:
+                    continue
+                if not (clip_in <= idx < clip_out):
+                    try:
+                        f.unlink()
+                    except Exception:
+                        pass
+                    continue
+                new_name = f"{idx - clip_in:06d}.jpg"
+                if f.name != new_name:
+                    f.rename(cdir / new_name)
+
+        # Update meta.
+        meta["frame_count"] = len(kept)
+        meta["duration_s"] = round(float(kept[-1]["t"]) if kept else 0.0, 3)
+        clips = list(meta.get("clip_history") or [])
+        clips.append({"clip_in": clip_in, "clip_out": clip_out, "kept": len(kept)})
+        meta["clip_history"] = clips
+        meta_path.write_text(json.dumps(meta, indent=2))
+        return meta
+
+    try:
+        meta = await asyncio.to_thread(_clip)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    except Exception as exc:
+        log.warning("episode clip failed for %s: %s", p, exc)
+        return web.json_response({"error": str(exc)}, status=500)
+    return web.json_response(meta)
+
+
+async def serve_review(_: web.Request) -> web.Response:
+    review = WEB_DIR / "review.html"
+    if not review.is_file():
+        return web.Response(text="review app missing (web/review.html)", status=500)
+    return web.Response(body=review.read_bytes(), content_type="text/html")
+
+
 async def delete_episode(request: web.Request) -> web.Response:
     p = _episode_dir(request.match_info["id"])
     if p is None:
@@ -512,11 +1047,35 @@ def build_app(*, backend: RobotBackend | None = None) -> web.Application:
     app["bus"] = bus
     app["supervisor"] = supervisor
     app["recorder"] = recorder
+    # Live-typed language prompt for the eval client (tools/eval_pi05.py).
+    # See get_policy_prompt / post_policy_prompt.
+    app["policy_prompt"] = ""
+    # Most recent eval-client heartbeat (raw dict + server_ts). See the
+    # heartbeat handlers; dashboard polls this for the eval-panel indicators.
+    app["policy_heartbeat"] = {}
+    # Daemon-managed eval subprocess (see post_policy_run/stop). The
+    # process owns its own lifecycle; we just keep a handle so we can
+    # report state and stop it on demand.
+    app["eval_process"] = None
+    app["eval_cmd"] = []
+    app["eval_log"] = collections.deque(maxlen=300)
 
     async def _on_startup(_: web.Application) -> None:
         bus.attach_loop(asyncio.get_running_loop())
 
     async def _on_cleanup(_: web.Application) -> None:
+        # Bring down the eval subprocess if it's still running so a
+        # daemon exit doesn't leave the policy commanding the arm.
+        proc = app.get("eval_process")
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=2.0)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
         supervisor.shutdown()
 
     app.on_startup.append(_on_startup)
@@ -524,6 +1083,7 @@ def build_app(*, backend: RobotBackend | None = None) -> web.Application:
 
     routes = [
         web.get("/", serve_dashboard),
+        web.get("/review", serve_review),
         web.get("/healthz", healthz),
         web.get("/v1/world", get_world),
         web.get("/v1/world/stream", stream_world),
@@ -533,11 +1093,21 @@ def build_app(*, backend: RobotBackend | None = None) -> web.Application:
         web.post("/v1/teleop/estop", post_estop),
         web.post("/v1/teleop/estop/clear", post_estop_clear),
         web.post("/v1/teleop/ghost", post_ghost_pose),
+        web.post("/v1/teleop/joints", post_joint_target),
+        web.get("/v1/policy/prompt", get_policy_prompt),
+        web.post("/v1/policy/prompt", post_policy_prompt),
+        web.get("/v1/policy/heartbeat", get_policy_heartbeat),
+        web.post("/v1/policy/heartbeat", post_policy_heartbeat),
+        web.post("/v1/policy/run", post_policy_run),
+        web.post("/v1/policy/stop", post_policy_stop),
+        web.get("/v1/policy/run/state", get_policy_run_state),
         web.get("/v1/cameras/{name}.jpg", get_camera_jpeg),
         web.post("/v1/cameras/swap", post_cameras_swap),
         web.post("/v1/teleop/drive_mode", post_drive_mode),
         web.get("/v1/teleop/filter", get_filter_params),
         web.post("/v1/teleop/filter", post_filter_params),
+        web.get("/v1/teleop/motion_scale", get_motion_scale),
+        web.post("/v1/teleop/motion_scale", post_motion_scale),
         web.post("/v1/recording/start", post_recording_start),
         web.post("/v1/recording/save", post_recording_save),
         web.post("/v1/recording/cancel", post_recording_cancel),
@@ -549,6 +1119,9 @@ def build_app(*, backend: RobotBackend | None = None) -> web.Application:
         web.get("/v1/episodes/{id}/thumbnail.jpg", get_episode_thumbnail),
         web.get("/v1/episodes/{id}/cameras/{cam}/{idx}.jpg", get_episode_camera_frame),
         web.delete("/v1/episodes/{id}", delete_episode),
+        web.patch("/v1/episodes/{id}/meta", patch_episode_meta),
+        web.post("/v1/episodes/{id}/clip", clip_episode),
+        web.get("/v1/episodes/{id}/camera_timing", get_episode_camera_timing),
     ]
     for route in routes:
         app.router.add_route(route.method, route.path, route.handler)

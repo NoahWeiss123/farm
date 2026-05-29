@@ -55,8 +55,8 @@ def serve(
         )
     else:
         from farm_edge_agent.backends import SimBackend
-        chosen = SimBackend()
-        click.echo("farm serve: backend=sim")
+        chosen = SimBackend(cameras=cameras)
+        click.echo(f"farm serve: backend=sim cameras={'on' if cameras else 'OFF'}")
 
     if open_browser:
         url = f"http://{host}:{port}/"

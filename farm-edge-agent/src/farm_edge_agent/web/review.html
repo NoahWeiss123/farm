@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FARM — Episode Review</title>
+<style>
+  :root {
+    --bg: #fafafa;
+    --fg: #1a1a1a;
+    --muted: #6b6b6b;
+    --soft: #d4d4d4;
+    --line: #e5e5e5;
+    --accent: #2563eb;
+    --accent2: #1d4ed8;
+    --red: #dc2626;
+    --green: #16a34a;
+    --pad: 12px;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    color: var(--fg); background: var(--bg);
+    overflow: hidden;
+  }
+  body { display: flex; }
+
+  /* ── Sidebar ───────────────────────────────────────────────────────── */
+  #side {
+    width: 300px; flex-shrink: 0;
+    border-right: 1px solid var(--line);
+    background: #fff;
+    display: flex; flex-direction: column;
+    height: 100vh;
+  }
+  #sideHead {
+    padding: 12px var(--pad) 8px;
+    border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  #sideHead h1 {
+    font-size: 12px; margin: 0; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600;
+  }
+  #sideHead .count { font-size: 11px; color: var(--muted); }
+  #sideHead a {
+    margin-left: auto; font-size: 11px; color: var(--muted); text-decoration: none;
+  }
+  #sideHead a:hover { color: var(--accent); }
+  #sideFilter {
+    padding: 8px var(--pad);
+    border-bottom: 1px solid var(--line);
+    display: flex; gap: 6px; align-items: center;
+    font-size: 11px;
+  }
+  #sideFilter input[type=checkbox] { margin: 0; }
+  #sideFilter .progress {
+    margin-left: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--muted); font-size: 11px;
+  }
+  #list { flex: 1; overflow-y: auto; }
+  .ep {
+    padding: 6px var(--pad);
+    border-bottom: 1px solid var(--line);
+    cursor: pointer;
+    display: flex; gap: 8px; align-items: center;
+    transition: background 80ms;
+  }
+  .ep:hover { background: #f3f4f6; }
+  .ep.selected {
+    background: #eff6ff;
+    border-left: 3px solid var(--accent);
+    padding-left: calc(var(--pad) - 3px);
+  }
+  .ep .thumb {
+    width: 32px; height: 24px; background: #000;
+    border-radius: 2px; flex-shrink: 0; object-fit: cover;
+  }
+  .ep .body { flex: 1; min-width: 0; }
+  .ep .row1 {
+    font-size: 12px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    display: flex; gap: 6px; align-items: center;
+  }
+  .ep .row1 .time {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--muted); font-size: 11px; flex-shrink: 0;
+  }
+  .ep .row1 .desc-mark {
+    flex-shrink: 0; color: var(--green); font-weight: 700; font-size: 11px;
+  }
+  .ep .row1 .desc-mark.empty { color: var(--soft); }
+  .ep .row2 {
+    font-size: 10px; color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .ep .row2.has-desc { color: var(--fg); font-family: inherit; }
+
+  /* ── Main pane ─────────────────────────────────────────────────────── */
+  #main {
+    flex: 1;
+    padding: var(--pad);
+    display: flex; flex-direction: column; gap: 8px;
+    overflow: hidden; height: 100vh;
+  }
+  #placeholder {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 14px;
+  }
+  #placeholder .help {
+    text-align: center; max-width: 420px;
+  }
+  #placeholder .help h2 { font-size: 14px; margin: 0 0 8px; color: var(--fg); }
+  #placeholder .help kbd {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+    background: #fff; border: 1px solid var(--soft); border-bottom-width: 2px;
+    border-radius: 3px; padding: 1px 5px;
+  }
+
+  #viewer { display: none; flex: 1; flex-direction: column; gap: 8px; min-height: 0; }
+  #viewer.active { display: flex; }
+  #viewHead { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  #viewHead h2 {
+    margin: 0; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  #viewHead .sub { font-size: 11px; color: var(--muted); }
+  #viewHead .navHint { margin-left: auto; font-size: 11px; color: var(--muted); }
+  #viewHead .navHint kbd {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px;
+    background: #fff; border: 1px solid var(--soft); border-radius: 3px; padding: 0 4px;
+  }
+
+  #cams {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+    min-height: 0; flex: 1;
+  }
+  #cams figure {
+    margin: 0; position: relative;
+    border: 1px solid var(--line); border-radius: 6px;
+    background: #000; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #cams img {
+    width: 100%; height: 100%; object-fit: contain; display: block;
+  }
+  #cams figcaption {
+    position: absolute; top: 6px; left: 8px;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.1em;
+    text-transform: uppercase; color: #fff;
+    background: rgba(0,0,0,0.5); padding: 2px 6px; border-radius: 3px;
+  }
+
+  /* ── FPS bars + scrubber ───────────────────────────────────────────── */
+  #scrubBlock { display: flex; flex-direction: column; gap: 2px; }
+  .fpsRow {
+    display: flex; align-items: center; gap: 6px; height: 10px;
+  }
+  .fpsRow .lab {
+    width: 36px; font-size: 9px; font-weight: 600; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--muted); text-align: right;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .fpsRow canvas { flex: 1; height: 8px; image-rendering: pixelated; border-radius: 2px; }
+  #scrubRow { position: relative; height: 26px; margin-top: 4px; }
+  #scrubTrack {
+    position: absolute; left: 0; right: 0; top: 11px;
+    height: 4px; background: var(--soft); border-radius: 2px;
+  }
+  #scrubRange {
+    position: absolute; top: 11px; height: 4px;
+    background: var(--accent); border-radius: 2px; pointer-events: none;
+  }
+  .handle {
+    position: absolute; top: 3px; width: 10px; height: 20px;
+    background: #fff; border: 2px solid var(--accent);
+    border-radius: 3px; cursor: ew-resize;
+    transform: translateX(-50%); user-select: none;
+  }
+  #playhead {
+    position: absolute; top: 0; height: 26px; width: 2px;
+    background: var(--red); pointer-events: none; transform: translateX(-50%);
+  }
+  #scrubMeta {
+    display: flex; justify-content: space-between; gap: 8px;
+    font-size: 11px; color: var(--muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  #fpsLegend {
+    display: flex; gap: 10px; font-size: 10px; color: var(--muted); align-items: center;
+    margin-top: 2px;
+  }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 3px; vertical-align: middle; }
+
+  /* ── Controls + meta ───────────────────────────────────────────────── */
+  #ctrlRow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  button.btn {
+    height: 26px; padding: 0 10px;
+    font: inherit; font-size: 12px;
+    background: #fff; color: var(--fg);
+    border: 1px solid var(--soft); border-radius: 4px; cursor: pointer;
+  }
+  button.btn:hover:not(:disabled) { background: #f3f4f6; }
+  button.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.btn.primary:hover:not(:disabled) { background: var(--accent2); }
+  button.btn.danger { background: var(--red); color: #fff; border-color: var(--red); }
+  button.btn.danger:hover:not(:disabled) { background: #b91c1c; }
+  button.btn.warn { background: #f59e0b; color: #fff; border-color: #f59e0b; }
+  button.btn.warn:hover:not(:disabled) { background: #d97706; }
+  #ctrlRow .spacer { flex: 1; }
+  #ctrlRow .group { display: flex; gap: 4px; align-items: center; }
+  #ctrlRow .label { font-size: 11px; color: var(--muted); margin-right: 4px; }
+
+  /* Description row — the main writing surface */
+  #descRow { display: flex; flex-direction: column; gap: 4px; }
+  #descRow .descHead {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 11px; color: var(--muted);
+  }
+  #descRow .descHead kbd {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px;
+    background: #fff; border: 1px solid var(--soft); border-radius: 3px; padding: 0 4px;
+  }
+  #descRow textarea {
+    width: 100%; min-height: 70px; resize: vertical;
+    font: inherit; font-size: 13px; line-height: 1.5;
+    padding: 8px 10px;
+    border: 1px solid var(--soft); border-radius: 4px;
+    background: #fff;
+  }
+  #descRow textarea:focus {
+    outline: 2px solid var(--accent); outline-offset: -2px;
+    border-color: var(--accent);
+  }
+  #descRow.dirty textarea { border-color: var(--red); }
+  #descRow .descActions { display: flex; gap: 6px; align-items: center; }
+  #descRow .descActions .spacer { flex: 1; }
+  #descRow .descStatus { font-size: 11px; color: var(--muted); }
+  #descRow .descStatus.dirty { color: var(--red); font-weight: 600; }
+  #descRow .descStatus.saved { color: var(--green); }
+
+  #toast {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    padding: 8px 16px; background: #1a1a1a; color: #fff;
+    border-radius: 6px; font-size: 12px;
+    opacity: 0; pointer-events: none; transition: opacity 200ms;
+    z-index: 100;
+  }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+  <aside id="side">
+    <div id="sideHead">
+      <h1>Episodes</h1>
+      <span class="count" id="epCount">0</span>
+      <a href="/" title="back to live dashboard">live ›</a>
+    </div>
+    <div id="sideFilter">
+      <label><input type="checkbox" id="onlyNeeds"> needs description only</label>
+      <span class="progress" id="progress"></span>
+    </div>
+    <div id="list"></div>
+  </aside>
+
+  <main id="main">
+    <div id="placeholder">
+      <div class="help">
+        <h2>Select an episode to review</h2>
+        <div style="color: var(--muted); line-height: 1.7;">
+          <kbd>↑</kbd> <kbd>↓</kbd> next / prev episode &nbsp;·&nbsp;
+          <kbd>←</kbd> <kbd>→</kbd> step frame<br>
+          <kbd>Space</kbd> play / pause &nbsp;·&nbsp;
+          <kbd>I</kbd> <kbd>O</kbd> set clip in / out<br>
+          <kbd>D</kbd> focus description &nbsp;·&nbsp;
+          <kbd>⌘↩</kbd> save &amp; next<br>
+          <kbd>,</kbd> label "pick up → box" &nbsp;·&nbsp;
+          <kbd>.</kbd> label "box → desk" <span style="color: var(--muted);">(saves &amp; advances)</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="viewer">
+      <div id="viewHead">
+        <h2 id="vTitle"></h2>
+        <span class="sub" id="vSub"></span>
+        <span class="navHint"><kbd>↑</kbd>/<kbd>↓</kbd> prev/next · <kbd>,</kbd> pick→box · <kbd>.</kbd> box→desk · <kbd>⌘↩</kbd> save &amp; next</span>
+      </div>
+
+      <div id="cams">
+        <figure>
+          <img id="camBase" alt="base">
+          <figcaption>Base</figcaption>
+        </figure>
+        <figure>
+          <img id="camWrist" alt="wrist">
+          <figcaption>Wrist</figcaption>
+        </figure>
+      </div>
+
+      <div id="scrubBlock">
+        <div class="fpsRow"><span class="lab" id="labBase">BASE</span><canvas id="fpsBase" width="1000" height="8"></canvas></div>
+        <div class="fpsRow"><span class="lab" id="labWrist">WRIST</span><canvas id="fpsWrist" width="1000" height="8"></canvas></div>
+        <div id="scrubRow">
+          <div id="scrubTrack"></div>
+          <div id="scrubRange"></div>
+          <div id="playhead"></div>
+          <div class="handle" id="handleIn"></div>
+          <div class="handle" id="handleOut"></div>
+        </div>
+        <div id="scrubMeta">
+          <span id="frameLabel">frame 0/0</span>
+          <span id="timeLabel">0.00s / 0.00s</span>
+          <span id="clipLabel">clip [0, 0)</span>
+        </div>
+        <div id="fpsLegend">
+          <span><span class="swatch" style="background:#16a34a"></span>fresh frame (≤1.3×)</span>
+          <span><span class="swatch" style="background:#eab308"></span>≤2×</span>
+          <span><span class="swatch" style="background:#f97316"></span>≤3.5×</span>
+          <span><span class="swatch" style="background:#dc2626"></span>stale / duplicate</span>
+        </div>
+      </div>
+
+      <div id="ctrlRow">
+        <div class="group">
+          <button class="btn" id="btnSkipStart" title="jump to clip in">⏮</button>
+          <button class="btn" id="btnStepBack" title="step back (←)">◀</button>
+          <button class="btn primary" id="btnPlay" title="play / pause (Space)">▶</button>
+          <button class="btn" id="btnStepFwd" title="step forward (→)">▶</button>
+          <button class="btn" id="btnSkipEnd" title="jump to clip out">⏭</button>
+        </div>
+        <div class="group">
+          <span class="label">speed</span>
+          <select id="speed">
+            <option value="0.25">0.25×</option>
+            <option value="0.5">0.5×</option>
+            <option value="1" selected>1×</option>
+            <option value="2">2×</option>
+            <option value="4">4×</option>
+          </select>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn warn" id="btnClip" title="destructively trim to [clip_in, clip_out)">✂ Clip</button>
+        <button class="btn danger" id="btnDelete" title="delete episode">🗑 Delete</button>
+      </div>
+
+      <div id="descRow">
+        <div class="descHead">
+          <span>Description <span style="color: var(--muted); font-weight: 400;">— natural language; this is what the model will be trained on</span></span>
+          <span><kbd>⌘↩</kbd> save &amp; next · <kbd>⌘S</kbd> save</span>
+        </div>
+        <textarea id="descBox" placeholder="e.g. pick up the red block from the left bin and place it in the right bin"></textarea>
+        <div class="descActions">
+          <button class="btn primary" id="btnSaveDesc">Save</button>
+          <button class="btn" id="btnSaveNext">Save &amp; Next ↓</button>
+          <span class="spacer"></span>
+          <span class="descStatus" id="descStatus"></span>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div id="toast"></div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────
+const state = {
+  episodes: [],           // sorted, newest first
+  filtered: [],           // post-filter view
+  current: null,          // { id, meta, frames, timing }
+  frameIdx: 0,
+  clipIn: 0,
+  clipOut: 0,
+  playing: false,
+  playTimer: null,
+  origDesc: '',
+};
+
+// ── DOM ──────────────────────────────────────────────────────────────
+const listEl = document.getElementById('list');
+const epCount = document.getElementById('epCount');
+const progressEl = document.getElementById('progress');
+const onlyNeeds = document.getElementById('onlyNeeds');
+const placeholder = document.getElementById('placeholder');
+const viewer = document.getElementById('viewer');
+const vTitle = document.getElementById('vTitle');
+const vSub = document.getElementById('vSub');
+const camBase = document.getElementById('camBase');
+const camWrist = document.getElementById('camWrist');
+const fpsBase = document.getElementById('fpsBase');
+const fpsWrist = document.getElementById('fpsWrist');
+const labBase = document.getElementById('labBase');
+const labWrist = document.getElementById('labWrist');
+const scrubRow = document.getElementById('scrubRow');
+const scrubRange = document.getElementById('scrubRange');
+const playhead = document.getElementById('playhead');
+const handleIn = document.getElementById('handleIn');
+const handleOut = document.getElementById('handleOut');
+const frameLabel = document.getElementById('frameLabel');
+const timeLabel = document.getElementById('timeLabel');
+const clipLabel = document.getElementById('clipLabel');
+const descBox = document.getElementById('descBox');
+const descStatus = document.getElementById('descStatus');
+const descRow = document.getElementById('descRow');
+const speedSel = document.getElementById('speed');
+const toast = document.getElementById('toast');
+
+// ── Utilities ────────────────────────────────────────────────────────
+function showToast(msg, isError) {
+  toast.textContent = msg;
+  toast.style.background = isError ? '#dc2626' : '#1a1a1a';
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 1800);
+}
+
+function fmtDur(s) {
+  if (!Number.isFinite(s)) return '--';
+  if (s < 60) return s.toFixed(1) + 's';
+  const m = Math.floor(s / 60);
+  return `${m}m${(s - m * 60).toFixed(0)}s`;
+}
+
+function fpsColor(dt_ms, target_ms) {
+  const r = dt_ms / target_ms;
+  if (r <= 1.3) return '#16a34a';
+  if (r <= 2.0) return '#eab308';
+  if (r <= 3.5) return '#f97316';
+  return '#dc2626';
+}
+
+// ── Episode list ────────────────────────────────────────────────────
+async function loadList() {
+  const r = await fetch('/v1/episodes');
+  const data = await r.json();
+  state.episodes = data.episodes || [];
+  applyFilter();
+}
+
+function applyFilter() {
+  const filterFn = onlyNeeds.checked ? (e => !e.has_description) : (() => true);
+  state.filtered = state.episodes.filter(filterFn);
+  const withDesc = state.episodes.filter(e => e.has_description).length;
+  epCount.textContent = state.filtered.length;
+  progressEl.textContent = `${withDesc}/${state.episodes.length} described`;
+  renderList();
+}
+
+function renderList() {
+  listEl.innerHTML = '';
+  const sel = state.current?.id;
+  for (const ep of state.filtered) {
+    const div = document.createElement('div');
+    div.className = 'ep';
+    if (sel === ep.id) div.classList.add('selected');
+    div.dataset.id = ep.id;
+    const img = document.createElement('img');
+    img.className = 'thumb';
+    img.src = `/v1/episodes/${ep.id}/thumbnail.jpg`;
+    img.onerror = () => { img.style.background = '#000'; img.removeAttribute('src'); };
+    const body = document.createElement('div');
+    body.className = 'body';
+    const row1 = document.createElement('div');
+    row1.className = 'row1';
+    const time = document.createElement('span');
+    time.className = 'time';
+    const du = Number.isFinite(ep.duration_s) ? fmtDur(ep.duration_s) : '?';
+    const fc = Number.isFinite(ep.frame_count) ? ep.frame_count : '?';
+    time.textContent = `${du} · ${fc}fr`;
+    const mark = document.createElement('span');
+    mark.className = 'desc-mark' + (ep.has_description ? '' : ' empty');
+    mark.textContent = ep.has_description ? '✓' : '○';
+    mark.title = ep.has_description ? 'has description' : 'no description';
+    row1.appendChild(mark);
+    row1.appendChild(time);
+    const row2 = document.createElement('div');
+    row2.className = 'row2' + (ep.has_description ? ' has-desc' : '');
+    if (ep.has_description) {
+      row2.textContent = (ep.description || '').slice(0, 80);
+    } else {
+      row2.textContent = ep.id.replace(/^episode_/, '');
+    }
+    body.appendChild(row1);
+    body.appendChild(row2);
+    div.appendChild(img);
+    div.appendChild(body);
+    div.addEventListener('click', () => selectEpisode(ep.id));
+    listEl.appendChild(div);
+  }
+}
+
+function selectedIndex() {
+  if (!state.current) return -1;
+  return state.filtered.findIndex(e => e.id === state.current.id);
+}
+
+function selectNext(delta) {
+  if (state.filtered.length === 0) return;
+  const cur = selectedIndex();
+  let next;
+  if (cur < 0) next = 0;
+  else next = Math.max(0, Math.min(state.filtered.length - 1, cur + delta));
+  if (next === cur && state.filtered.length === 1) return;
+  selectEpisode(state.filtered[next].id);
+}
+
+// ── Load + render an episode ─────────────────────────────────────────
+async function selectEpisode(id) {
+  pause();
+  placeholder.style.display = 'none';
+  viewer.classList.add('active');
+  vTitle.textContent = id;
+  vSub.textContent = 'loading…';
+  try {
+    const [metaR, framesR, timingR] = await Promise.all([
+      fetch(`/v1/episodes/${id}/meta.json`),
+      fetch(`/v1/episodes/${id}/frames.jsonl`),
+      fetch(`/v1/episodes/${id}/camera_timing`),
+    ]);
+    if (!metaR.ok) throw new Error('meta fetch failed');
+    if (!framesR.ok) throw new Error('frames fetch failed');
+    if (!timingR.ok) throw new Error('timing fetch failed');
+    const meta = await metaR.json();
+    const text = await framesR.text();
+    const frames = text.split('\n').filter(l => l.trim()).map(l => JSON.parse(l));
+    const timing = await timingR.json();
+    state.current = { id, meta, frames, timing };
+    state.frameIdx = 0;
+    state.clipIn = 0;
+    state.clipOut = frames.length;
+    state.origDesc = meta.description || '';
+    descBox.value = state.origDesc;
+    setDirty(false);
+    vSub.textContent = `${fmtDur(meta.duration_s)} · ${frames.length} frames · target ${timing.fps_target || meta.fps || 30} fps`;
+    renderFpsBars();
+    renderScrubber();
+    showFrame(0);
+    // Scroll the selected item into view in the sidebar.
+    renderList();
+    requestAnimationFrame(() => {
+      const cur = listEl.querySelector(`.ep[data-id="${id}"]`);
+      if (cur) cur.scrollIntoView({ block: 'nearest' });
+    });
+  } catch (e) {
+    vSub.textContent = 'error: ' + e.message;
+  }
+}
+
+// ── Per-camera fps colorbars ────────────────────────────────────────
+function renderFpsBars() {
+  if (!state.current) return;
+  const { timing } = state.current;
+  const target_ms = 1000.0 / (timing.fps_target || 30);
+  const cams = timing.cameras || {};
+  drawFpsBar(fpsBase,  cams.base?.dt_ms  || [], target_ms);
+  drawFpsBar(fpsWrist, cams.wrist?.dt_ms || [], target_ms);
+  // Surface effective median fps per camera in the labels.
+  labBase.textContent  = 'BASE ' + effectiveFps(cams.base?.dt_ms);
+  labWrist.textContent = 'WRIST ' + effectiveFps(cams.wrist?.dt_ms);
+}
+
+function effectiveFps(dts) {
+  if (!dts || !dts.length) return '';
+  const sorted = [...dts].sort((a, b) => a - b);
+  const median_ms = sorted[Math.floor(sorted.length / 2)];
+  if (!median_ms || !Number.isFinite(median_ms)) return '';
+  const fps = 1000.0 / median_ms;
+  return `· ~${fps.toFixed(0)}fps`;
+}
+
+function drawFpsBar(canvas, dts, target_ms) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width;
+  const H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  if (!dts || dts.length === 0) {
+    ctx.fillStyle = '#e5e5e5';
+    ctx.fillRect(0, 0, W, H);
+    return;
+  }
+  const n = dts.length;
+  for (let i = 0; i < n; i++) {
+    ctx.fillStyle = fpsColor(dts[i], target_ms);
+    const x0 = Math.floor((i / n) * W);
+    const x1 = Math.floor(((i + 1) / n) * W);
+    ctx.fillRect(x0, 0, Math.max(1, x1 - x0), H);
+  }
+}
+
+// ── Scrubber painting (handles, range, playhead) ────────────────────
+function pctFor(i) {
+  if (!state.current) return 0;
+  const n = state.current.frames.length;
+  if (n <= 1) return 0;
+  return (i / (n - 1)) * 100;
+}
+
+function renderScrubber() {
+  if (!state.current) return;
+  const n = state.current.frames.length;
+  handleIn.style.left = pctFor(state.clipIn) + '%';
+  handleOut.style.left = pctFor(state.clipOut - 1) + '%';
+  scrubRange.style.left = pctFor(state.clipIn) + '%';
+  scrubRange.style.right = (100 - pctFor(state.clipOut - 1)) + '%';
+  playhead.style.left = pctFor(state.frameIdx) + '%';
+  const t = state.current.frames[state.frameIdx]?.t ?? 0;
+  const tEnd = state.current.frames[n - 1]?.t ?? 0;
+  frameLabel.textContent = `frame ${state.frameIdx}/${n - 1}`;
+  timeLabel.textContent = `${(+t).toFixed(2)}s / ${(+tEnd).toFixed(2)}s`;
+  clipLabel.textContent = `clip [${state.clipIn}, ${state.clipOut}) — ${state.clipOut - state.clipIn} frames`;
+}
+
+function showFrame(i) {
+  if (!state.current) return;
+  const n = state.current.frames.length;
+  if (n === 0) return;
+  i = Math.max(0, Math.min(n - 1, i));
+  state.frameIdx = i;
+  const id = state.current.id;
+  const cams = state.current.meta.cameras || ['base', 'wrist'];
+  if (cams.includes('base')) camBase.src = `/v1/episodes/${id}/cameras/base/${String(i).padStart(6, '0')}.jpg`;
+  if (cams.includes('wrist')) camWrist.src = `/v1/episodes/${id}/cameras/wrist/${String(i).padStart(6, '0')}.jpg`;
+  renderScrubber();
+}
+
+// ── Scrubber interaction ─────────────────────────────────────────────
+function pctToFrame(pct) {
+  if (!state.current) return 0;
+  const n = state.current.frames.length;
+  return Math.round((pct / 100) * (n - 1));
+}
+
+function scrubFromEvent(e) {
+  const rect = scrubRow.getBoundingClientRect();
+  const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+  const pct = Math.max(0, Math.min(100, (x / rect.width) * 100));
+  return pctToFrame(pct);
+}
+
+let drag = null;
+scrubRow.addEventListener('mousedown', (e) => {
+  if (!state.current) return;
+  if (e.target === handleIn) drag = 'in';
+  else if (e.target === handleOut) drag = 'out';
+  else { drag = 'play'; showFrame(scrubFromEvent(e)); }
+  e.preventDefault();
+});
+window.addEventListener('mousemove', (e) => {
+  if (!drag || !state.current) return;
+  const f = scrubFromEvent(e);
+  const n = state.current.frames.length;
+  if (drag === 'in') {
+    state.clipIn = Math.max(0, Math.min(state.clipOut - 1, f));
+    renderScrubber();
+  } else if (drag === 'out') {
+    state.clipOut = Math.max(state.clipIn + 1, Math.min(n, f + 1));
+    renderScrubber();
+  } else if (drag === 'play') {
+    showFrame(f);
+  }
+});
+window.addEventListener('mouseup', () => { drag = null; });
+
+// ── Playback ─────────────────────────────────────────────────────────
+function play() {
+  if (!state.current || state.playing) return;
+  state.playing = true;
+  document.getElementById('btnPlay').textContent = '⏸';
+  const fps = state.current.meta.fps || 30;
+  const speed = parseFloat(speedSel.value);
+  const interval = 1000 / (fps * speed);
+  state.playTimer = setInterval(() => {
+    if (state.frameIdx >= state.clipOut - 1) showFrame(state.clipIn);
+    else showFrame(state.frameIdx + 1);
+  }, Math.max(8, interval));
+}
+function pause() {
+  state.playing = false;
+  document.getElementById('btnPlay').textContent = '▶';
+  if (state.playTimer) { clearInterval(state.playTimer); state.playTimer = null; }
+}
+function togglePlay() { state.playing ? pause() : play(); }
+
+document.getElementById('btnPlay').addEventListener('click', togglePlay);
+document.getElementById('btnStepBack').addEventListener('click', () => { pause(); showFrame(state.frameIdx - 1); });
+document.getElementById('btnStepFwd').addEventListener('click', () => { pause(); showFrame(state.frameIdx + 1); });
+document.getElementById('btnSkipStart').addEventListener('click', () => { pause(); showFrame(state.clipIn); });
+document.getElementById('btnSkipEnd').addEventListener('click', () => { pause(); showFrame(state.clipOut - 1); });
+speedSel.addEventListener('change', () => { if (state.playing) { pause(); play(); } });
+
+// ── Description ──────────────────────────────────────────────────────
+function setDirty(d) {
+  if (d) {
+    descRow.classList.add('dirty');
+    descStatus.className = 'descStatus dirty';
+    descStatus.textContent = 'unsaved';
+  } else {
+    descRow.classList.remove('dirty');
+    descStatus.className = 'descStatus';
+    descStatus.textContent = '';
+  }
+}
+
+descBox.addEventListener('input', () => {
+  setDirty(descBox.value !== state.origDesc);
+});
+
+async function saveDescription() {
+  if (!state.current) return false;
+  const desc = descBox.value;
+  try {
+    const r = await fetch(`/v1/episodes/${state.current.id}/meta`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description: desc }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    state.origDesc = desc;
+    state.current.meta.description = desc;
+    setDirty(false);
+    descStatus.className = 'descStatus saved';
+    descStatus.textContent = '✓ saved';
+    // Update the in-memory episode list so the sidebar mark updates
+    // without a roundtrip.
+    const ep = state.episodes.find(e => e.id === state.current.id);
+    if (ep) {
+      ep.description = desc;
+      ep.has_description = !!(desc && desc.trim());
+    }
+    applyFilter();
+    return true;
+  } catch (e) {
+    showToast('save failed: ' + e.message, true);
+    return false;
+  }
+}
+
+document.getElementById('btnSaveDesc').addEventListener('click', saveDescription);
+
+async function saveAndNext() {
+  const ok = await saveDescription();
+  if (!ok) return;
+  // After save, the list may have shrunk if "needs description only" is
+  // on. Find the next visible episode by id, but if our current id was
+  // filtered out, just go to whatever's at the same index.
+  const cur = selectedIndex();
+  if (cur < 0) {
+    // current was filtered out — go to whatever's at the previous index
+    // or the first remaining episode.
+    if (state.filtered.length > 0) selectEpisode(state.filtered[0].id);
+    return;
+  }
+  if (cur + 1 < state.filtered.length) {
+    selectEpisode(state.filtered[cur + 1].id);
+  } else {
+    showToast('that was the last one');
+  }
+}
+
+document.getElementById('btnSaveNext').addEventListener('click', saveAndNext);
+
+// ── Quick labels ─────────────────────────────────────────────────────
+// Two-class dataset: , = pick→box, . = box→desk. Set the description,
+// save, and auto-advance to the next episode.
+const QUICK_LABELS = {
+  pick: 'Picking up the bottle and placing it on the box',
+  place: 'Picking up the bottle off of the box and putting it on the desk',
+};
+
+async function quickLabel(text) {
+  if (!state.current) return;
+  descBox.value = text;
+  setDirty(descBox.value !== state.origDesc);
+  await saveAndNext();
+}
+
+// ── Clip ────────────────────────────────────────────────────────────
+document.getElementById('btnClip').addEventListener('click', async () => {
+  if (!state.current) return;
+  const n = state.current.frames.length;
+  if (state.clipIn === 0 && state.clipOut === n) {
+    showToast('nothing to clip — full range selected', true);
+    return;
+  }
+  const kept = state.clipOut - state.clipIn;
+  if (!confirm(
+    `Trim "${state.current.id}" to frames [${state.clipIn}, ${state.clipOut})?\n` +
+    `Keeps ${kept} / ${n} frames. DESTRUCTIVE — dropped frames + JPEGs are deleted.`
+  )) return;
+  try {
+    const r = await fetch(`/v1/episodes/${state.current.id}/clip`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clip_in: state.clipIn, clip_out: state.clipOut }),
+    });
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      throw new Error(data.error || `HTTP ${r.status}`);
+    }
+    showToast(`clipped to ${kept} frames`);
+    await loadList();
+    await selectEpisode(state.current.id);
+  } catch (e) {
+    showToast('clip failed: ' + e.message, true);
+  }
+});
+
+document.getElementById('btnDelete').addEventListener('click', async () => {
+  if (!state.current) return;
+  if (!confirm(`Delete "${state.current.id}" permanently?`)) return;
+  try {
+    const r = await fetch(`/v1/episodes/${state.current.id}`, { method: 'DELETE' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    showToast('deleted');
+    const cur = selectedIndex();
+    state.current = null;
+    viewer.classList.remove('active');
+    placeholder.style.display = 'flex';
+    await loadList();
+    // Try to advance to whatever's at the same slot.
+    if (state.filtered.length > 0) {
+      const next = Math.min(cur, state.filtered.length - 1);
+      if (next >= 0) selectEpisode(state.filtered[next].id);
+    }
+  } catch (e) {
+    showToast('delete failed: ' + e.message, true);
+  }
+});
+
+// ── Filter toggle ───────────────────────────────────────────────────
+onlyNeeds.addEventListener('change', applyFilter);
+
+// ── Keyboard ────────────────────────────────────────────────────────
+window.addEventListener('keydown', (e) => {
+  const inText = e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT';
+  // ⌘↩ / Ctrl+Enter from anywhere = save + next
+  if ((e.metaKey || e.ctrlKey) && e.code === 'Enter') {
+    e.preventDefault();
+    saveAndNext();
+    return;
+  }
+  // ⌘S = save (no advance)
+  if ((e.metaKey || e.ctrlKey) && e.code === 'KeyS') {
+    e.preventDefault();
+    saveDescription();
+    return;
+  }
+  // Esc inside textarea unfocuses (frees up Space/arrows for scrubbing)
+  if (inText && e.code === 'Escape') {
+    e.preventDefault();
+    descBox.blur();
+    return;
+  }
+  if (inText) return;
+  if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+  else if (e.code === 'ArrowLeft') { e.preventDefault(); pause(); showFrame(state.frameIdx - 1); }
+  else if (e.code === 'ArrowRight') { e.preventDefault(); pause(); showFrame(state.frameIdx + 1); }
+  else if (e.code === 'ArrowUp') { e.preventDefault(); selectNext(-1); }
+  else if (e.code === 'ArrowDown') { e.preventDefault(); selectNext(1); }
+  else if (e.code === 'KeyI') { if (state.current) { state.clipIn = state.frameIdx; renderScrubber(); } }
+  else if (e.code === 'KeyO') {
+    if (state.current) {
+      state.clipOut = Math.min(state.current.frames.length, state.frameIdx + 1);
+      renderScrubber();
+    }
+  }
+  else if (e.code === 'KeyD') { e.preventDefault(); descBox.focus(); }
+  else if (e.code === 'Comma') { e.preventDefault(); quickLabel(QUICK_LABELS.pick); }
+  else if (e.code === 'Period') { e.preventDefault(); quickLabel(QUICK_LABELS.place); }
+});
+
+// ── Boot ────────────────────────────────────────────────────────────
+loadList();
+</script>
+</body>
+</html>

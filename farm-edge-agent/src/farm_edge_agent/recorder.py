@@ -24,7 +24,7 @@ import shutil
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -87,7 +87,7 @@ class Recorder:
         with self._lock:
             if self._episode_dir is not None:
                 return {"ok": False, "error": "already recording", **self._state_locked()}
-            ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
             short = uuid.uuid4().hex[:8]
             self._episode_id = f"episode_{ts}_{short}"
             self._episode_dir = self._datasets_dir / self._episode_id
@@ -200,11 +200,15 @@ class Recorder:
                         log.warning("recorder snapshot failed: %s", exc)
                         next_t += dt
                         continue
+                    # Persist the smoothed physical-robot state, not the
+                    # raw IK target driving the ghost visualization. The
+                    # xArm's joint/TCP reads come straight from the
+                    # encoders; ``target_joints`` is the unfiltered
+                    # controller-pose IK and is intentionally omitted.
                     row = {
                         "frame": frame_idx,
                         "t": round(time.time() - start_t, 4),
                         "joints": snap.get("joints"),
-                        "target_joints": snap.get("target_joints"),
                         "gripper_pos": snap.get("gripper_pos"),
                         "gripper": snap.get("gripper"),
                         "tcp_pos_mm": snap.get("tcp_pos_mm"),
@@ -288,17 +292,39 @@ class Recorder:
                 backend_name = self._supervisor.backend.backend_name
             except Exception:
                 pass
+            drive_real_arm = False
+            try:
+                drive_real_arm = bool(
+                    getattr(self._supervisor.backend, "drive_real_arm", False)
+                )
+            except Exception:
+                pass
             meta = {
                 "episode_id": episode_id,
                 "start_iso": datetime.fromtimestamp(
-                    start_t, tz=timezone.utc
+                    start_t, tz=UTC
                 ).isoformat(),
                 "duration_s": round(duration, 3),
                 "fps": self._fps,
                 "frame_count": frame_count,
                 "cameras": cameras,
                 "backend": backend_name,
+                "drive_real_arm": drive_real_arm,
                 "format": "farm-episode-v1",
+                # Declare the per-row schema so downstream converters
+                # (LeRobot / HDF5) don't have to re-derive it. Keep this
+                # in sync with the row dict written in the worker loop.
+                "frame_keys": [
+                    "frame", "t",
+                    "joints",
+                    "gripper", "gripper_pos",
+                    "tcp_pos_mm", "tcp_rpy",
+                    "controller_pose",
+                ],
+                "joint_names": [
+                    "joint1", "joint2", "joint3",
+                    "joint4", "joint5", "joint6",
+                ],
             }
             try:
                 (episode_dir / "meta.json").write_text(json.dumps(meta, indent=2))

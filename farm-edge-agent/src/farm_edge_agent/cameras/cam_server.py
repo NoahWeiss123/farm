@@ -160,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--port", type=int, required=True, help="loopback HTTP port")
     ap.add_argument("--width", type=int, default=640)
     ap.add_argument("--height", type=int, default=480)
-    ap.add_argument("--fps", type=int, default=15)
+    ap.add_argument("--fps", type=int, default=30)
     args = ap.parse_args(argv)
 
     logging.basicConfig(
