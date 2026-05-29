@@ -52,6 +52,13 @@ fi
 echo ">>> patching openpi config.py …"
 python3 "$WORK/patch_openpi_config.py"
 python3 "$WORK/patch_openpi_config_pi05.py"
+# Register the LoRA variant too (opt-in; the sbatch still defaults to the
+# full-FT pi05_farm_uf850). Harmless to register — it only adds a config
+# name. Train it with CONFIG_NAME=pi05_farm_uf850_lora. The file is optional,
+# so skip cleanly if it wasn't staged.
+if [[ -f "$WORK/patch_openpi_config_pi05_lora.py" ]]; then
+  python3 "$WORK/patch_openpi_config_pi05_lora.py"
+fi
 
 # 4) Verify the patch is syntactically valid and the config name landed.
 #    py_compile checks syntax WITHOUT importing openpi's heavy deps
@@ -66,6 +73,9 @@ for name in '"pi05_farm_uf850"' 'class LeRobotFarmDataConfig'; do
   fi
 done
 echo "    ok: pi05_farm_uf850 + LeRobotFarmDataConfig registered, config.py compiles"
+if grep -q '"pi05_farm_uf850_lora"' "$OPENPI_CONFIG_PY"; then
+  echo "    ok: pi05_farm_uf850_lora (LoRA variant) also registered"
+fi
 
 # 5) Stash the HF token in a private env file the sbatch script sources.
 #    File is chmod 600 so other students on shared storage can't read it.
