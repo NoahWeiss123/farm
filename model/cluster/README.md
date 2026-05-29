@@ -81,20 +81,24 @@ Pick an architecture. Each streams checkpoints to its own HF repo during the run
 # → NoahWeiss/farm_uf850_pi05
 sbatch train_pi05.sbatch
 
-# LoRA — 1 GPU, batch 32, 10k steps → NoahWeiss/farm_uf850_pi05_lora
+# LoRA — 1 GPU, batch 32, 12k steps (~5-7h) → NoahWeiss/farm_uf850_pi05_lora
 sbatch train_pi05_lora.sbatch
 
-# GSE — 1 GPU, batch 32, 10k steps → NoahWeiss/farm_uf850_pi05_gse
+# GSE — 1 GPU, batch 32, 12k steps (~5-7h, ~6 GPU-hours) → NoahWeiss/farm_uf850_pi05_gse
 #   ⚠ Smoke-test first (see model/FINDINGS.md) — GSE is syntax+math-validated
-#   but not yet GPU-tested.
+#   but not yet GPU-tested. For ~2-4x faster wall-clock bump --gres to gpu:2/4
+#   (it data-parallel-replicates; no FSDP).
 sbatch train_pi05_gse.sbatch
 ```
 
-**Why full FT needs 8 GPUs:** a full fine-tune of π0.5 (~3.3B params) doesn't fit
-on one 80GB H100 (Adam state alone ~40GB), so `fsdp_devices=2` shards it across
-2 GPUs; the node's other 6 form 3 more data-parallel replicas (global batch 64,
-16/replica, ~4× throughput, same final weights). LoRA and GSE freeze the
-backbone, so they fit on **one** GPU — the polite default on the shared cluster.
+**GPU-hours, not just wall-clock:** full FT burns ~28 H100-hours (8 GPUs × ~3.5h);
+LoRA and GSE freeze the backbone (no Adam state for the ~3.3B params, no FSDP),
+fit on **one** GPU, and cost ~6 H100-hours — **~4-5× cheaper**, and they leave the
+8-GPU node free. GSE's SVD-init also converges in fewer steps than random-init
+LoRA (its "faster"); both use the same 12k-step budget so the comparison is fair.
+For full FT, the 8 GPUs are a *memory* requirement: π0.5 (~3.3B) + Adam state
+(~40GB) doesn't fit one 80GB H100, so `fsdp_devices=2` shards it and the node's
+other 6 GPUs add 3 data-parallel replicas (same final weights, ~4× throughput).
 
 ## 5. Monitor
 

@@ -152,6 +152,54 @@ in-distribution frames). See `project_rtc_smooth_motion` notes.
 4. Collect more diverse demos — this is the lever for true generality.
 5. Only after the policy is solid: re-enable tuned RTC for the last bit of smoothness.
 
+## GSE: will it train faster *and* better? (research notes)
+
+From the VLA-GSE paper (arXiv:2605.06175) ablation (Table 4, Long suite), what
+actually drives GSE's gains — and what our implementation captures:
+
+| Component | Δ if removed | In our impl? |
+|---|---|---|
+| **SVD initialization** | **−13.2 pts** (the dominant lever) | **✅ yes** — attention (q/k/v) *and* FFN, verified to ~1e-14 |
+| Specialized experts | −11.0 | ✅ present (dense-summed; capacity kept) |
+| Generalized expert | −6.9 | ✅ always-on |
+| Auxiliary (load-balance) loss | −2.1 | ⚠️ omitted (needs routing; minor) |
+| Gradient scaling | −2.0 | ⚠️ omitted (minor) |
+
+So our config captures the big levers — SVD-init + both expert types — and skips
+the two ~2-pt refinements. The paper's per-token routing decouples specialists
+across *diverse* tasks; on **2 near-identical bottle tasks the routing benefit is
+marginal**, so it defaults OFF (dense) and the specialists act as added SVD-init
+capacity. That is the right trade for this data.
+
+**Why GSE should be *better* here:** it freezes the backbone (so it can't forget
+π0.5's pretrained generalization the way the 21-epoch full FT does) *and*
+SVD-initializes the adapters to the dominant subspace (so it adapts harder than
+random-init LoRA). It is the principled middle between the two failure modes in
+"Root causes" above.
+
+**Why GSE trains *faster*:**
+- **GPU-hours:** ~6 H100-hours (1 GPU × ~6 h) vs the full FT's ~28 (8 GPUs ×
+  ~3.5 h) — roughly **4–5× cheaper**. It frees the 8-GPU node for others.
+- **Convergence:** SVD-init starts the adapters at the dominant subspace (the
+  forward ≈ the base at step 0), so it needs **fewer steps** than random-init
+  LoRA — checkpoints often peak early (select on held-out, don't assume the last).
+- **Wall-clock:** GSE freezes the backbone so it needs no FSDP — it
+  data-parallel-replicates across whatever GPUs you give it. `--gres=gpu:1` is
+  ~5–7 h; bump to `gpu:2`/`gpu:4` for a ~2–4× wall-clock speedup, still far
+  cheaper than full FT. The 1-GPU run is sized to finish well inside its 12 h
+  walltime, with checkpoints every 3k so a partial run is still usable.
+
+**Config:** `gemma_2b_gse` VLM (GSE adapters, SVD-init) + LoRA-PiSSA FFN +
+full-FT action expert, frozen backbone; batch 32, 12k steps (≈6.5 epochs), a
+gentle 2.5e-5 LR. LoRA uses the **same** 12k budget so the head-to-head is fair.
+
+**Refinements left on the table** (validated on the paper's *diverse* data;
+marginal on 2 tasks — try only if GSE underperforms): (1) **decoupled LRs** (GSE
+1e-5 / action head 1e-4 via an `optax.multi_transform` patch to openpi's
+optimizer — the paper's catastrophic-forgetting guard); (2) **per-token routing**
+on q/k/v (the gate broadcast is validated for those; the attention-output einsum
+needs separate handling); (3) the load-balance + gradient-scaling terms (~+2 each).
+
 ## GSE smoke test (run before the full GSE training run)
 
 The GSE integration (`openpi_gse.py` + `patch_openpi_gse.py`) is validated for

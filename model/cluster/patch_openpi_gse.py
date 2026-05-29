@@ -155,6 +155,20 @@ class GSESVDWeightLoader(WeightLoader):
             flat[prefix + "gse_gen_b"] = np.asarray(gb)
             flat[prefix + "gse_spec_a"] = np.asarray(sa)
             flat[prefix + "gse_spec_b"] = np.asarray(sb)
+        # FFN PiSSA: extend the SVD-init lever to the gemma FeedForward LoRA
+        # adapters (gating_einsum + linear). Their LoRA scaling is 1 (alpha ==
+        # rank in the *_gse variant), so the init forward still reconstructs W0.
+        for wkey, fa, fb in (("gating_einsum", "gating_einsum_lora_a", "gating_einsum_lora_b"),
+                             ("linear", "linear_lora_a", "linear_lora_b")):
+            for key in [k for k in list(flat) if k.endswith("/" + wkey)]:
+                pre = key[: -len(wkey)]
+                if pre + fa not in flat:
+                    continue
+                rank = int(flat[pre + fa].shape[-1])
+                a, b, w_adj = _gse.svd_init_pissa(jnp.asarray(flat[key]), rank)
+                flat[key] = np.asarray(w_adj)
+                flat[pre + fa] = np.asarray(a)
+                flat[pre + fb] = np.asarray(b)
         return flax.traverse_util.unflatten_dict(flat, sep="/")
 '''
 

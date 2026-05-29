@@ -49,13 +49,15 @@ axis, so validate routing on the cluster before relying on it.
 
 WHERE SVD-INIT APPLIES. The two-step low-rank exactly reconstructs a weight only
 when the matmul axes are the trailing two and no *leading* axis is contracted.
-That holds for the input projections (qkv/q/kv: contract the feature axis) and
-the FFN dots — numerically verified to ~1e-14. It does NOT hold for the
-attention-output projection ``BTNH,NHD->BTD`` (it contracts the leading head
-axis N), so ``GSESVDWeightLoader`` leaves that adapter at its zero init (a plain
+That holds for the attention input projections (qkv/q/kv) and the FFN dots
+(gating + linear) — numerically verified to ~1e-14 — so SVD-init covers the bulk
+of the VLM: the GSE adapters here cover q/k/v, and ``GSESVDWeightLoader`` also
+PiSSA-initializes the FFN's plain LoRA adapters (see ``svd_init_pissa``). It does
+NOT hold for the attention-output projection ``BTNH,NHD->BTD`` (it contracts the
+leading head axis N), so the loader leaves that adapter at its zero init (a plain
 trainable-from-zero LoRA-style delta, backbone unadjusted) — a no-op at init,
-fully preserving W₀. Net: the dominant subspace is spectrally preserved where it
-can be, and the output projection adapts from zero like LoRA.
+fully preserving W₀. Net: the dominant subspace is spectrally preserved across
+almost the whole backbone, and only the output projection adapts from zero.
 """
 
 import re
@@ -182,7 +184,13 @@ class Einsum(nn.Module):
 class FeedForward(nn.Module):
     """Gemma FeedForward with GSE adapters (dense, SVD-initialized). Drop-in for
     the LoRA ``FeedForward``. Routing is not applied to the FFN (the paper's
-    experts are concentrated in attention)."""
+    experts are concentrated in attention).
+
+    NOTE: optional / not used by the ``*_gse`` variants — those keep the FFN on
+    the plain ``lora.FeedForward`` and let ``GSESVDWeightLoader`` PiSSA-init its
+    adapters (``svd_init_pissa``), which gives the same SVD-init benefit through
+    the proven LoRA path. This class exists for experiments that want the FFN to
+    carry the explicit generalized/specialized split too."""
 
     features: int
     hidden_dim: int
@@ -269,3 +277,25 @@ def svd_init_factors(
     spec_a = jnp.stack([a.reshape((*lead, a_dim, d)) for a in spec_a_list])  # (E, *lead, a, d)
     spec_b = jnp.stack([b.reshape((*lead, d, b_dim)) for b in spec_b_list])  # (E, *lead, d, b)
     return gen_a, gen_b, spec_a, spec_b, w_adj
+
+
+def svd_init_pissa(w0: jax.Array, rank: int):
+    """PiSSA (SVD) initialization for a single LoRA adapter — used to extend the
+    GSE spectral-init mechanism (its dominant lever, paper ablation +13 pts) to
+    the FFN, where the gemma FeedForward uses a plain LoRA adapter.
+
+    Treats the last two axes of ``w0`` as the matmul axes (batched over leading
+    dims). Returns ``(lora_a, lora_b, w_adj)`` such that ``lora_a @ lora_b``
+    reconstructs the top-``rank`` singular subspace and ``w_adj = w0 - that``
+    (Eq. 12). Assumes the LoRA scaling is 1 (alpha == rank), so at init the
+    forward ``w_adj·x + (x·a)·b`` exactly equals ``w0·x``.
+    """
+    lead = w0.shape[:-2]
+    a_dim, b_dim = w0.shape[-2], w0.shape[-1]
+    flat = w0.reshape((-1, a_dim, b_dim))
+    u, s, vt = jnp.linalg.svd(flat, full_matrices=False)
+    sq = jnp.sqrt(s[:, :rank])
+    a = u[:, :, :rank] * sq[:, None, :]      # (L, a, r)
+    b = vt[:, :rank, :] * sq[:, :, None]     # (L, r, b)
+    w_adj = (flat - jnp.einsum("lar,lrb->lab", a, b)).reshape(w0.shape)
+    return a.reshape((*lead, a_dim, rank)), b.reshape((*lead, rank, b_dim)), w_adj

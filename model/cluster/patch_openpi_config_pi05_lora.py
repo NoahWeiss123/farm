@@ -75,17 +75,17 @@ TRAIN_CONFIG_INSERT = f'''    #
         freeze_filter=pi0_config.Pi0Config({_MODEL_KWARGS}).get_freeze_filter(),
         # EMA off for LoRA (matches openpi's *_lora templates).
         ema_decay=None,
-        # batch 32 fits a single 80GB H100 for a π0.5 LoRA. 18k steps ≈ 9.7
-        # epochs over 59,183 frames — PEFT adapters need more passes to adapt
-        # than a full FT, and with the backbone frozen they overfit far less,
-        # so a higher epoch budget than full-FT's 21 is safe. Checkpoints every
-        # 3k let you select the best (don't assume the last is best).
+        # batch 32 fits a single 80GB H100. 12k steps ≈ 6.5 epochs — the SAME
+        # budget as the GSE config for a head-to-head comparison (~5-7h on 1
+        # H100). LoRA's random near-zero init converges slower than GSE's
+        # SVD-init head start, so equal-budget is exactly the comparison that
+        # surfaces GSE's "faster + better". Checkpoints every 3k for selection.
         batch_size=32,
-        num_train_steps=18_000,
+        num_train_steps=12_000,
         lr_schedule=_optimizer.CosineDecaySchedule(
-            warmup_steps=750,
+            warmup_steps=600,
             peak_lr=1e-4,
-            decay_steps=18_000,
+            decay_steps=12_000,
             decay_lr=1e-5,
         ),
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),

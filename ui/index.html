@@ -169,53 +169,22 @@
       background: #fff; cursor: pointer;
     }
     #motionScaleSel:focus { outline: 2px solid #888; outline-offset: -2px; }
-    /* ── Eval / Policy panel (bottom-left slide-in) ───────────────────── */
-    #evalPanelToggle {
-      position: fixed; bottom: var(--pad); left: var(--pad); z-index: 13;
-      height: 32px; padding: 0 14px;
-      font-family: inherit; font-size: 12px; letter-spacing: 0.04em;
-      background: #fff; color: var(--fg);
-      border: 1px solid var(--soft); border-radius: 4px;
-      cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,0.06);
-      display: inline-flex; align-items: center; gap: 8px;
-    }
-    #evalPanelToggle:hover { background: #f3f3f3; }
-    #evalPanelToggle .pt-dot {
+    /* ── Eval / Policy section (lives in the left bar, below Smoothing) ── */
+    /* The health dot rides next to the section label and mirrors the worst
+       of the required status rows. */
+    #evalHealthDot {
       display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-      background: var(--muted);
+      background: var(--muted); margin-left: 6px; vertical-align: middle;
     }
-    #evalPanelToggle.healthy .pt-dot { background: #2da44e; }
-    #evalPanelToggle.warn .pt-dot    { background: #d99416; }
-    #evalPanelToggle.bad .pt-dot     { background: #b3261e; }
-    body.evalPanelOpen #evalPanelToggle { display: none; }
-    #evalPanel {
-      position: fixed; bottom: var(--pad); left: var(--pad); z-index: 12;
-      width: 340px; max-height: calc(100vh - 32px);
-      background: var(--card); border: 1px solid var(--line); border-radius: 8px;
-      box-shadow: 0 8px 28px rgba(0,0,0,0.18);
-      display: none; flex-direction: column; overflow: hidden;
-    }
-    body.evalPanelOpen #evalPanel { display: flex; }
-    #evalPanel .ep-head {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 10px 14px; border-bottom: 1px solid var(--soft);
-      font-family: ui-monospace, "SF Mono", Menlo, monospace;
-      font-size: 12px; font-weight: 600; letter-spacing: 0.04em;
-    }
-    #evalPanel .ep-head .ep-close {
-      width: 24px; height: 24px; padding: 0;
-      background: transparent; border: 0; cursor: pointer;
-      color: var(--muted); font-size: 18px; line-height: 1;
-    }
-    #evalPanel .ep-head .ep-close:hover { color: var(--fg); }
-    #evalPanel .ep-body {
-      padding: 12px 14px; display: flex; flex-direction: column; gap: 12px;
-      overflow-y: auto;
-    }
-    #evalPanel .ep-section-label {
+    #evalHealthDot.healthy { background: #2da44e; }
+    #evalHealthDot.warn    { background: #d99416; }
+    #evalHealthDot.bad     { background: #b3261e; }
+    /* Sub-group label + spacing inside the Eval / Policy section. */
+    #eval .ep-section-label {
       font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
-      color: var(--muted); margin-bottom: 4px;
+      color: var(--muted); margin-bottom: 6px;
     }
+    #eval .ep-group + .ep-group { margin-top: 14px; }
     #evalStatusList { display: flex; flex-direction: column; gap: 4px; }
     .ep-stat {
       display: grid; grid-template-columns: 12px 1fr auto;
@@ -663,6 +632,79 @@
             <input id="beta" type="number" min="0" max="0.5" step="0.005" value="0.100">
             <button type="button" class="step-btn" data-target="beta" data-delta="0.005">+</button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Eval / Policy (the live run controls + status) ──────────────── -->
+    <div class="section">
+      <div class="section-label">Eval / Policy <span id="evalHealthDot"></span></div>
+      <div id="eval">
+        <div class="ep-group">
+          <div class="ep-section-label">Status</div>
+          <div id="evalStatusList">
+            <div class="ep-stat" data-stat="daemon">
+              <span class="ep-dot"></span>
+              <span class="ep-label">Daemon</span>
+              <span class="ep-val">…</span>
+            </div>
+            <div class="ep-stat" data-stat="arm">
+              <span class="ep-dot"></span>
+              <span class="ep-label">Arm</span>
+              <span class="ep-val">…</span>
+            </div>
+            <div class="ep-stat" data-stat="estop">
+              <span class="ep-dot"></span>
+              <span class="ep-label">E-stop</span>
+              <span class="ep-val">…</span>
+            </div>
+            <div class="ep-stat" data-stat="drive">
+              <span class="ep-dot"></span>
+              <span class="ep-label">Drive mode</span>
+              <span class="ep-val">…</span>
+            </div>
+            <div class="ep-stat" data-stat="camBase">
+              <span class="ep-dot"></span>
+              <span class="ep-label">Camera · base</span>
+              <span class="ep-val">…</span>
+            </div>
+            <div class="ep-stat" data-stat="camWrist">
+              <span class="ep-dot"></span>
+              <span class="ep-label">Camera · wrist</span>
+              <span class="ep-val">…</span>
+            </div>
+            <div class="ep-stat" data-stat="jointsEp">
+              <span class="ep-dot"></span>
+              <span class="ep-label">/v1/teleop/joints</span>
+              <span class="ep-val">…</span>
+            </div>
+            <div class="ep-stat" data-stat="evalClient">
+              <span class="ep-dot"></span>
+              <span class="ep-label">Eval client</span>
+              <span class="ep-val">…</span>
+            </div>
+            <div class="ep-stat" data-stat="policyServer">
+              <span class="ep-dot"></span>
+              <span class="ep-label">Policy server</span>
+              <span class="ep-val">…</span>
+            </div>
+          </div>
+        </div>
+        <div class="ep-group">
+          <div class="ep-section-label">Policy prompt</div>
+          <input id="promptInput" type="text"
+                 value="pick up the cube and place it on the box"
+                 placeholder="task for eval client (Enter to send)"
+                 autocomplete="off">
+          <div id="promptStatus">press Enter to push to the eval client</div>
+          <div id="evalRunRow">
+            <select id="evalRunMode" title="dry-run = print only · live = POST joints to daemon">
+              <option value="live" selected>Live</option>
+              <option value="dry">Dry-run</option>
+            </select>
+            <button id="evalRunBtn" type="button">▶ Run</button>
+          </div>
+          <div id="evalLog"></div>
         </div>
       </div>
     </div>

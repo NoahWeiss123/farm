@@ -17,6 +17,11 @@
 # GPU-tested. Before the full run, sanity-check that it builds + trains a few
 # steps — see model/FINDINGS.md "GSE smoke test".
 #
+# Faster wall-clock: GSE freezes the backbone (no FSDP needed), so it
+# data-parallel-replicates across whatever GPUs are allocated. Bump --gres to
+# gpu:2/gpu:4 for a ~2-4x speedup — still far cheaper than the 8-GPU full FT
+# (12k steps on 1 H100 is ~6 GPU-hours vs full FT's ~28).
+#
 # Submit:    sbatch train_pi05_gse.sbatch
 # Pull:      hf download NoahWeiss/farm_uf850_pi05_gse --revision step-9999
 
@@ -24,7 +29,7 @@
 #SBATCH --partition=small
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=32
-#SBATCH --time=10:00:00
+#SBATCH --time=12:00:00
 #SBATCH --output=train-gse-%j.out
 
 set -euo pipefail
