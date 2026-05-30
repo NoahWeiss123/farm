@@ -250,7 +250,9 @@ def svd_init_factors(
         raise ValueError(f"svd_init_factors supports axes=(-2,-1), got {axes}")
     lead = w0.shape[:-2]
     a_dim, b_dim = w0.shape[-2], w0.shape[-1]
-    flat = w0.reshape((-1, a_dim, b_dim))            # (L, a, b)
+    # SVD (LAPACK syevd) only supports float32/float64 — pi05 weights are bf16,
+    # so upcast here. The loader casts each result back to its param slot's dtype.
+    flat = w0.reshape((-1, a_dim, b_dim)).astype(jnp.float32)  # (L, a, b)
     u, s, vt = jnp.linalg.svd(flat, full_matrices=False)  # u (L,a,k) s (L,k) vt (L,k,b)
     sq = jnp.sqrt(s)
 
@@ -292,7 +294,7 @@ def svd_init_pissa(w0: jax.Array, rank: int):
     """
     lead = w0.shape[:-2]
     a_dim, b_dim = w0.shape[-2], w0.shape[-1]
-    flat = w0.reshape((-1, a_dim, b_dim))
+    flat = w0.reshape((-1, a_dim, b_dim)).astype(jnp.float32)  # SVD needs float32 (bf16 weights)
     u, s, vt = jnp.linalg.svd(flat, full_matrices=False)
     sq = jnp.sqrt(s[:, :rank])
     a = u[:, :, :rank] * sq[:, None, :]      # (L, a, r)

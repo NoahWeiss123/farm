@@ -150,11 +150,13 @@ class GSESVDWeightLoader(WeightLoader):
             spec_a = flat[prefix + "gse_spec_a"]
             e, d = int(spec_a.shape[0]), int(spec_a.shape[-1])
             ga, gb, sa, sb, w_adj = _gse.svd_init_factors(jnp.asarray(flat[key]), (-2, -1), rg, e, d)
-            flat[key] = np.asarray(w_adj)
-            flat[gen_a_key] = np.asarray(ga)
-            flat[prefix + "gse_gen_b"] = np.asarray(gb)
-            flat[prefix + "gse_spec_a"] = np.asarray(sa)
-            flat[prefix + "gse_spec_b"] = np.asarray(sb)
+            # Cast each result back to its slot's dtype (frozen backbone is bf16,
+            # trainable adapters are float32) — svd_init runs in float32.
+            flat[key] = np.asarray(w_adj).astype(flat[key].dtype)
+            flat[gen_a_key] = np.asarray(ga).astype(flat[gen_a_key].dtype)
+            flat[prefix + "gse_gen_b"] = np.asarray(gb).astype(flat[prefix + "gse_gen_b"].dtype)
+            flat[prefix + "gse_spec_a"] = np.asarray(sa).astype(flat[prefix + "gse_spec_a"].dtype)
+            flat[prefix + "gse_spec_b"] = np.asarray(sb).astype(flat[prefix + "gse_spec_b"].dtype)
         # FFN PiSSA: extend the SVD-init lever to the gemma FeedForward LoRA
         # adapters (gating_einsum + linear). Their LoRA scaling is 1 (alpha ==
         # rank in the *_gse variant), so the init forward still reconstructs W0.
@@ -166,9 +168,9 @@ class GSESVDWeightLoader(WeightLoader):
                     continue
                 rank = int(flat[pre + fa].shape[-1])
                 a, b, w_adj = _gse.svd_init_pissa(jnp.asarray(flat[key]), rank)
-                flat[key] = np.asarray(w_adj)
-                flat[pre + fa] = np.asarray(a)
-                flat[pre + fb] = np.asarray(b)
+                flat[key] = np.asarray(w_adj).astype(flat[key].dtype)
+                flat[pre + fa] = np.asarray(a).astype(flat[pre + fa].dtype)
+                flat[pre + fb] = np.asarray(b).astype(flat[pre + fb].dtype)
         return flax.traverse_util.unflatten_dict(flat, sep="/")
 '''
 
