@@ -75,7 +75,9 @@ home*.png run_*.png running_*.png
 !farm-cloud/ui/public/**/*.png
 MUJOCO_LOG.TXT
 
-# offline-eval results + ROOT comparison plots (regenerate via model/plot_eval_comparison.py)
-eval-*.json
-cmp_*.png
-gse_vs_full.pdf
+# regenerable eval artifacts at repo ROOT (the kept copies live in analysis/)
+/eval-*.json
+/cmp_*.png
+/gse_vs_full.pdf
+# but DO keep the curated analysis figures (override the global *.png ignore)
+!analysis/*.png
