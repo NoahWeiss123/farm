@@ -1111,10 +1111,15 @@ async def get_train_status(request: web.Request) -> web.Response:
     # well inside the grace, so a healthy run is never cut short.
     if data.get("phase") == "training":
         step = data.get("step", 0)
+        total = data.get("total_steps", 0) or 0
         if step > job.get("_last_step", -1):
             job["_last_step"] = step
             job["_progress_at"] = now
-        elif job.get("_progress_at") and now - job["_progress_at"] > 1200:
+        # Only cut a genuinely-stalled run mid-training. A frozen step in the
+        # final stretch is the post-training drain (final checkpoint save + HF
+        # push), not a hang — scancelling there would kill the final upload.
+        elif (job.get("_progress_at") and now - job["_progress_at"] > 1200
+              and step < 0.95 * total):
             await asyncio.to_thread(cluster.stop, job["job_id"])
             data["phase"] = "stopped"
             data["note"] = "auto-stopped: no step progress for 20 min — GPUs released"
