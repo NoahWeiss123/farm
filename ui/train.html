@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FARM — Train</title>
+<style>
+  :root {
+    --bg: #fafafa; --fg: #1a1a1a; --muted: #6b6b6b; --soft: #d4d4d4;
+    --line: #e5e5e5; --accent: #2563eb; --accent2: #1d4ed8;
+    --red: #dc2626; --green: #16a34a; --amber: #f59e0b; --pad: 12px;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    color: var(--fg); background: var(--bg); overflow: hidden;
+  }
+  body { display: flex; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  /* ── Sidebar / config ──────────────────────────────────────────────── */
+  #side {
+    width: 300px; flex-shrink: 0; border-right: 1px solid var(--line);
+    background: #fff; display: flex; flex-direction: column; height: 100vh;
+  }
+  #sideHead {
+    padding: 12px var(--pad) 8px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  #sideHead h1 {
+    font-size: 12px; margin: 0; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600;
+  }
+  #sideHead a { margin-left: auto; font-size: 11px; color: var(--muted); text-decoration: none; }
+  #sideHead a:hover { color: var(--accent); }
+  #cfg { flex: 1; overflow-y: auto; padding: var(--pad); display: flex; flex-direction: column; gap: 14px; }
+
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field > label {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .models { display: flex; flex-direction: column; gap: 6px; }
+  .modelOpt {
+    border: 1px solid var(--soft); border-radius: 6px; padding: 8px 10px; cursor: pointer;
+    display: flex; flex-direction: column; gap: 2px; transition: border-color 80ms, background 80ms;
+  }
+  .modelOpt:hover { background: #f3f4f6; }
+  .modelOpt.sel { border-color: var(--accent); background: #eff6ff; }
+  .modelOpt .name { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .modelOpt .name input { margin: 0; }
+  .modelOpt .desc { font-size: 11px; color: var(--muted); }
+
+  .field input[type=number] {
+    height: 28px; padding: 0 8px; font: inherit;
+    border: 1px solid var(--soft); border-radius: 4px; background: #fff; width: 100%;
+  }
+  .field input[type=number]:focus { outline: 2px solid var(--accent); outline-offset: -2px; border-color: var(--accent); }
+  .hint { font-size: 11px; color: var(--muted); }
+  .twoCol { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  button.btn {
+    height: 30px; padding: 0 12px; font: inherit; font-size: 13px;
+    background: #fff; color: var(--fg); border: 1px solid var(--soft); border-radius: 4px; cursor: pointer;
+  }
+  button.btn:hover:not(:disabled) { background: #f3f4f6; }
+  button.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.btn.primary:hover:not(:disabled) { background: var(--accent2); }
+  button.btn.danger { background: var(--red); color: #fff; border-color: var(--red); }
+  button.btn.danger:hover:not(:disabled) { background: #b91c1c; }
+  #launchRow { display: flex; gap: 6px; }
+  #launchRow .btn { flex: 1; }
+  #kubeNote { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  #kubeNote .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--soft); }
+  #kubeNote.ok .dot { background: var(--green); }
+  #kubeNote.bad .dot { background: var(--red); }
+
+  /* ── Main / monitor ────────────────────────────────────────────────── */
+  #main { flex: 1; padding: var(--pad); display: flex; flex-direction: column; gap: 12px; overflow: hidden; height: 100vh; }
+  #mainHead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  #mainHead h2 { margin: 0; font-size: 13px; }
+  #mainHead .sub { font-size: 11px; color: var(--muted); }
+  #mainHead .spacer { flex: 1; }
+  .badge {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 2px 8px; border-radius: 10px; color: #fff; background: var(--soft);
+  }
+  .badge.queued { background: var(--amber); }
+  .badge.starting { background: var(--accent); }
+  .badge.training { background: var(--green); }
+  .badge.done { background: var(--accent2); }
+  .badge.stopped { background: var(--red); }
+
+  #placeholder { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+  #placeholder .help { text-align: center; max-width: 380px; line-height: 1.7; }
+  #placeholder h3 { font-size: 14px; margin: 0 0 6px; color: var(--fg); }
+
+  #monitor { display: none; flex: 1; flex-direction: column; gap: 12px; min-height: 0; }
+  #monitor.active { display: flex; }
+
+  /* progress bar */
+  #progWrap { display: flex; flex-direction: column; gap: 4px; }
+  #progBar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+  #progFill { height: 100%; width: 0%; background: var(--accent); transition: width 400ms ease; }
+  #progMeta { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+
+  /* chart */
+  #chartCard {
+    flex: 1; min-height: 140px; border: 1px solid var(--line); border-radius: 6px; background: #fff;
+    position: relative; overflow: hidden;
+  }
+  #chartCard canvas { width: 100%; height: 100%; display: block; }
+  #chartLabel {
+    position: absolute; top: 8px; left: 10px; font-size: 10px; font-weight: 600;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+  }
+  #chartCur { position: absolute; top: 8px; right: 10px; font-size: 12px; color: var(--accent); }
+
+  /* stat tiles */
+  #tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .tile { border: 1px solid var(--line); border-radius: 6px; background: #fff; padding: 8px 10px; }
+  .tile .k { font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+  .tile .v { font-size: 17px; margin-top: 2px; }
+  .tile .v small { font-size: 11px; color: var(--muted); }
+
+  /* log tail */
+  #logCard {
+    border: 1px solid var(--line); border-radius: 6px; background: #0f172a; color: #cbd5e1;
+    padding: 8px 10px; height: 120px; overflow: auto; font-size: 11px; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  #logCard .empty { color: #64748b; }
+
+  #toast {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    padding: 8px 16px; background: #1a1a1a; color: #fff; border-radius: 6px; font-size: 12px;
+    opacity: 0; pointer-events: none; transition: opacity 200ms; z-index: 100;
+  }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+  <aside id="side">
+    <div id="sideHead">
+      <h1>Train</h1>
+      <a href="/" title="back to live dashboard">live ›</a>
+    </div>
+    <div id="cfg">
+      <div class="field">
+        <label>Architecture</label>
+        <div class="models" id="models"></div>
+      </div>
+      <div class="twoCol">
+        <div class="field">
+          <label>Steps</label>
+          <input type="number" id="steps" min="1" step="500">
+        </div>
+        <div class="field">
+          <label>GPUs</label>
+          <input type="number" id="gpus" min="1" max="8" step="1">
+        </div>
+      </div>
+      <div class="hint" id="epochHint"></div>
+      <div id="launchRow">
+        <button class="btn primary" id="btnLaunch">Launch</button>
+        <button class="btn danger" id="btnStop" disabled>Stop</button>
+      </div>
+      <div id="kubeNote"><span class="dot"></span><span id="kubeText">checking cluster…</span></div>
+    </div>
+  </aside>
+
+  <main id="main">
+    <div id="mainHead">
+      <h2 id="mTitle">Training</h2>
+      <span class="sub mono" id="mSub"></span>
+      <span class="spacer"></span>
+      <span class="badge" id="mBadge" style="display:none"></span>
+    </div>
+
+    <div id="placeholder">
+      <div class="help">
+        <h3>No run yet</h3>
+        Pick an architecture, set the steps, and click <b>Launch</b>. The loss
+        curve, progress, and live stats appear here as it trains on the cluster.
+      </div>
+    </div>
+
+    <div id="monitor">
+      <div id="progWrap">
+        <div id="progBar"><div id="progFill"></div></div>
+        <div id="progMeta"><span id="progStep">0 / 0 steps</span><span id="progPct">0%</span></div>
+      </div>
+
+      <div id="chartCard">
+        <span id="chartLabel">Loss (log)</span>
+        <span class="mono" id="chartCur"></span>
+        <canvas id="chart"></canvas>
+      </div>
+
+      <div id="tiles"></div>
+
+      <div id="logCard"><span class="empty">waiting for training output…</span></div>
+    </div>
+  </main>
+
+  <div id="toast"></div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────
+const S = { models: {}, model: 'gse', poll: null, hist: { steps: [], loss: [] } };
+
+// ── DOM ──────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const modelsEl = $('models'), stepsEl = $('steps'), gpusEl = $('gpus'),
+      epochHint = $('epochHint'), btnLaunch = $('btnLaunch'), btnStop = $('btnStop'),
+      kubeNote = $('kubeNote'), kubeText = $('kubeText'),
+      placeholder = $('placeholder'), monitor = $('monitor'),
+      mTitle = $('mTitle'), mSub = $('mSub'), mBadge = $('mBadge'),
+      progFill = $('progFill'), progStep = $('progStep'), progPct = $('progPct'),
+      tilesEl = $('tiles'), logCard = $('logCard'), chartCur = $('chartCur'),
+      chart = $('chart'), toast = $('toast');
+
+const FRAMES = 59183;  // dataset frames, for the epoch hint
+
+function showToast(msg, err) {
+  toast.textContent = msg; toast.style.background = err ? '#dc2626' : '#1a1a1a';
+  toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 2000);
+}
+function fmtDur(s) {
+  if (!Number.isFinite(s) || s < 0) return '--';
+  if (s < 60) return Math.round(s) + 's';
+  if (s < 3600) { const m = Math.floor(s/60); return `${m}m${String(Math.round(s-m*60)).padStart(2,'0')}s`; }
+  const h = Math.floor(s/3600); return `${h}h${String(Math.floor((s-h*3600)/60)).padStart(2,'0')}m`;
+}
+
+// ── Config form ──────────────────────────────────────────────────────
+async function loadModels() {
+  try {
+    const r = await fetch('/v1/train/models'); const d = await r.json();
+    S.models = d.models || {};
+    renderModels();
+    kubeNote.className = d.kubectl ? 'ok' : 'bad';
+    kubeText.textContent = d.kubectl ? 'cluster reachable (kubectl)' : 'kubectl not found — launch disabled';
+    btnLaunch.disabled = !d.kubectl;
+  } catch (e) { kubeText.textContent = 'daemon unreachable'; }
+}
+const ORDER = ['gse', 'lora', 'full'];
+const DESCS = {
+  full: 'all ~3.3B params · 8 GPUs · max capacity, overfits small data',
+  lora: 'low-rank adapters · 1 GPU · preserves the base',
+  gse:  'SVD spectral experts · 1 GPU · preserve + adapt (recommended)',
+};
+function renderModels() {
+  modelsEl.innerHTML = '';
+  for (const k of ORDER) {
+    const m = S.models[k]; if (!m) continue;
+    const div = document.createElement('label');
+    div.className = 'modelOpt' + (k === S.model ? ' sel' : '');
+    div.innerHTML = `<span class="name"><input type="radio" name="model" value="${k}" ${k===S.model?'checked':''}> ${m.label}</span>`
+      + `<span class="desc">${DESCS[k] || m.config}</span>`;
+    div.addEventListener('click', () => selectModel(k));
+    modelsEl.appendChild(div);
+  }
+  selectModel(S.model);
+}
+function selectModel(k) {
+  if (!S.models[k]) return;
+  S.model = k;
+  document.querySelectorAll('.modelOpt').forEach(el => {
+    el.classList.toggle('sel', el.querySelector('input').value === k);
+    el.querySelector('input').checked = el.querySelector('input').value === k;
+  });
+  stepsEl.value = S.models[k].steps;
+  gpusEl.value = S.models[k].gpus;
+  updateHint();
+}
+function updateHint() {
+  const steps = +stepsEl.value, gpus = +gpusEl.value;
+  const epochs = (steps * 32 / FRAMES);  // batch 32
+  epochHint.textContent = `≈ ${epochs.toFixed(1)} epochs · batch 32 · ${gpus} GPU${gpus>1?'s':''}`
+    + (gpus > 1 ? ' (data-parallel)' : '');
+}
+stepsEl.addEventListener('input', updateHint);
+gpusEl.addEventListener('input', updateHint);
+
+// ── Launch / stop ────────────────────────────────────────────────────
+btnLaunch.addEventListener('click', async () => {
+  const body = { model: S.model, steps: +stepsEl.value, gpus: +gpusEl.value };
+  if (!confirm(`Launch ${S.models[S.model]?.label} training on ${body.gpus} GPU(s) for ${body.steps} steps?\nThis submits a SLURM job and uses GPU-hours.`)) return;
+  btnLaunch.disabled = true; btnLaunch.textContent = 'Launching…';
+  try {
+    const r = await fetch('/v1/train/launch', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    showToast(`launched job ${d.job_id}`);
+    S.hist = { steps: [], loss: [] };
+    startPolling();
+  } catch (e) { showToast('launch failed: ' + e.message, true); }
+  finally { btnLaunch.textContent = 'Launch'; btnLaunch.disabled = false; }
+});
+btnStop.addEventListener('click', async () => {
+  if (!confirm('Cancel the running job?')) return;
+  try {
+    const r = await fetch('/v1/train/stop', { method: 'POST' });
+    await r.json(); showToast('stop requested');
+  } catch (e) { showToast('stop failed: ' + e.message, true); }
+});
+
+// ── Polling + render ─────────────────────────────────────────────────
+function startPolling() { if (S.poll) clearInterval(S.poll); poll(); S.poll = setInterval(poll, 3000); }
+async function poll() {
+  let d;
+  try { d = await (await fetch('/v1/train/status')).json(); }
+  catch (e) { return; }
+  if (!d.active) {
+    monitor.classList.remove('active'); placeholder.style.display = 'flex';
+    mBadge.style.display = 'none'; btnStop.disabled = true;
+    if (S.poll) { clearInterval(S.poll); S.poll = null; }
+    return;
+  }
+  render(d);
+  const terminal = d.phase === 'done' || d.phase === 'stopped';
+  btnStop.disabled = terminal;
+  if (terminal && S.poll) { clearInterval(S.poll); S.poll = null; }
+}
+
+function render(d) {
+  placeholder.style.display = 'none'; monitor.classList.add('active');
+  const label = (S.models[d.model]?.label) || d.model;
+  mTitle.textContent = label;
+  mSub.textContent = `${d.config || ''} · job ${d.job_id} · ${d.gpus||1} GPU${(d.gpus||1)>1?'s':''}`;
+  mBadge.style.display = ''; mBadge.className = 'badge ' + d.phase; mBadge.textContent = d.phase;
+
+  const step = d.step || 0, total = d.total_steps || 1;
+  const pct = Math.max(0, Math.min(100, 100 * step / total));
+  progFill.style.width = pct + '%';
+  progStep.textContent = `${step.toLocaleString()} / ${total.toLocaleString()} steps`;
+  progPct.textContent = pct.toFixed(1) + '%';
+
+  // history (use the server's full arrays — authoritative)
+  if (d.steps && d.steps.length) S.hist = { steps: d.steps, loss: d.loss };
+  drawChart();
+  const curLoss = S.hist.loss.length ? S.hist.loss[S.hist.loss.length-1] : null;
+  const minLoss = S.hist.loss.length ? Math.min(...S.hist.loss) : null;
+  chartCur.textContent = curLoss != null ? 'loss ' + curLoss.toFixed(4) : '';
+
+  // timing
+  const elapsed = d.started_at ? (Date.now()/1000 - d.started_at) : NaN;
+  const rate = (step > 0 && Number.isFinite(elapsed) && elapsed > 0) ? step / elapsed : NaN;  // steps/s
+  const eta = (Number.isFinite(rate) && rate > 0) ? (total - step) / rate : NaN;
+  const grad = d.grad_norm && d.grad_norm.length ? d.grad_norm[d.grad_norm.length-1] : null;
+
+  tilesEl.innerHTML = '';
+  const tiles = [
+    ['Loss', curLoss != null ? curLoss.toFixed(4) : '—'],
+    ['Min loss', minLoss != null ? minLoss.toFixed(4) : '—'],
+    ['Grad norm', grad != null ? grad.toFixed(3) : '—'],
+    ['Steps left', Number.isFinite(total-step) ? (total-step).toLocaleString() : '—'],
+    ['Elapsed', fmtDur(elapsed)],
+    ['Est. remaining', d.phase==='done' ? 'done' : fmtDur(eta)],
+    ['Rate', Number.isFinite(rate) ? `${rate.toFixed(2)}<small> it/s</small>` : '—'],
+    ['State', `<small>${d.state || '—'}</small>`],
+  ];
+  for (const [k, v] of tiles) {
+    const t = document.createElement('div'); t.className = 'tile';
+    t.innerHTML = `<div class="k">${k}</div><div class="v">${v}</div>`;
+    tilesEl.appendChild(t);
+  }
+
+  logCard.textContent = d.log_tail && d.log_tail.trim() ? d.log_tail : '';
+  if (!logCard.textContent) logCard.innerHTML = '<span class="empty">waiting for training output…</span>';
+}
+
+// ── Loss chart (canvas, log-y) ───────────────────────────────────────
+function drawChart() {
+  const dpr = window.devicePixelRatio || 1;
+  const W = chart.clientWidth, H = chart.clientHeight;
+  chart.width = W * dpr; chart.height = H * dpr;
+  const ctx = chart.getContext('2d'); ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
+  const pad = { l: 44, r: 10, t: 22, b: 18 };
+  const { steps, loss } = S.hist;
+  if (!loss || loss.length < 1) return;
+  const total = (S.models[S.model]?.steps) || (steps[steps.length-1] || 1);
+  const xmax = Math.max(total, steps[steps.length-1] || 1);
+  // log-y range
+  const pos = loss.filter(v => v > 0);
+  const lo = Math.max(1e-6, Math.min(...pos)), hi = Math.max(...pos);
+  const ly = v => Math.log10(Math.max(v, 1e-6));
+  const lyLo = ly(lo) - 0.05, lyHi = ly(hi) + 0.05;
+  const X = s => pad.l + (s / xmax) * (W - pad.l - pad.r);
+  const Y = v => pad.t + (1 - (ly(v) - lyLo) / (lyHi - lyLo || 1)) * (H - pad.t - pad.b);
+  // gridlines + y labels (decades)
+  ctx.strokeStyle = '#eee'; ctx.fillStyle = '#9ca3af';
+  ctx.font = '10px ui-monospace, Menlo, monospace'; ctx.textBaseline = 'middle';
+  for (let e = Math.ceil(lyLo); e <= Math.floor(lyHi); e++) {
+    const y = Y(Math.pow(10, e));
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+    ctx.fillText('1e' + e, 4, y);
+  }
+  // loss line
+  ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 1.5; ctx.beginPath();
+  for (let i = 0; i < loss.length; i++) {
+    const x = X(steps[i]), y = Y(loss[i]);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  // last point
+  const lx = X(steps[steps.length-1]), lyy = Y(loss[loss.length-1]);
+  ctx.fillStyle = '#2563eb'; ctx.beginPath(); ctx.arc(lx, lyy, 2.5, 0, 7); ctx.fill();
+}
+window.addEventListener('resize', drawChart);
+
+// ── Boot ─────────────────────────────────────────────────────────────
+loadModels().then(() => { poll(); /* attach to an already-running job if any */ });
+</script>
+</body>
+</html>

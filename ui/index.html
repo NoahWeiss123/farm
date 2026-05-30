@@ -339,9 +339,9 @@
       white-space: pre; pointer-events: none;
     }
 
-    /* ── Bottom-left help (nudged above the Eval/Policy toggle) ───────── */
+    /* ── Bottom-left help ─────────────────────────────────────────────── */
     #help {
-      position: fixed; bottom: calc(var(--pad) + 44px); left: var(--pad);
+      position: fixed; bottom: var(--pad); left: var(--pad);
       color: rgba(0,0,0,0.4); font-size: 11px;
     }
 
@@ -547,6 +547,13 @@
 
   <div id="ui" class="panel">
     <div class="section">
+      <div class="section-label">Pages</div>
+      <div style="display:flex; gap:14px; font-size:12px;">
+        <a href="/review" style="color:var(--accent); text-decoration:none;">Episode review ›</a>
+        <a href="/train" style="color:var(--accent); text-decoration:none;">Train ›</a>
+      </div>
+    </div>
+    <div class="section">
       <div class="section-label">Status</div>
       <div id="statusGrid">
         <div class="key">Link</div>     <div class="val"><span id="linkPill" class="pill muted">Connecting</span></div>
@@ -723,85 +730,6 @@
     </figure>
   </div>
   <button id="swapCamsBtn" title="swap which D435 is base vs wrist">⇆ swap</button>
-
-  <!-- ─── Eval / Policy panel (toggle + slide-in) ───────────────────────── -->
-  <button id="evalPanelToggle" title="open eval / policy panel">
-    <span class="pt-dot"></span> Eval
-  </button>
-  <div id="evalPanel" role="dialog" aria-label="Eval / Policy panel">
-    <div class="ep-head">
-      <span>Eval / Policy</span>
-      <button class="ep-close" id="evalPanelClose" title="close">×</button>
-    </div>
-    <div class="ep-body">
-      <div>
-        <div class="ep-section-label">Status</div>
-        <div id="evalStatusList">
-          <div class="ep-stat" data-stat="daemon">
-            <span class="ep-dot"></span>
-            <span class="ep-label">Daemon</span>
-            <span class="ep-val">…</span>
-          </div>
-          <div class="ep-stat" data-stat="arm">
-            <span class="ep-dot"></span>
-            <span class="ep-label">Arm</span>
-            <span class="ep-val">…</span>
-          </div>
-          <div class="ep-stat" data-stat="estop">
-            <span class="ep-dot"></span>
-            <span class="ep-label">E-stop</span>
-            <span class="ep-val">…</span>
-          </div>
-          <div class="ep-stat" data-stat="drive">
-            <span class="ep-dot"></span>
-            <span class="ep-label">Drive mode</span>
-            <span class="ep-val">…</span>
-          </div>
-          <div class="ep-stat" data-stat="camBase">
-            <span class="ep-dot"></span>
-            <span class="ep-label">Camera · base</span>
-            <span class="ep-val">…</span>
-          </div>
-          <div class="ep-stat" data-stat="camWrist">
-            <span class="ep-dot"></span>
-            <span class="ep-label">Camera · wrist</span>
-            <span class="ep-val">…</span>
-          </div>
-          <div class="ep-stat" data-stat="jointsEp">
-            <span class="ep-dot"></span>
-            <span class="ep-label">/v1/teleop/joints</span>
-            <span class="ep-val">…</span>
-          </div>
-          <div class="ep-stat" data-stat="evalClient">
-            <span class="ep-dot"></span>
-            <span class="ep-label">Eval client</span>
-            <span class="ep-val">…</span>
-          </div>
-          <div class="ep-stat" data-stat="policyServer">
-            <span class="ep-dot"></span>
-            <span class="ep-label">Policy server</span>
-            <span class="ep-val">…</span>
-          </div>
-        </div>
-      </div>
-      <div>
-        <div class="ep-section-label">Policy prompt</div>
-        <input id="promptInput" type="text"
-               value="pick up the cube and place it on the box"
-               placeholder="task for eval client (Enter to send)"
-               autocomplete="off">
-        <div id="promptStatus">press Enter to push to the eval client</div>
-        <div id="evalRunRow">
-          <select id="evalRunMode" title="dry-run = print only · live = POST joints to daemon">
-            <option value="live" selected>Live</option>
-            <option value="dry">Dry-run</option>
-          </select>
-          <button id="evalRunBtn" type="button">▶ Run</button>
-        </div>
-        <div id="evalLog"></div>
-      </div>
-    </div>
-  </div>
 
   <div id="readout" class="panel">pose readout waiting…</div>
 
@@ -1361,33 +1289,17 @@
       })();
     })();
 
-    // ── Eval / Policy panel toggle + status indicators ────────────────────
-    (() => {
-      const toggle = document.getElementById('evalPanelToggle');
-      const panel = document.getElementById('evalPanel');
-      const close = document.getElementById('evalPanelClose');
-      if (!toggle || !panel || !close) return;
-      const open = () => document.body.classList.add('evalPanelOpen');
-      const shut = () => document.body.classList.remove('evalPanelOpen');
-      toggle.addEventListener('click', open);
-      close.addEventListener('click', shut);
-      document.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Escape' && document.body.classList.contains('evalPanelOpen')) {
-          shut();
-        }
-      });
-    })();
-
+    // ── Eval / Policy status indicators ───────────────────────────────────
     (() => {
       // Status indicators. Each entry: row element + setter that takes
       // ({class: 'ok'|'warn'|'bad', val: 'text'}). The summary class on
-      // the toggle button itself ('healthy'/'warn'/'bad') is the worst
+      // the section-label health dot ('healthy'/'warn'/'bad') is the worst
       // of every row except eval/policy-server (those are optional —
       // having no eval client running shouldn't bait the user into
       // thinking something is wrong).
       const list = document.getElementById('evalStatusList');
-      const toggleBtn = document.getElementById('evalPanelToggle');
-      if (!list || !toggleBtn) return;
+      const healthDot = document.getElementById('evalHealthDot');
+      if (!list || !healthDot) return;
       const rows = {};
       list.querySelectorAll('.ep-stat').forEach((el) => {
         rows[el.dataset.stat] = el;
@@ -1403,7 +1315,7 @@
       const updateSummary = () => {
         // Only consider rows that are required for normal operation.
         // Eval client + policy server are "ok if green, neutral if
-        // missing" — leave the toggle dot grey rather than yellow when
+        // missing" — leave the health dot grey rather than yellow when
         // eval isn't running, to avoid false alarms.
         const required = ['daemon', 'arm', 'estop', 'camBase', 'camWrist', 'jointsEp'];
         let worst = 'ok';
@@ -1411,8 +1323,8 @@
           if (rows[k]?.classList.contains('bad')) { worst = 'bad'; break; }
           if (rows[k]?.classList.contains('warn')) worst = 'warn';
         }
-        toggleBtn.classList.remove('healthy', 'warn', 'bad');
-        toggleBtn.classList.add(worst === 'ok' ? 'healthy' : worst);
+        healthDot.classList.remove('healthy', 'warn', 'bad');
+        healthDot.classList.add(worst === 'ok' ? 'healthy' : worst);
       };
 
       // Daemon is "up" iff we can fetch /healthz. We're effectively

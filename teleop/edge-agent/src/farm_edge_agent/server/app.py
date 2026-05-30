@@ -998,7 +998,7 @@ async def clip_episode(request: web.Request) -> web.Response:
 async def serve_review(_: web.Request) -> web.Response:
     review = UI_DIR / "review.html"
     if not review.is_file():
-        return web.Response(text="review app missing (web/review.html)", status=500)
+        return web.Response(text="review app missing (ui/review.html)", status=500)
     return web.Response(body=review.read_bytes(), content_type="text/html")
 
 
@@ -1025,8 +1025,87 @@ async def delete_episode(request: web.Request) -> web.Response:
 async def serve_dashboard(_: web.Request) -> web.Response:
     index = UI_DIR / "index.html"
     if not index.is_file():
-        return web.Response(text="dashboard not built (missing web/index.html)", status=500)
+        return web.Response(text="dashboard missing (ui/index.html)", status=500)
     return web.Response(body=index.read_bytes(), content_type="text/html")
+
+
+# ── training (cluster bridge) ────────────────────────────────────────────────
+
+
+async def serve_train(_: web.Request) -> web.Response:
+    page = UI_DIR / "train.html"
+    if not page.is_file():
+        return web.Response(text="train page missing (ui/train.html)", status=500)
+    return web.Response(body=page.read_bytes(), content_type="text/html")
+
+
+async def get_train_models(_: web.Request) -> web.Response:
+    """The three architectures + their default steps/gpus, for the config form."""
+    from farm_edge_agent.server import cluster
+    models = {
+        k: {"label": v["label"], "config": v["config"], "steps": v["steps"], "gpus": v["gpus"]}
+        for k, v in cluster.MODELS.items()
+    }
+    return web.json_response({"models": models, "kubectl": cluster.available()})
+
+
+async def post_train_launch(request: web.Request) -> web.Response:
+    from farm_edge_agent.server import cluster
+    if request.app.get("train_job") is not None:
+        phase = (request.app.get("train_status_cache") or {}).get("data", {}).get("phase")
+        if phase in ("queued", "starting", "training"):
+            return web.json_response(
+                {"error": "a job is already running"}, status=409,
+            )
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    model = str(body.get("model", "gse"))
+    spec = cluster.MODELS.get(model)
+    if spec is None:
+        return web.json_response({"error": f"unknown model {model!r}"}, status=400)
+    steps = int(body.get("steps", spec["steps"]))
+    gpus = int(body.get("gpus", spec["gpus"]))
+    result = await asyncio.to_thread(cluster.launch, model, steps, gpus)
+    if "error" in result:
+        return web.json_response(result, status=502)
+    result["total_steps"] = steps
+    result["started_at"] = time.time()
+    request.app["train_job"] = result
+    request.app["train_status_cache"] = {}
+    log.info("training launched · %s · job %s · %d steps · %d gpu", model, result["job_id"], steps, gpus)
+    return web.json_response(result)
+
+
+async def get_train_status(request: web.Request) -> web.Response:
+    from farm_edge_agent.server import cluster
+    job = request.app.get("train_job")
+    if job is None:
+        return web.json_response({"active": False, "kubectl": cluster.available()})
+    # Rate-limit the kubectl polling (shared cache) so many browser tabs / a
+    # fast poll interval don't hammer the pod.
+    cache = request.app.get("train_status_cache") or {}
+    now = time.monotonic()
+    if cache.get("at") and now - cache["at"] < 2.5:
+        return web.json_response(cache["data"])
+    data = await asyncio.to_thread(
+        cluster.status, job["job_id"], job["model"], job["total_steps"]
+    )
+    data.update(active=True, started_at=job.get("started_at"),
+                gpus=job.get("gpus"), config=job.get("config"))
+    request.app["train_status_cache"] = {"at": now, "data": data}
+    return web.json_response(data)
+
+
+async def post_train_stop(request: web.Request) -> web.Response:
+    from farm_edge_agent.server import cluster
+    job = request.app.get("train_job")
+    if job is None:
+        return web.json_response({"ok": True, "note": "no active job"})
+    result = await asyncio.to_thread(cluster.stop, job["job_id"])
+    request.app["train_status_cache"] = {}
+    return web.json_response(result)
 
 
 # ── wiring ──────────────────────────────────────────────────────────────────
@@ -1062,6 +1141,10 @@ def build_app(*, backend: RobotBackend | None = None) -> web.Application:
     app["eval_process"] = None
     app["eval_cmd"] = []
     app["eval_log"] = collections.deque(maxlen=300)
+    # Active cluster training job (see /train page + server/cluster.py) and a
+    # short-lived cache of its last polled status (rate-limits kubectl).
+    app["train_job"] = None
+    app["train_status_cache"] = {}
 
     async def _on_startup(_: web.Application) -> None:
         bus.attach_loop(asyncio.get_running_loop())
@@ -1087,6 +1170,11 @@ def build_app(*, backend: RobotBackend | None = None) -> web.Application:
     routes = [
         web.get("/", serve_dashboard),
         web.get("/review", serve_review),
+        web.get("/train", serve_train),
+        web.get("/v1/train/models", get_train_models),
+        web.post("/v1/train/launch", post_train_launch),
+        web.get("/v1/train/status", get_train_status),
+        web.post("/v1/train/stop", post_train_stop),
         web.get("/healthz", healthz),
         web.get("/v1/world", get_world),
         web.get("/v1/world/stream", stream_world),
