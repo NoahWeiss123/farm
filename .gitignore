@@ -74,3 +74,8 @@ home*.png run_*.png running_*.png
 !docs/img/*.png
 !farm-cloud/ui/public/**/*.png
 MUJOCO_LOG.TXT
+
+# offline-eval results + ROOT comparison plots (regenerate via model/plot_eval_comparison.py)
+eval-*.json
+cmp_*.png
+gse_vs_full.pdf

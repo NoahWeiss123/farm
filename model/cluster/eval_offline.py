@@ -31,11 +31,10 @@ import os
 import time
 
 import numpy as np
-from openpi_client import image_tools
-from PIL import Image
-
 from openpi.policies import policy_config
 from openpi.training import config as _config
+from openpi_client import image_tools
+from PIL import Image
 
 JN = ["j1", "j2", "j3", "j4", "j5", "j6"]
 
@@ -52,7 +51,7 @@ def load_img(epdir: str, cam: str, i: int) -> np.ndarray:
     return image_tools.convert_to_uint8(image_tools.resize_with_pad(a, 224, 224))
 
 
-def eval_episode(policy, epdir: str, n_samples: int, horizon: int) -> dict | None:
+def eval_episode(policy, epdir: str, n_samples: int, horizon: int, tinf: list) -> dict | None:
     meta = json.load(open(os.path.join(epdir, "meta.json")))
     task = meta["description"]
     frames = [json.loads(ln) for ln in open(os.path.join(epdir, "frames.jsonl")) if ln.strip()]
@@ -69,7 +68,9 @@ def eval_episode(policy, epdir: str, n_samples: int, horizon: int) -> dict | Non
             "observation/state": states[t],
             "prompt": task,
         }
+        t0 = time.perf_counter()                                           # pure infer time
         pred = np.asarray(policy.infer(obs)["actions"], dtype=np.float32)  # (H, 7) absolute
+        tinf.append(time.perf_counter() - t0)
         gt = np.stack([states[t + 1 + k] for k in range(horizon)])         # recorded next states
         err0.append(np.abs(pred[0, :6] - gt[0, :6]))
         errH.append(np.abs(pred[:, :6] - gt[:, :6]).mean(axis=0))
@@ -86,6 +87,8 @@ def main() -> None:
     ap.add_argument("--n-episodes", type=int, default=6)
     ap.add_argument("--samples-per-episode", type=int, default=16)
     ap.add_argument("--horizon", type=int, default=10)
+    ap.add_argument("--model", default="", help="label for the results JSON (e.g. gse, full)")
+    ap.add_argument("--out", default="", help="write a results JSON here (for plotting)")
     args = ap.parse_args()
 
     cfg = _config.get_config(args.config)
@@ -100,15 +103,19 @@ def main() -> None:
         return
     print(f">>> evaluating {len(epdirs)} episode(s), {args.samples_per_episode} frames each\n", flush=True)
 
+    tinf: list[float] = []
+    episodes = []
     all0, allH, allg = [], [], []
     for ep in epdirs:
-        r = eval_episode(policy, ep, args.samples_per_episode, args.horizon)
+        r = eval_episode(policy, ep, args.samples_per_episode, args.horizon, tinf)
         if r is None:
             print(f"  {os.path.basename(ep)}: too short, skipped")
             continue
         m0 = r["err0"].mean()
         print(f"  {os.path.basename(ep)} ({r['n']} fr · {r['task'][:34]!r}): "
               f"joint MAE {m0:.4f} rad ({np.degrees(m0):.2f}°), grip {r['grip0'].mean():.3f}", flush=True)
+        episodes.append({"name": os.path.basename(ep), "task": r["task"], "n_frames": int(r["n"]),
+                         "joint_mae_rad": float(m0), "grip_mae": float(r["grip0"].mean())})
         all0.append(r["err0"])
         allH.append(r["errH"])
         allg.append(r["grip0"])
@@ -127,6 +134,33 @@ def main() -> None:
     print(f"  -> overall joint MAE: {e0.mean():.4f} rad ({np.degrees(e0.mean()):.2f}°)")
     print(f"  -> gripper MAE: {g.mean():.4f}  (0=open .. ~0.3=closed)")
     print(f"  -> full {args.horizon}-step chunk joint MAE: {eH.mean():.4f} rad ({np.degrees(eH.mean()):.2f}°)")
+
+    # ── inference latency (pure policy.infer time; the first call includes JIT) ──
+    tarr = np.array(tinf) * 1000.0
+    steady = tarr[1:] if len(tarr) > 1 else tarr
+    lat = {"first_ms": float(tarr[0]), "median_ms": float(np.median(steady)),
+           "mean_ms": float(steady.mean()), "p90_ms": float(np.percentile(steady, 90))}
+    print("\n=== inference latency (per action-chunk infer) ===")
+    print(f"  first infer (incl. JIT compile): {lat['first_ms']:.0f} ms")
+    print(f"  steady-state: median {lat['median_ms']:.0f} · mean {lat['mean_ms']:.0f} · p90 {lat['p90_ms']:.0f} ms")
+    print(f"  -> ~{1000.0 / lat['median_ms']:.1f} infers/sec; each infer yields a {args.horizon}-step chunk")
+
+    if args.out:
+        out = {
+            "model": args.model, "config": args.config, "checkpoint": args.checkpoint_dir,
+            "n_episodes": len(episodes), "samples_per_episode": args.samples_per_episode,
+            "horizon": args.horizon, "episodes": episodes,
+            "per_joint_mae_rad": [float(e0[:, j].mean()) for j in range(6)],
+            "overall_joint_mae_rad": float(e0.mean()),
+            "gripper_mae": float(g.mean()),
+            "chunk_joint_mae_rad": float(eH.mean()),
+            "latency_ms": lat,
+            "samples": {"joint_err_rad": e0.tolist(), "grip_err": g.tolist(),
+                        "chunk_err_rad": eH.tolist()},
+        }
+        with open(args.out, "w") as f:
+            json.dump(out, f, indent=2)
+        print(f"\nwrote {args.out}")
 
 
 if __name__ == "__main__":
