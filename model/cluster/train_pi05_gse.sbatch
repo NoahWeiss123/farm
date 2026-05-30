@@ -79,7 +79,7 @@ echo '>>> launching background checkpoint pusher…'
 uv run python \$HOME/farm-train/push_checkpoints.py \
     --checkpoint-dir \"\$CKPT_DIR\" \
     --repo-id \"\$MODEL_REPO_ID\" \
-    --keep-period 2000 \
+    --keep-period 1000 \
     --poll-interval 60 \
     > \$HOME/farm-train/push-gse-\${SLURM_JOB_ID}.out 2>&1 &
 PUSHER_PID=\$!
