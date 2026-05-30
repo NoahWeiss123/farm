@@ -148,8 +148,14 @@ class GSESVDWeightLoader(WeightLoader):
                 continue  # output projection: keep zero init (no valid SVD recon)
             rg = int(flat[gen_a_key].shape[-1])
             spec_a = flat[prefix + "gse_spec_a"]
-            e, d = int(spec_a.shape[0]), int(spec_a.shape[-1])
+            # gemma stacks its layers on a leading axis (params are (layers, ...)),
+            # so the expert axis E sits at position 1, not 0; d is the last axis.
+            e, d = int(spec_a.shape[1]), int(spec_a.shape[-1])
             ga, gb, sa, sb, w_adj = _gse.svd_init_factors(jnp.asarray(flat[key]), (-2, -1), rg, e, d)
+            # svd_init stacks experts on axis 0; move E to axis 1 so the result
+            # matches the layer-stacked param shape (layers, E, ...).
+            sa = jnp.moveaxis(sa, 0, 1)
+            sb = jnp.moveaxis(sb, 0, 1)
             # Cast each result back to its slot's dtype (frozen backbone is bf16,
             # trainable adapters are float32) — svd_init runs in float32.
             flat[key] = np.asarray(w_adj).astype(flat[key].dtype)
