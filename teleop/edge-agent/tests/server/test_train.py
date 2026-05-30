@@ -35,10 +35,38 @@ def test_parse_log_extracts_step_loss_grad():
     assert h["grad_norm"] == [1.234, 0.534, 0.0334]
 
 
+def test_parse_log_step_order_independent():
+    # Key order varies by config — loss may come before grad_norm.
+    h = cluster.parse_log("Step 50: loss=0.4200, grad_norm=0.1100, param_norm=12.0\n")
+    assert h["steps"] == [50] and h["loss"] == [0.42] and h["grad_norm"] == [0.11]
+
+
+def test_parse_log_tqdm_progress():
+    # openpi's tqdm→logging line — the reliable live-progress signal.
+    text = (
+        "Progress on: 326it/3.00kit rate:1.4s/it remaining:1:04:17 elapsed:09:13 postfix:- "
+        "(548075:tqdm_logging.py:145)\n"
+        "Progress on: 378it/3.00kit rate:1.5s/it remaining:1:05:10 elapsed:10:30 postfix:- "
+        "(548075:tqdm_logging.py:145)\n"
+    )
+    p = cluster.parse_log(text)["progress"]
+    assert p["step"] == 378 and p["total"] == 3000          # last line wins
+    assert p["s_per_it"] == 1.5 and p["it_per_s"] == round(1 / 1.5, 3)
+    assert p["remaining_s"] == 1 * 3600 + 5 * 60 + 10        # 1:05:10
+    assert p["elapsed_s"] == 10 * 60 + 30                    # 10:30
+
+
 def test_parse_log_empty_before_training():
     assert cluster.parse_log("installing ffmpeg…\nuv sync…\n") == {
-        "steps": [], "loss": [], "grad_norm": []
+        "steps": [], "loss": [], "grad_norm": [], "progress": None
     }
+
+
+def test_model_from_name():
+    assert cluster._model_from_name("farm-pi05-gse") == "gse"
+    assert cluster._model_from_name("farm-pi05-lora") == "lora"
+    assert cluster._model_from_name("farm-pi05") == "full"
+    assert cluster._model_from_name("serve-pi05") is None
 
 
 def test_parse_metrics_gpu_and_cpu():

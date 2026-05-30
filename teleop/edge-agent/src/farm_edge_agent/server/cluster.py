@@ -39,29 +39,75 @@ MODELS: dict[str, dict] = {
             "label": "GSE", "steps": 3000, "gpus": 4},
 }
 
-_STEP_RE = re.compile(r"Step (\d+): grad_norm=([0-9.eE+-]+), loss=([0-9.eE+-]+), param_norm=([0-9.eE+-]+)")
+# openpi emits two log shapes. Every step, a tqdm progress line:
+#   "Progress on: 378it/3.00kit rate:1.5s/it remaining:1:05:10 elapsed:10:30 postfix:-"
+# and — every log_interval, when not swallowed by openpi's tqdm→logging redirect
+# — a metrics line: "Step 300: loss=0.0009, grad_norm=0.0334, param_norm=1806.0".
+# Parse the metrics line order-independently (key order varies by config) and
+# always read the tqdm line, which reliably carries step / rate / remaining.
+_STEP_RE = re.compile(r"Step (\d+):\s*(.+)")
+_KV_RE = re.compile(r"([A-Za-z_]+)=([0-9.eE+-]+)")
+_TQDM_RE = re.compile(
+    r"Progress on:\s*(\d+)it/([0-9.]+)(k?)it\s+rate:([0-9.]+)(s/it|it/s)\s+"
+    r"remaining:([0-9:]+)\s+elapsed:([0-9:]+)(?:\s+postfix:(\S+))?"
+)
 _SUBMIT_RE = re.compile(r"Submitted batch job (\d+)")
 
 # Pod-name cache so we don't re-discover every poll.
 _pod_cache: dict[str, float | str] = {"name": "", "at": 0.0}
+# Adopted-job cache (discover() is called on idle no-job polls; keep it cheap).
+_discover_cache: dict[str, object] = {"val": None, "at": 0.0}
+
+
+def _hms(s: str) -> int:
+    """Colon-clock to seconds: '1:05:10'→4210, '10:30'→630, '09'→9."""
+    sec = 0
+    for part in s.split(":"):
+        if part:
+            sec = sec * 60 + int(part)
+    return sec
 
 
 def parse_log(text: str) -> dict:
-    """Parse openpi train stdout into loss/grad-norm history. Pure — unit-tested.
+    """Parse openpi train stdout into loss history + live progress. Pure — unit-tested.
 
-    openpi logs one line per ``log_every`` steps:
-        ``Step 18000: grad_norm=0.0334, loss=0.0009, param_norm=1806.0197``
-    Returns ``{"steps": [...], "loss": [...], "grad_norm": [...]}`` (parallel
-    lists, in order). Empty lists before the first training step is logged.
+    Returns parallel ``steps``/``loss``/``grad_norm`` lists from the metrics
+    lines (often empty — openpi's tqdm→logging redirect can swallow them), plus
+    ``progress`` from the last tqdm line, or ``None`` before training starts:
+    ``{step, total, s_per_it, it_per_s, remaining_s, elapsed_s}``.
     """
     steps: list[int] = []
     loss: list[float] = []
-    grad: list[float] = []
+    grad: list[float | None] = []
     for m in _STEP_RE.finditer(text):
+        kv = dict(_KV_RE.findall(m.group(2)))
+        if "loss" not in kv:
+            continue
         steps.append(int(m.group(1)))
-        grad.append(float(m.group(2)))
-        loss.append(float(m.group(3)))
-    return {"steps": steps, "loss": loss, "grad_norm": grad}
+        loss.append(float(kv["loss"]))
+        grad.append(float(kv["grad_norm"]) if "grad_norm" in kv else None)
+    progress = None
+    for m in _TQDM_RE.finditer(text):
+        rate = float(m.group(4))
+        s_per_it = rate if m.group(5) == "s/it" else (1.0 / rate if rate else 0.0)
+        it_per_s = (1.0 / rate if rate else 0.0) if m.group(5) == "s/it" else rate
+        progress = {
+            "step": int(m.group(1)),
+            "total": int(round(float(m.group(2)) * (1000 if m.group(3) == "k" else 1))),
+            "s_per_it": round(s_per_it, 3),
+            "it_per_s": round(it_per_s, 3),
+            "remaining_s": _hms(m.group(6)),
+            "elapsed_s": _hms(m.group(7)),
+        }
+        # Loss occasionally rides in the tqdm postfix (set_postfix(loss=…)).
+        post = m.group(8) or ""
+        if post and post != "-":
+            kv = dict(_KV_RE.findall(post))
+            if "loss" in kv and (not steps or steps[-1] != progress["step"]):
+                steps.append(progress["step"])
+                loss.append(float(kv["loss"]))
+                grad.append(None)
+    return {"steps": steps, "loss": loss, "grad_norm": grad, "progress": progress}
 
 
 def available() -> bool:
@@ -147,20 +193,28 @@ def status(job_id: str, model: str, total_steps: int) -> dict:
         if tok and tok.upper() not in ("UNKNOWN",):
             state = tok.upper()
             break
-    # Log tail → loss history.
+    # Log tail → loss history + live progress (step / rate / ETA from tqdm).
     rc2, tail = _exec(f"tail -n 600 {WORKDIR}/{logfile} 2>/dev/null", timeout=20.0)
     hist = parse_log(tail)
-    last_step = hist["steps"][-1] if hist["steps"] else 0
-    phase = _phase(state, bool(hist["steps"]))
+    prog = hist.get("progress")
+    metric_step = hist["steps"][-1] if hist["steps"] else 0
+    last_step = max(metric_step, prog["step"] if prog else 0)
+    # The tqdm line carries the real total (self-corrects an adopted default).
+    total = prog["total"] if (prog and prog.get("total")) else int(total_steps)
+    phase = _phase(state, last_step > 0)
     return {
         "job_id": job_id, "model": model, "state": state, "phase": phase,
-        "total_steps": int(total_steps), "step": last_step,
+        "total_steps": int(total), "step": last_step,
         "loss": hist["loss"], "steps": hist["steps"], "grad_norm": hist["grad_norm"],
+        "s_per_it": prog["s_per_it"] if prog else None,
+        "it_per_s": prog["it_per_s"] if prog else None,
+        "remaining_s": prog["remaining_s"] if prog else None,
+        "elapsed_s": prog["elapsed_s"] if prog else None,
         "log_tail": "\n".join(tail.strip().splitlines()[-12:]),
     }
 
 
-def _phase(state: str, has_loss: bool) -> str:
+def _phase(state: str, has_step: bool) -> str:
     if state in ("PENDING", "CONFIGURING"):
         return "queued"
     if state in ("COMPLETED",):
@@ -168,8 +222,59 @@ def _phase(state: str, has_loss: bool) -> str:
     if state in ("FAILED", "CANCELLED", "CANCELLED+", "TIMEOUT", "OUT_OF_MEMORY", "NODE_FAIL"):
         return "stopped"
     if state == "RUNNING":
-        return "training" if has_loss else "starting"
-    return "starting" if has_loss is False else "training"
+        return "training" if has_step else "starting"
+    return "starting" if has_step is False else "training"
+
+
+def _model_from_name(name: str) -> str | None:
+    """Map a SLURM job name (e.g. ``farm-pi05-gse``) to a known model key."""
+    n = name.lower()
+    if "gse" in n:
+        return "gse"
+    if "lora" in n:
+        return "lora"
+    if n.startswith("farm-pi05") or n == "pi05":
+        return "full"
+    return None
+
+
+def _elapsed_to_s(s: str) -> float:
+    """SLURM elapsed ('D-HH:MM:SS' / 'HH:MM:SS' / 'MM:SS') to seconds."""
+    s = s.strip()
+    if not s or s == "-":
+        return 0.0
+    days = 0
+    if "-" in s:
+        d, s = s.split("-", 1)
+        days = int(d)
+    return days * 86400 + _hms(s)
+
+
+def discover() -> dict | None:
+    """Find a running/queued FARM job to adopt, so the dashboard survives a
+    daemon restart and reflects jobs launched out-of-band. Cached 10 s. Returns
+    a job dict shaped like ``launch`` (plus ``adopted: True``), or ``None``."""
+    now = time.monotonic()
+    if _discover_cache["at"] and now - float(_discover_cache["at"]) < 10.0:  # type: ignore[arg-type]
+        return _discover_cache["val"]  # type: ignore[return-value]
+    _, out = _exec("squeue -u \"$USER\" -h -o '%i|%j|%T|%M' 2>/dev/null", timeout=15.0)
+    found = None
+    for line in out.splitlines():
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) < 4:
+            continue
+        jid, name, st, elapsed = parts[0], parts[1], parts[2].upper(), parts[3]
+        model = _model_from_name(name)
+        if model and st in ("RUNNING", "PENDING", "CONFIGURING", "COMPLETING", "RESIZING"):
+            spec = MODELS[model]
+            found = {
+                "job_id": jid, "model": model, "total_steps": spec["steps"],
+                "gpus": spec["gpus"], "config": spec["config"],
+                "started_at": time.time() - _elapsed_to_s(elapsed), "adopted": True,
+            }
+            break
+    _discover_cache.update(val=found, at=now)
+    return found
 
 
 def parse_metrics(text: str) -> dict:

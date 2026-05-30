@@ -1082,7 +1082,16 @@ async def get_train_status(request: web.Request) -> web.Response:
     from farm_edge_agent.server import cluster
     job = request.app.get("train_job")
     if job is None:
-        return web.json_response({"active": False, "kubectl": cluster.available()})
+        # Adopt a running job so the page reflects the cluster after a daemon
+        # restart (or an out-of-band sbatch). Opt-in via FARM_CLUSTER_ADOPT so
+        # tests and ad-hoc `build_app()` callers never shell out to kubectl.
+        if os.environ.get("FARM_CLUSTER_ADOPT") and cluster.available():
+            job = await asyncio.to_thread(cluster.discover)
+        if job is None:
+            return web.json_response({"active": False, "kubectl": cluster.available()})
+        request.app["train_job"] = job
+        request.app["train_status_cache"] = {}
+        log.info("adopted running job %s (%s, %d steps)", job["job_id"], job["model"], job["total_steps"])
     # Rate-limit the kubectl polling (shared cache) so many browser tabs / a
     # fast poll interval don't hammer the pod.
     cache = request.app.get("train_status_cache") or {}

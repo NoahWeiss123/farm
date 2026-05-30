@@ -408,22 +408,26 @@ function render(d) {
   const minLoss = S.hist.loss.length ? Math.min(...S.hist.loss) : null;
   chartCur.textContent = curLoss != null ? 'loss ' + curLoss.toFixed(4) : '';
 
-  // timing — instantaneous tick rate from recent (step, wallclock) samples,
-  // which tracks the real per-step speed better than the overall average.
+  // timing — prefer openpi's own tqdm measurements (server: it_per_s /
+  // s_per_it / remaining_s), falling back to (step, wallclock) page samples.
   const nowT = Date.now() / 1000;
   if (step > 0 && (!S.rateHist.length || step > S.rateHist[S.rateHist.length-1].step)) {
     S.rateHist.push({ step, t: nowT });
     if (S.rateHist.length > 8) S.rateHist.shift();
   }
-  const elapsed = d.started_at ? (nowT - d.started_at) : NaN;
+  const elapsed = Number.isFinite(d.elapsed_s) ? d.elapsed_s
+                : d.started_at ? (nowT - d.started_at) : NaN;
   let rate = NaN;  // steps / s
-  if (S.rateHist.length >= 2) {
+  if (Number.isFinite(d.it_per_s) && d.it_per_s > 0) rate = d.it_per_s;  // server (authoritative)
+  else if (S.rateHist.length >= 2) {
     const a = S.rateHist[0], b = S.rateHist[S.rateHist.length-1];
     if (b.t > a.t) rate = (b.step - a.step) / (b.t - a.t);
   }
   if (!Number.isFinite(rate) && step > 0 && elapsed > 0) rate = step / elapsed;  // fallback: overall avg
-  const stepTime = (Number.isFinite(rate) && rate > 0) ? 1 / rate : NaN;  // s / step
-  const eta = (Number.isFinite(rate) && rate > 0) ? (total - step) / rate : NaN;
+  const stepTime = Number.isFinite(d.s_per_it) && d.s_per_it > 0 ? d.s_per_it  // server (authoritative)
+                 : (Number.isFinite(rate) && rate > 0) ? 1 / rate : NaN;       // s / step
+  const eta = Number.isFinite(d.remaining_s) ? d.remaining_s                   // server (authoritative)
+            : (Number.isFinite(rate) && rate > 0) ? (total - step) / rate : NaN;
   const grad = d.grad_norm && d.grad_norm.length ? d.grad_norm[d.grad_norm.length-1] : null;
   const stepStr = !Number.isFinite(stepTime) ? '—'
     : stepTime < 1 ? `${(stepTime*1000).toFixed(0)}<small> ms</small>` : `${stepTime.toFixed(2)}<small> s</small>`;
