@@ -33,6 +33,8 @@ export MODEL_REPO_ID="NoahWeiss/farm_uf850_pi05_lora"
 export EXP_NAME="farm_uf850_pi05_lora_${SLURM_JOB_ID}"
 export CONFIG_NAME="pi05_farm_uf850_lora"
 RESUME_FROM="${RESUME_FROM:-}"
+# Optional step override (the /train dashboard page sets this); empty = config default.
+export NUM_TRAIN_STEPS="${NUM_TRAIN_STEPS:-}"
 
 srun --container-image='nvcr.io#nvidia/pytorch:24.12-py3' \
      --container-workdir="$WORK/openpi" \
@@ -46,6 +48,7 @@ export MODEL_REPO_ID='${MODEL_REPO_ID}'
 export EXP_NAME='${EXP_NAME}'
 export CONFIG_NAME='${CONFIG_NAME}'
 export RESUME_FROM='${RESUME_FROM}'
+export NUM_TRAIN_STEPS='${NUM_TRAIN_STEPS}'
 export HF_HUB_ENABLE_HF_TRANSFER=1
 export TF_CPP_MIN_LOG_LEVEL=3
 export JAX_PLATFORMS=cuda
@@ -79,9 +82,9 @@ trap 'kill -TERM \$PUSHER_PID 2>/dev/null || true; wait \$PUSHER_PID 2>/dev/null
 
 echo '>>> starting LoRA training…'
 if [[ -n \"\$RESUME_FROM\" ]]; then
-  uv run python scripts/train.py \$CONFIG_NAME --exp-name=\"\$EXP_NAME\" --resume --no-wandb-enabled
+  uv run python scripts/train.py \$CONFIG_NAME --exp-name=\"\$EXP_NAME\" --resume --no-wandb-enabled \${NUM_TRAIN_STEPS:+--num-train-steps=\$NUM_TRAIN_STEPS}
 else
-  uv run python scripts/train.py \$CONFIG_NAME --exp-name=\"\$EXP_NAME\" --overwrite --no-wandb-enabled
+  uv run python scripts/train.py \$CONFIG_NAME --exp-name=\"\$EXP_NAME\" --overwrite --no-wandb-enabled \${NUM_TRAIN_STEPS:+--num-train-steps=\$NUM_TRAIN_STEPS}
 fi
 
 echo '>>> draining checkpoint pusher…'

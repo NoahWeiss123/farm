@@ -50,6 +50,8 @@ export CONFIG_NAME="pi05_farm_uf850"
 # (e.g. checkpoints/pi05_farm_uf850/farm_uf850_pi05_<old_jobid>/19999)
 # and resubmit. Leave empty for a fresh run.
 RESUME_FROM="${RESUME_FROM:-}"
+# Optional step override (the /train dashboard page sets this); empty = config default.
+export NUM_TRAIN_STEPS="${NUM_TRAIN_STEPS:-}"
 
 # ── Train inside an NGC PyTorch container ───────────────────────────────
 # NGC PyTorch ships CUDA + NCCL + cuDNN + ffmpeg matched to host drivers
@@ -75,6 +77,7 @@ export DATASET_REPO_ID='${DATASET_REPO_ID}'
 export MODEL_REPO_ID='${MODEL_REPO_ID}'
 export EXP_NAME='${EXP_NAME}'
 export RESUME_FROM='${RESUME_FROM}'
+export NUM_TRAIN_STEPS='${NUM_TRAIN_STEPS}'
 export HF_HUB_ENABLE_HF_TRANSFER=1
 export TF_CPP_MIN_LOG_LEVEL=3
 export JAX_PLATFORMS=cuda
@@ -125,12 +128,12 @@ if [[ -n \"\$RESUME_FROM\" ]]; then
   uv run python scripts/train.py pi05_farm_uf850 \
       --exp-name=\"\$EXP_NAME\" \
       --resume \
-      --no-wandb-enabled
+      --no-wandb-enabled \${NUM_TRAIN_STEPS:+--num-train-steps=\$NUM_TRAIN_STEPS}
 else
   uv run python scripts/train.py pi05_farm_uf850 \
       --exp-name=\"\$EXP_NAME\" \
       --overwrite \
-      --no-wandb-enabled
+      --no-wandb-enabled \${NUM_TRAIN_STEPS:+--num-train-steps=\$NUM_TRAIN_STEPS}
 fi
 
 # Drain the pusher: send SIGTERM so it does one final pass picking up
