@@ -41,6 +41,20 @@ def test_parse_log_empty_before_training():
     }
 
 
+def test_parse_metrics_gpu_and_cpu():
+    blob = "0, 95, 41000, 81920\n1, 88, 40000, 81920\nCPU\n1.50 1.20 0.90 2/300 999\n16\n"
+    m = cluster.parse_metrics(blob)
+    assert len(m["gpus"]) == 2
+    assert m["gpus"][0] == {"index": 0, "util": 95, "mem_used": 41000, "mem_total": 81920, "mem_pct": 50.0}
+    assert m["gpus"][1]["util"] == 88
+    assert m["cpu"]["load1"] == 1.5 and m["cpu"]["ncpu"] == 16
+    assert m["cpu"]["pct"] == round(100 * 1.5 / 16, 1)
+
+
+def test_parse_metrics_empty():
+    assert cluster.parse_metrics("") == {"gpus": [], "cpu": {}}
+
+
 def test_models_known():
     assert set(cluster.MODELS) == {"full", "lora", "gse"}
     for spec in cluster.MODELS.values():
@@ -66,6 +80,12 @@ async def test_train_stop_no_job(client: TestClient) -> None:
     r = await client.post("/v1/train/stop")
     assert r.status == 200
     assert (await r.json())["ok"] is True
+
+
+async def test_train_metrics_no_job(client: TestClient) -> None:
+    r = await client.get("/v1/train/metrics")
+    assert r.status == 200
+    assert (await r.json())["active"] is False
 
 
 async def test_train_launch_unknown_model_rejected(client: TestClient) -> None:

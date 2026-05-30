@@ -1094,6 +1094,22 @@ async def get_train_status(request: web.Request) -> web.Response:
     )
     data.update(active=True, started_at=job.get("started_at"),
                 gpus=job.get("gpus"), config=job.get("config"))
+    # Auto-release the GPUs so a finished/hung run can't keep an allocation.
+    # Normal completion ends the SLURM job on its own (which frees the GPUs);
+    # this only scancels if training has clearly started logging steps and then
+    # made NO progress for 20 min — i.e. it finished or hung. Container build +
+    # norm-stats (no steps yet) and the post-training checkpoint push are both
+    # well inside the grace, so a healthy run is never cut short.
+    if data.get("phase") == "training":
+        step = data.get("step", 0)
+        if step > job.get("_last_step", -1):
+            job["_last_step"] = step
+            job["_progress_at"] = now
+        elif job.get("_progress_at") and now - job["_progress_at"] > 1200:
+            await asyncio.to_thread(cluster.stop, job["job_id"])
+            data["phase"] = "stopped"
+            data["note"] = "auto-stopped: no step progress for 20 min — GPUs released"
+            log.info("auto-stopped stalled training job %s", job["job_id"])
     request.app["train_status_cache"] = {"at": now, "data": data}
     return web.json_response(data)
 
@@ -1106,6 +1122,31 @@ async def post_train_stop(request: web.Request) -> web.Response:
     result = await asyncio.to_thread(cluster.stop, job["job_id"])
     request.app["train_status_cache"] = {}
     return web.json_response(result)
+
+
+async def get_train_metrics(request: web.Request) -> web.Response:
+    """Per-GPU utilization + CPU load for the active job (only while running).
+
+    Separate from /status (and more heavily rate-limited) because the
+    ``srun --overlap`` into the job's node costs a second or two — keeping it
+    off /status leaves the loss curve responsive.
+    """
+    from farm_edge_agent.server import cluster
+    job = request.app.get("train_job")
+    if job is None:
+        return web.json_response({"active": False})
+    # Only meaningful once the job is actually running.
+    phase = (request.app.get("train_status_cache") or {}).get("data", {}).get("phase")
+    if phase in ("queued", "done", "stopped"):
+        return web.json_response({"active": True, "phase": phase, "gpus": [], "cpu": {}})
+    cache = request.app.get("train_metrics_cache") or {}
+    now = time.monotonic()
+    if cache.get("at") and now - cache["at"] < 4.0:
+        return web.json_response(cache["data"])
+    data = await asyncio.to_thread(cluster.metrics, job["job_id"])
+    data["active"] = True
+    request.app["train_metrics_cache"] = {"at": now, "data": data}
+    return web.json_response(data)
 
 
 # ── wiring ──────────────────────────────────────────────────────────────────
@@ -1145,6 +1186,7 @@ def build_app(*, backend: RobotBackend | None = None) -> web.Application:
     # short-lived cache of its last polled status (rate-limits kubectl).
     app["train_job"] = None
     app["train_status_cache"] = {}
+    app["train_metrics_cache"] = {}
 
     async def _on_startup(_: web.Application) -> None:
         bus.attach_loop(asyncio.get_running_loop())
@@ -1174,6 +1216,7 @@ def build_app(*, backend: RobotBackend | None = None) -> web.Application:
         web.get("/v1/train/models", get_train_models),
         web.post("/v1/train/launch", post_train_launch),
         web.get("/v1/train/status", get_train_status),
+        web.get("/v1/train/metrics", get_train_metrics),
         web.post("/v1/train/stop", post_train_stop),
         web.get("/healthz", healthz),
         web.get("/v1/world", get_world),

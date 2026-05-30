@@ -172,6 +172,65 @@ def _phase(state: str, has_loss: bool) -> str:
     return "starting" if has_loss is False else "training"
 
 
+def parse_metrics(text: str) -> dict:
+    """Parse the ``srun … nvidia-smi`` + loadavg blob. Pure — unit-tested.
+
+    Expects nvidia-smi CSV rows ``index, util, mem_used, mem_total`` (no header,
+    no units), then a ``CPU`` marker, a /proc/loadavg line, and an nproc count.
+    Returns ``{"gpus": [{index, util, mem_used, mem_total, mem_pct}], "cpu": {...}}``.
+    """
+    gpus: list[dict] = []
+    cpu: dict = {}
+    section = "gpu"
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line == "CPU":
+            section = "cpu"
+            continue
+        if section == "gpu":
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) == 4 and all(p.lstrip("-").isdigit() for p in parts):
+                idx, util, used, total = (int(p) for p in parts)
+                gpus.append({
+                    "index": idx, "util": util, "mem_used": used, "mem_total": total,
+                    "mem_pct": round(100 * used / total, 1) if total else 0,
+                })
+        else:  # cpu section: loadavg line then nproc
+            toks = line.split()
+            if len(toks) >= 3 and _isfloat(toks[0]) and "load1" not in cpu:
+                cpu["load1"] = float(toks[0])
+            elif line.isdigit():
+                cpu["ncpu"] = int(line)
+    if "load1" in cpu and cpu.get("ncpu"):
+        cpu["pct"] = round(min(100.0, 100.0 * cpu["load1"] / cpu["ncpu"]), 1)
+    return {"gpus": gpus, "cpu": cpu}
+
+
+def _isfloat(s: str) -> bool:
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+
+def metrics(job_id: str) -> dict:
+    """Per-GPU utilization + CPU load for a running job, via ``srun --overlap``
+    into its allocation (the SLURM-blessed way to inspect a live job's node)."""
+    remote = (
+        f"srun --jobid={job_id} --overlap --quiet --ntasks=1 bash -lc "
+        "'nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total "
+        "--format=csv,noheader,nounits 2>/dev/null; echo CPU; "
+        "cat /proc/loadavg 2>/dev/null; nproc 2>/dev/null'"
+    )
+    rc, out = _exec(remote, timeout=25.0)
+    if rc != 0 and "nvidia-smi" not in out:
+        return {"gpus": [], "cpu": {}, "error": out.strip()[:160]}
+    return parse_metrics(out)
+
+
 def stop(job_id: str) -> dict:
     rc, out = _exec(f"scancel {job_id} 2>&1", timeout=15.0)
     return {"ok": rc == 0, "out": out.strip()[:200]}

@@ -124,6 +124,16 @@
   .tile .v { font-size: 17px; margin-top: 2px; }
   .tile .v small { font-size: 11px; color: var(--muted); }
 
+  /* hardware (gpu/cpu) */
+  #hwCard { border: 1px solid var(--line); border-radius: 6px; background: #fff; padding: 8px 10px; }
+  #hwCard .hwHead { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+  #hw { display: flex; flex-direction: column; gap: 5px; }
+  .hwRow { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+  .hwRow .lab { width: 46px; color: var(--fg); font-weight: 600; }
+  .hwRow .bar { flex: 1; height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+  .hwRow .fill { height: 100%; width: 0%; border-radius: 4px; transition: width 500ms ease; }
+  .hwRow .val { width: 160px; text-align: right; color: var(--muted); }
+
   /* log tail */
   #logCard {
     border: 1px solid var(--line); border-radius: 6px; background: #0f172a; color: #cbd5e1;
@@ -200,6 +210,11 @@
 
       <div id="tiles"></div>
 
+      <div id="hwCard" style="display:none;">
+        <div class="hwHead">Hardware · live utilization</div>
+        <div id="hw"></div>
+      </div>
+
       <div id="logCard"><span class="empty">waiting for training output…</span></div>
     </div>
   </main>
@@ -208,7 +223,8 @@
 
 <script>
 // ── State ────────────────────────────────────────────────────────────
-const S = { models: {}, model: 'gse', poll: null, hist: { steps: [], loss: [] } };
+const S = { models: {}, model: 'gse', poll: null, pollM: null,
+            hist: { steps: [], loss: [] }, rateHist: [] };
 
 // ── DOM ──────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -294,7 +310,7 @@ btnLaunch.addEventListener('click', async () => {
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
     showToast(`launched job ${d.job_id}`);
-    S.hist = { steps: [], loss: [] };
+    S.hist = { steps: [], loss: [] }; S.rateHist = [];
     startPolling();
   } catch (e) { showToast('launch failed: ' + e.message, true); }
   finally { btnLaunch.textContent = 'Launch'; btnLaunch.disabled = false; }
@@ -308,7 +324,16 @@ btnStop.addEventListener('click', async () => {
 });
 
 // ── Polling + render ─────────────────────────────────────────────────
-function startPolling() { if (S.poll) clearInterval(S.poll); poll(); S.poll = setInterval(poll, 3000); }
+function stopPolling() {
+  if (S.poll) { clearInterval(S.poll); S.poll = null; }
+  if (S.pollM) { clearInterval(S.pollM); S.pollM = null; }
+}
+function startPolling() {
+  stopPolling();
+  poll(); pollMetrics();
+  S.poll = setInterval(poll, 3000);
+  S.pollM = setInterval(pollMetrics, 5000);  // GPU/CPU is heavier — poll slower
+}
 async function poll() {
   let d;
   try { d = await (await fetch('/v1/train/status')).json(); }
@@ -316,13 +341,51 @@ async function poll() {
   if (!d.active) {
     monitor.classList.remove('active'); placeholder.style.display = 'flex';
     mBadge.style.display = 'none'; btnStop.disabled = true;
-    if (S.poll) { clearInterval(S.poll); S.poll = null; }
+    stopPolling();
     return;
   }
   render(d);
   const terminal = d.phase === 'done' || d.phase === 'stopped';
   btnStop.disabled = terminal;
-  if (terminal && S.poll) { clearInterval(S.poll); S.poll = null; }
+  if (terminal) {
+    // Job finished → SLURM has released the GPUs. Stop polling, show it.
+    $('hwCard').style.display = 'none';
+    if (S.pollM) { clearInterval(S.pollM); S.pollM = null; }
+    if (S.poll) { clearInterval(S.poll); S.poll = null; }
+    showToast(d.phase === 'done' ? 'training finished · GPUs released' : 'job stopped · GPUs released');
+  }
+}
+
+async function pollMetrics() {
+  let d;
+  try { d = await (await fetch('/v1/train/metrics')).json(); }
+  catch (e) { return; }
+  renderHw(d);
+}
+function gpuColor(u) { return u >= 80 ? '#16a34a' : (u >= 40 ? '#2563eb' : '#f59e0b'); }
+function hwRow(lab, pct, color, val) {
+  const row = document.createElement('div'); row.className = 'hwRow';
+  const w = Math.max(0, Math.min(100, pct || 0));
+  row.innerHTML = `<span class="lab">${lab}</span>`
+    + `<span class="bar"><span class="fill" style="width:${w}%;background:${color}"></span></span>`
+    + `<span class="val mono">${val}</span>`;
+  return row;
+}
+function renderHw(d) {
+  const card = $('hwCard'), hw = $('hw');
+  const gpus = (d && d.gpus) || [];
+  const cpu = (d && d.cpu) || {};
+  if (!d || !d.active || (gpus.length === 0 && cpu.pct == null)) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  hw.innerHTML = '';
+  for (const g of gpus) {
+    hw.appendChild(hwRow(`GPU ${g.index}`, g.util, gpuColor(g.util),
+      `${g.util}%  ·  ${(g.mem_used/1024).toFixed(1)}/${(g.mem_total/1024).toFixed(0)} GB`));
+  }
+  if (cpu.pct != null) {
+    hw.appendChild(hwRow('CPU', cpu.pct, '#2563eb',
+      `${cpu.pct}%  ·  load ${cpu.load1}/${cpu.ncpu}`));
+  }
 }
 
 function render(d) {
@@ -345,11 +408,25 @@ function render(d) {
   const minLoss = S.hist.loss.length ? Math.min(...S.hist.loss) : null;
   chartCur.textContent = curLoss != null ? 'loss ' + curLoss.toFixed(4) : '';
 
-  // timing
-  const elapsed = d.started_at ? (Date.now()/1000 - d.started_at) : NaN;
-  const rate = (step > 0 && Number.isFinite(elapsed) && elapsed > 0) ? step / elapsed : NaN;  // steps/s
+  // timing — instantaneous tick rate from recent (step, wallclock) samples,
+  // which tracks the real per-step speed better than the overall average.
+  const nowT = Date.now() / 1000;
+  if (step > 0 && (!S.rateHist.length || step > S.rateHist[S.rateHist.length-1].step)) {
+    S.rateHist.push({ step, t: nowT });
+    if (S.rateHist.length > 8) S.rateHist.shift();
+  }
+  const elapsed = d.started_at ? (nowT - d.started_at) : NaN;
+  let rate = NaN;  // steps / s
+  if (S.rateHist.length >= 2) {
+    const a = S.rateHist[0], b = S.rateHist[S.rateHist.length-1];
+    if (b.t > a.t) rate = (b.step - a.step) / (b.t - a.t);
+  }
+  if (!Number.isFinite(rate) && step > 0 && elapsed > 0) rate = step / elapsed;  // fallback: overall avg
+  const stepTime = (Number.isFinite(rate) && rate > 0) ? 1 / rate : NaN;  // s / step
   const eta = (Number.isFinite(rate) && rate > 0) ? (total - step) / rate : NaN;
   const grad = d.grad_norm && d.grad_norm.length ? d.grad_norm[d.grad_norm.length-1] : null;
+  const stepStr = !Number.isFinite(stepTime) ? '—'
+    : stepTime < 1 ? `${(stepTime*1000).toFixed(0)}<small> ms</small>` : `${stepTime.toFixed(2)}<small> s</small>`;
 
   tilesEl.innerHTML = '';
   const tiles = [
@@ -357,10 +434,10 @@ function render(d) {
     ['Min loss', minLoss != null ? minLoss.toFixed(4) : '—'],
     ['Grad norm', grad != null ? grad.toFixed(3) : '—'],
     ['Steps left', Number.isFinite(total-step) ? (total-step).toLocaleString() : '—'],
+    ['Tick rate', Number.isFinite(rate) ? `${rate.toFixed(2)}<small> it/s</small>` : '—'],
+    ['Step time', stepStr],
     ['Elapsed', fmtDur(elapsed)],
     ['Est. remaining', d.phase==='done' ? 'done' : fmtDur(eta)],
-    ['Rate', Number.isFinite(rate) ? `${rate.toFixed(2)}<small> it/s</small>` : '—'],
-    ['State', `<small>${d.state || '—'}</small>`],
   ];
   for (const [k, v] of tiles) {
     const t = document.createElement('div'); t.className = 'tile';
