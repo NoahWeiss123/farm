@@ -11,25 +11,21 @@
 #
 # Prereq: setup.sh registered pi05_farm_uf850_gse (it runs patch_openpi_gse.py
 # + patch_openpi_config_pi05_gse.py when openpi_gse.py is staged alongside).
-# Fits one H100 (frozen backbone), so this is gpu:1.
 #
-# SMOKE TEST FIRST (cheap): the GSE integration is syntax-validated but not
-# GPU-tested. Before the full run, sanity-check that it builds + trains a few
-# steps — see model/FINDINGS.md "GSE smoke test".
-#
-# Faster wall-clock: GSE freezes the backbone (no FSDP needed), so it
-# data-parallel-replicates across whatever GPUs are allocated. Bump --gres to
-# gpu:2/gpu:4 for a ~2-4x speedup — still far cheaper than the 8-GPU full FT
-# (12k steps on 1 H100 is ~6 GPU-hours vs full FT's ~28).
+# Sized for 4× H100 (data-parallel, no FSDP — the frozen backbone fits on one
+# GPU). The config's global batch 128 = 32/GPU keeps each GPU fully fed; 96 CPUs
+# feed the 48 video-decode workers so the GPUs don't starve. ~1.5-2h for 3k
+# steps (≈6.5 epochs). Drop to --gres=gpu:1 (and the config back to batch 32 /
+# 12k steps) for the cheap single-GPU run.
 #
 # Submit:    sbatch train_pi05_gse.sbatch
-# Pull:      hf download NoahWeiss/farm_uf850_pi05_gse --revision step-9999
+# Pull:      hf download NoahWeiss/farm_uf850_pi05_gse --revision step-2999
 
 #SBATCH --job-name=farm-pi05-gse
 #SBATCH --partition=small
-#SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=32
-#SBATCH --time=12:00:00
+#SBATCH --gres=gpu:4
+#SBATCH --cpus-per-task=96
+#SBATCH --time=06:00:00
 #SBATCH --output=train-gse-%j.out
 
 set -euo pipefail

@@ -36,7 +36,7 @@ MODELS: dict[str, dict] = {
     "lora": {"script": "train_pi05_lora.sbatch", "log": "train-lora", "config": "pi05_farm_uf850_lora",
              "label": "LoRA", "steps": 12000, "gpus": 1},
     "gse": {"script": "train_pi05_gse.sbatch", "log": "train-gse", "config": "pi05_farm_uf850_gse",
-            "label": "GSE", "steps": 12000, "gpus": 1},
+            "label": "GSE", "steps": 3000, "gpus": 4},
 }
 
 _STEP_RE = re.compile(r"Step (\d+): grad_norm=([0-9.eE+-]+), loss=([0-9.eE+-]+), param_norm=([0-9.eE+-]+)")

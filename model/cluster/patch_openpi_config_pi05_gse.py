@@ -73,33 +73,30 @@ TRAIN_CONFIG_INSERT = '''    #
             action_expert_variant="gemma_300m",
         ).get_freeze_filter(),
         ema_decay=None,
-        # batch 32 on one H100 (frozen backbone fits easily). 12k steps ≈ 6.5
-        # epochs — SVD-init gives the adapters a head start, so they converge in
-        # fewer steps than random-init LoRA (that head start is GSE's "faster"),
-        # and PEFT overfits little with the backbone frozen. ~5-7h on 1 H100
-        # (the run is GPU-hour-cheap vs the 8-GPU full FT — see cluster/README).
-        # For faster wall-clock, request more GPUs: this config sets no
-        # fsdp_devices, so it data-parallel-replicates across whatever is
-        # allocated. Checkpoints every 3k for selection (SVD-init often peaks
-        # early — don't assume the last step is best).
-        batch_size=32,
-        num_train_steps=12_000,
-        # Gentle single LR (2.5e-5). The paper decouples GSE adapters (1e-5)
-        # from the action head (1e-4); openpi's single-schedule optimizer can't
-        # separate them, so this leans toward the gentle end to protect the
-        # SVD-initialized subspace (which starts ~correct) from being perturbed
-        # — over-stepping it is exactly the catastrophic forgetting GSE avoids.
-        # Decoupled per-group LRs are a documented refinement (FINDINGS.md).
+        # Scaled for 4× H100 (data-parallel, no FSDP — the frozen backbone fits
+        # on one GPU, so the 4 GPUs replicate). Global batch 128 = 32/GPU keeps
+        # each H100 fully fed; 3k steps × 128 = 384k samples ≈ 6.5 epochs (the
+        # same data budget as the 1-GPU 12k×32 run, in ~1/4 the wall-clock,
+        # ~1.5-2h). num_workers=48 (~12/GPU) + the sbatch's 96 CPUs feed the
+        # video decode so the GPUs don't starve. Checkpoints every 1k for
+        # selection (SVD-init often peaks early — don't assume the last is best).
+        batch_size=128,
+        num_train_steps=3_000,
+        # LR √-scaled for the 4× larger batch (2.5e-5 → 5e-5): a bigger batch is
+        # less noisy so it tolerates a higher LR, and with 1/4 the steps this
+        # keeps the effective update budget. Still gentle enough to protect the
+        # SVD-initialized subspace. Decoupled per-group LRs (GSE 1e-5 / action
+        # head 1e-4) remain a documented refinement (FINDINGS.md).
         lr_schedule=_optimizer.CosineDecaySchedule(
-            warmup_steps=600,
-            peak_lr=2.5e-5,
-            decay_steps=12_000,
-            decay_lr=2.5e-6,
+            warmup_steps=300,
+            peak_lr=5e-5,
+            decay_steps=3_000,
+            decay_lr=5e-6,
         ),
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
-        save_interval=3_000,
-        keep_period=3_000,
-        num_workers=16,
+        save_interval=1_000,
+        keep_period=1_000,
+        num_workers=48,
     ),
 '''
 
