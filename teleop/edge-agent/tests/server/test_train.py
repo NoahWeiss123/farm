@@ -56,6 +56,17 @@ def test_parse_log_tqdm_progress():
     assert p["elapsed_s"] == 10 * 60 + 30                    # 10:30
 
 
+def test_parse_log_tqdm_k_suffixed_step():
+    # Past 1000, tqdm abbreviates the step too ("1.33kit") — must not freeze.
+    text = (
+        "Progress on: 997it/3.00kit rate:1.4s/it remaining:47:00 elapsed:23:00 postfix:-\n"
+        "Progress on: 1.33kit/3.00kit rate:1.4s/it remaining:39:26 elapsed:36:24 postfix:-\n"
+    )
+    p = cluster.parse_log(text)["progress"]
+    assert p["step"] == 1330 and p["total"] == 3000
+    assert p["remaining_s"] == 39 * 60 + 26
+
+
 def test_parse_log_empty_before_training():
     assert cluster.parse_log("installing ffmpeg…\nuv sync…\n") == {
         "steps": [], "loss": [], "grad_norm": [], "progress": None

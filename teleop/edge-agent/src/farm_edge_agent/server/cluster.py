@@ -47,8 +47,9 @@ MODELS: dict[str, dict] = {
 # always read the tqdm line, which reliably carries step / rate / remaining.
 _STEP_RE = re.compile(r"Step (\d+):\s*(.+)")
 _KV_RE = re.compile(r"([A-Za-z_]+)=([0-9.eE+-]+)")
+# Both counts can carry a 'k' suffix once past 1000 (e.g. "1.33kit/3.00kit").
 _TQDM_RE = re.compile(
-    r"Progress on:\s*(\d+)it/([0-9.]+)(k?)it\s+rate:([0-9.]+)(s/it|it/s)\s+"
+    r"Progress on:\s*([0-9.]+)(k?)it/([0-9.]+)(k?)it\s+rate:([0-9.]+)(s/it|it/s)\s+"
     r"remaining:([0-9:]+)\s+elapsed:([0-9:]+)(?:\s+postfix:(\S+))?"
 )
 _SUBMIT_RE = re.compile(r"Submitted batch job (\d+)")
@@ -88,19 +89,19 @@ def parse_log(text: str) -> dict:
         grad.append(float(kv["grad_norm"]) if "grad_norm" in kv else None)
     progress = None
     for m in _TQDM_RE.finditer(text):
-        rate = float(m.group(4))
-        s_per_it = rate if m.group(5) == "s/it" else (1.0 / rate if rate else 0.0)
-        it_per_s = (1.0 / rate if rate else 0.0) if m.group(5) == "s/it" else rate
+        rate = float(m.group(5))
+        s_per_it = rate if m.group(6) == "s/it" else (1.0 / rate if rate else 0.0)
+        it_per_s = (1.0 / rate if rate else 0.0) if m.group(6) == "s/it" else rate
         progress = {
-            "step": int(m.group(1)),
-            "total": int(round(float(m.group(2)) * (1000 if m.group(3) == "k" else 1))),
+            "step": int(round(float(m.group(1)) * (1000 if m.group(2) == "k" else 1))),
+            "total": int(round(float(m.group(3)) * (1000 if m.group(4) == "k" else 1))),
             "s_per_it": round(s_per_it, 3),
             "it_per_s": round(it_per_s, 3),
-            "remaining_s": _hms(m.group(6)),
-            "elapsed_s": _hms(m.group(7)),
+            "remaining_s": _hms(m.group(7)),
+            "elapsed_s": _hms(m.group(8)),
         }
         # Loss occasionally rides in the tqdm postfix (set_postfix(loss=…)).
-        post = m.group(8) or ""
+        post = m.group(9) or ""
         if post and post != "-":
             kv = dict(_KV_RE.findall(post))
             if "loss" in kv and (not steps or steps[-1] != progress["step"]):
