@@ -66,6 +66,12 @@ if [[ -f "$WORK/patch_openpi_gse.py" && -f "$WORK/openpi_gse.py" ]]; then
   python3 "$WORK/patch_openpi_gse.py" --openpi-root "$WORK/openpi"
   python3 "$WORK/patch_openpi_config_pi05_gse.py"
 fi
+# Mirror the per-step metrics line through logging so the loss reaches the
+# SLURM log (openpi's tqdm redirect otherwise swallows it) and the /train
+# dashboard can plot a loss curve. Benefits every config; idempotent.
+if [[ -f "$WORK/patch_openpi_train_logging.py" ]]; then
+  python3 "$WORK/patch_openpi_train_logging.py" --openpi-root "$WORK/openpi"
+fi
 
 # 4) Verify the patch is syntactically valid and the config name landed.
 #    py_compile checks syntax WITHOUT importing openpi's heavy deps
