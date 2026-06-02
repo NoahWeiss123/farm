@@ -100,6 +100,7 @@ import signal
 import sys
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -116,9 +117,14 @@ DEFAULT_POLICY_URL = "ws://127.0.0.1:8000"
 DEFAULT_TASK = "Picking up the bottle and placing it on the box"
 # Commit at the dataset's native 30 Hz (each policy action ≈ state at t+1/30s).
 # This is the cadence the model was trained against and that performs the task
-# reliably. The streaming/RTC smoothness path (--stream-hz, --rtc) is off by
-# default — it improved smoothness but regressed task performance when stacked,
-# so re-add it deliberately and test on the arm.
+# reliably. RTC (Real-Time Chunking — PI's seam-smoothing) is ON by default
+# (pass --no-rtc to disable): the patched server inpaints each new chunk to join
+# the previous one over their overlap, cutting chunk-to-chunk deviation ~47-79%
+# (validated offline on the flagship, model/cluster/rtc_check.sbatch) while
+# leaving confident in-distribution actions essentially unchanged. The STREAMING
+# path (--stream-hz 100, interpolation) stays OFF — stacking it on top of RTC
+# regressed task performance, so add ONE smoothness change at a time and A/B it
+# on the arm (RTC default vs --no-rtc).
 DEFAULT_RATE_HZ = 30.0
 # Action chunk = 10 actions per inference (π0.5 is hardcoded at action_horizon=10).
 # Consume all 10 each chunk to maximise motion duty cycle vs. inference overhead.
@@ -511,6 +517,13 @@ class LoopConfig:
     dry_run: bool
     rtc: bool = True       # Real-Time Chunking (server-side guided seam blend)
     stream_hz: float = 0.0  # steady interpolated POST rate (0 = proven per-action loop; e.g. 100 to enable)
+    queue: bool = False    # in-order FIFO queue execution (no timed-waypoint skipping)
+    queue_low: int = 4     # low-water mark: refill (run inference) once the queue drains to this
+    queue_max: int = 12    # hard cap: the queue is never allowed past this (stalest items shed)
+    sync: bool = False     # strict synchronous, no-skip, blocking-inference loop (judge the model, not the harness)
+    settle_s: float = 0.10 # sync loop: dwell after the final waypoint so the arm reaches it before the next obs
+    log_dir: str = ""      # if set (--log-dir), the queue loop writes per-batch desired-angle CSVs here
+    batch_log: list = field(default_factory=list)  # per-inference {obs_t, targets} for desired-angle logging
     deltas_seen: list[np.ndarray] = field(default_factory=list)
 
 
@@ -578,6 +591,60 @@ def _apply_delta_chunk(
         gripper = float(np.clip(a[6], 0.0, 1.0)) if a.shape[0] > 6 else 0.0
         out.append((target, gripper))
     return out
+
+
+def _write_queue_logs(cfg: "LoopConfig", period: float) -> None:
+    """Write the queue loop's per-batch DESIRED-angle logs.
+
+    Each policy inference is a "batch": from one observation (base+wrist image +
+    joint state captured at obs time ``t_b``) the policy predicts a chunk of H
+    absolute joint targets for the next H ticks (``t_b + k/rate`` for k=1..H).
+    We lay these out as a matrix per joint — rows = time snapped to the 1/rate
+    tick grid (seconds from the first observation), columns = batch index, cell =
+    that batch's desired joint angle (rad) for that time. Successive batches
+    overlap in time, so one row carries several batches' predictions for the same
+    instant — that overlap is the seam the queue's head-trim + RTC smooth.
+
+    Files written in ``cfg.log_dir``: ``desired_{j1..j6,grip}.csv`` (the
+    time × batch matrices) + ``desired_long.csv`` (one row per (batch, step)).
+    """
+    if not cfg.log_dir or not cfg.batch_log:
+        return
+    import csv
+    import os
+
+    os.makedirs(cfg.log_dir, exist_ok=True)
+    names = ["j1", "j2", "j3", "j4", "j5", "j6", "grip"]
+    nb = len(cfg.batch_log)
+    cells: list[dict[int, dict[int, float]]] = [dict() for _ in range(7)]
+    grids: set[int] = set()
+    for b, rec in enumerate(cfg.batch_log):
+        base = int(round(rec["obs_t"] / period))
+        for k, (joints, grip) in enumerate(rec["targets"]):
+            g = base + k + 1
+            grids.add(g)
+            vals = [float(joints[i]) for i in range(6)] + [float(grip)]
+            for j in range(7):
+                cells[j].setdefault(g, {})[b] = vals[j]
+    grid_sorted = sorted(grids)
+    for j in range(7):
+        with open(os.path.join(cfg.log_dir, f"desired_{names[j]}.csv"), "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["time_s"] + [f"batch{b}" for b in range(nb)])
+            for g in grid_sorted:
+                bm = cells[j].get(g, {})
+                w.writerow([f"{g * period:.4f}"]
+                           + [f"{bm[b]:.6f}" if b in bm else "" for b in range(nb)])
+    with open(os.path.join(cfg.log_dir, "desired_long.csv"), "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["batch", "k", "time_s", "j1", "j2", "j3", "j4", "j5", "j6", "grip"])
+        for b, rec in enumerate(cfg.batch_log):
+            base = int(round(rec["obs_t"] / period))
+            for k, (joints, grip) in enumerate(rec["targets"]):
+                t = (base + k + 1) * period
+                w.writerow([b, k, f"{t:.4f}"]
+                           + [f"{float(joints[i]):.6f}" for i in range(6)] + [f"{float(grip):.6f}"])
+    print(f"[eval] wrote desired-angle logs · {nb} batches → {cfg.log_dir}/desired_*.csv")
 
 
 def run_stream_loop(
@@ -1188,6 +1255,515 @@ def run_loop(
     )
 
 
+def run_queue_loop(
+    *,
+    daemon: FarmDaemonClient,
+    policy: Policy,
+    cfg: LoopConfig,
+    policy_url: str,
+) -> None:
+    """In-order FIFO queue execution — no timed-waypoint deadlines, no skipping.
+
+    Contrast with ``run_loop``: that loop stamps every action with an absolute
+    wall-clock deadline and *skips* any action whose deadline already passed
+    when a fresh chunk is adopted. This loop instead holds a simple queue of
+    joint targets and drains it strictly in order, one per tick — every queued
+    position is sent, nothing is skipped to chase a clock.
+
+    The danger of a naive queue is **backlog**: if we appended every fresh
+    10-action chunk, the queue would grow without bound, the arm would lag
+    further and further behind what the cameras currently see, and it would
+    plough through stale intermediate waypoints — i.e. overshoot the real
+    target and get "lost in unimportant movements." Three guards prevent that,
+    biased deliberately toward keeping the queue SHORT (a brief hold is better
+    than a long stale backlog):
+
+      1. **Low-water refill.** We only launch a new inference once the queue has
+         drained to ``cfg.queue_low`` items. We therefore never produce faster
+         than we consume, so the queue self-limits instead of ballooning.
+      2. **Head-trim on adopt.** A fresh chunk's observation was captured while
+         ``queue_len_at_launch`` items were still queued ahead of it. Those items
+         will move the arm forward before the new chunk runs, so the new chunk's
+         first ``queue_len_at_launch`` predictions are already "in the past."
+         We drop exactly that many from its head and enqueue the rest — so the
+         new plan continues *after* the queue instead of rewinding the arm to
+         the older state its photo was taken from. (RTC, default on, blends the
+         residual seam.)
+      3. **Hard cap.** As a backstop the queue is never allowed past
+         ``cfg.queue_max``; if it somehow is, the *stalest* (oldest) targets are
+         dropped so the arm always acts on recent intent.
+
+    Trade-off vs ``run_loop``: because it never skips, throughput is capped by
+    ``horizon - inference_latency`` fresh steps per chunk. If inference is slow
+    the queue can briefly empty, and the arm simply holds its last commanded
+    pose (it is position-controlled) until the next chunk lands — a short pause
+    rather than the rubber-band/overshoot a long queue would cause. Tune
+    ``--queue-low`` up for fewer holds (longer queue) or down for fresher
+    reactions (shorter queue).
+    """
+    period = 1.0 / max(0.5, cfg.rate_hz)
+
+    # RTC alignment state, shared with the background inference thread (same
+    # semantics as run_loop: offset = steps between successive observations,
+    # delay = inference latency in steps = server-side frozen-prefix length).
+    rtc_state: dict[str, Any] = {
+        "prev_obs_time": None,
+        "delay_steps": max(1, int(round(0.18 * cfg.rate_hz))),
+        "horizon": DEFAULT_STEPS_PER_CHUNK,
+    }
+
+    print(
+        f"[eval] QUEUE · task={cfg.task!r} · rate={cfg.rate_hz}Hz · "
+        f"queue_low={cfg.queue_low} queue_max={cfg.queue_max} · "
+        f"motion_scale={cfg.motion_scale} · action_mode={cfg.action_mode} · "
+        f"rtc={'ON' if cfg.rtc else 'off'} · dry_run={cfg.dry_run} · in-order (no skip)"
+    )
+
+    def _build_rtc(obs_wall_t: float, *, reset: bool) -> dict[str, Any] | None:
+        if not cfg.rtc:
+            return None
+        if reset or rtc_state["prev_obs_time"] is None:
+            return {"rtc_reset": True}
+        h = int(rtc_state["horizon"])
+        offset = int(round((obs_wall_t - rtc_state["prev_obs_time"]) * cfg.rate_hz))
+        offset = max(1, min(h - 1, offset))
+        overlap = h - offset
+        delay = max(0, min(overlap, int(rtc_state["delay_steps"])))
+        return {"rtc_offset": offset, "rtc_delay": delay}
+
+    def _infer(*, reset: bool) -> dict[str, Any]:
+        obs_wall_t = time.perf_counter()
+        try:
+            o = daemon.observation(task=cfg.task)
+        except Exception as exc:
+            return {"error": f"obs fetch failed: {exc}"}
+        if o.estopped:
+            return {"estopped": True, "obs": o}
+        prompt = daemon.policy_prompt() or cfg.task
+        rtc = _build_rtc(obs_wall_t, reset=reset)
+        try:
+            t0 = time.perf_counter()
+            ac = policy.infer(_make_policy_obs(o, prompt=prompt, rtc=rtc))
+            return {
+                "ok": True, "obs": o, "obs_time": obs_wall_t, "prompt": prompt,
+                "action_chunk": ac, "infer_ms": (time.perf_counter() - t0) * 1000,
+            }
+        except Exception as exc:
+            return {"ok": False, "error": f"infer failed: {exc}", "obs": o, "obs_time": obs_wall_t}
+
+    def _chunk_to_targets(result: dict[str, Any]) -> list[tuple[np.ndarray, float]]:
+        """Project a chunk into per-step (target_joints, gripper), reusing the
+        same absolute/delta logic as the timed loop. All H steps are produced;
+        head-trimming on adopt decides how many actually enqueue."""
+        ac = result["action_chunk"]
+        return _apply_delta_chunk(
+            base_state=result["obs"].state,
+            action_chunk=ac,
+            motion_scale=cfg.motion_scale,
+            action_mode=cfg.action_mode,
+            steps_per_chunk=int(ac.shape[0]),
+        )
+
+    def _advance_rtc(result: dict[str, Any]) -> None:
+        rtc_state["prev_obs_time"] = result["obs_time"]
+        rtc_state["horizon"] = int(result["action_chunk"].shape[0])
+        if result.get("infer_ms"):
+            rtc_state["delay_steps"] = max(
+                1, int(round(result["infer_ms"] / 1000 * cfg.rate_hz))
+            )
+
+    daemon.heartbeat(
+        policy_url=policy_url, policy_ok=None, task_prompt=cfg.task,
+        drive_real_arm=False, dry_run=cfg.dry_run, note="warming up",
+    )
+
+    # Bootstrap synchronously: need a first chunk before any motion.
+    boot = _infer(reset=True)
+    if boot.get("estopped"):
+        print("[eval] daemon e-stopped at start — aborting", file=sys.stderr)
+        return
+    if not boot.get("ok"):
+        print(f"[eval] first inference FAILED: {boot.get('error')}", file=sys.stderr)
+        return
+
+    boot_targets = _chunk_to_targets(boot)
+    pending: deque[tuple[np.ndarray, float]] = deque(boot_targets)
+    _advance_rtc(boot)
+    # Time origin for the desired-angle log = the first observation.
+    log_t0 = boot["obs_time"]
+    if cfg.log_dir:
+        cfg.batch_log.append({"obs_t": 0.0, "targets": boot_targets})
+    obs = boot["obs"]
+    live_prompt = boot["prompt"]
+    n_chunks = 1
+    cfg.deltas_seen.append(boot["action_chunk"][:, :7].copy())
+    print(
+        f"[chunk {n_chunks:3d}] {tuple(boot['action_chunk'].shape)} "
+        f"in {boot.get('infer_ms', 0):.0f}ms · queue={len(pending)}"
+    )
+    daemon.heartbeat(
+        policy_url=policy_url, policy_ok=True, task_prompt=live_prompt,
+        drive_real_arm=obs.drive_real_arm, dry_run=cfg.dry_run,
+        last_chunk_ms=boot.get("infer_ms"), last_action_idx=0,
+    )
+
+    # Background inference plumbing — at most one inference in flight.
+    bg_out: dict[str, dict[str, Any]] = {"r": {}}
+    bg: threading.Thread | None = None
+    pending_at_launch = 0
+    consecutive_fail = 0
+
+    def _spawn() -> None:
+        nonlocal bg, pending_at_launch
+        # Remember how deep the queue is now: those items run before the chunk
+        # we're about to infer, so they define its head-trim on adopt.
+        pending_at_launch = len(pending)
+        bg_out["r"] = {}
+        bg = threading.Thread(
+            target=lambda: bg_out["r"].update(_infer(reset=False)),
+            daemon=True, name="bg-infer",
+        )
+        bg.start()
+
+    step = 0
+    posts = 0
+    start_wall = time.perf_counter()
+    next_tick = start_wall
+    while step < cfg.max_steps:
+        # ── Refill only at the low-water mark → the queue self-limits. ──
+        if bg is None and len(pending) <= cfg.queue_low:
+            _spawn()
+
+        # ── Adopt a finished inference. ──
+        if bg is not None and not bg.is_alive():
+            r = bg_out["r"]
+            bg = None
+            if r.get("estopped"):
+                print("[eval] daemon e-stopped — aborting", file=sys.stderr)
+                return
+            if r.get("ok"):
+                consecutive_fail = 0
+                obs = r["obs"]
+                live_prompt = r["prompt"]
+                _advance_rtc(r)
+                targets = _chunk_to_targets(r)
+                if cfg.log_dir:
+                    cfg.batch_log.append({"obs_t": r["obs_time"] - log_t0, "targets": targets})
+                # Head-trim: skip the part of the new chunk that overlaps the
+                # still-queued items, so it continues AFTER the queue instead of
+                # rewinding the arm to its (older) observation state.
+                trim = max(0, min(pending_at_launch, len(targets) - 1))
+                for tgt in targets[trim:]:
+                    pending.append(tgt)
+                # Hard-cap backstop: shed the STALEST (oldest) targets if we are
+                # somehow over budget, so the arm never ploughs a long backlog.
+                dropped = 0
+                while len(pending) > cfg.queue_max:
+                    pending.popleft()
+                    dropped += 1
+                n_chunks += 1
+                cfg.deltas_seen.append(r["action_chunk"][:, :7].copy())
+                if n_chunks % 10 == 0 or dropped:
+                    extra = f" · dropped {dropped} stale" if dropped else ""
+                    print(
+                        f"[chunk {n_chunks:3d}] +{len(targets) - trim} "
+                        f"(trim {trim}) · queue={len(pending)}{extra}"
+                    )
+                    daemon.heartbeat(
+                        policy_url=policy_url, policy_ok=True, task_prompt=live_prompt,
+                        drive_real_arm=obs.drive_real_arm, dry_run=cfg.dry_run,
+                        last_chunk_ms=r.get("infer_ms"), last_action_idx=step,
+                    )
+            else:
+                consecutive_fail += 1
+                print(
+                    f"[eval] infer failed ({consecutive_fail}): {r.get('error')}",
+                    file=sys.stderr,
+                )
+                if consecutive_fail >= 5:
+                    print("[eval] too many inference failures — aborting", file=sys.stderr)
+                    return
+
+        # ── Consume exactly one queued target this tick, in order. ──
+        if pending:
+            joints, gripper = pending.popleft()
+            gripper_send = None if cfg.no_gripper else gripper
+            if cfg.dry_run:
+                if step % 10 == 0:
+                    line = (
+                        f"  [queue] step {step:4d} q={len(pending):2d} "
+                        f"j=[" + ", ".join(f"{x:+.4f}" for x in joints.tolist()) + "]"
+                    )
+                    if gripper_send is not None:
+                        line += f"  gripper={gripper_send:+.3f}"
+                    print(line)
+            else:
+                try:
+                    resp = daemon.post_joints(list(joints.tolist()), gripper=gripper_send)
+                    if (
+                        isinstance(resp, dict)
+                        and resp.get("drive_real_arm") is False
+                        and obs.drive_real_arm
+                    ):
+                        print(
+                            "  drive_real_arm turned OFF mid-run; real arm stopped.",
+                            file=sys.stderr,
+                        )
+                except Exception as exc:
+                    msg = str(exc)
+                    if "estop" in msg.lower() or "409" in msg:
+                        print(f"  POST refused (likely e-stop): {msg}", file=sys.stderr)
+                        daemon.heartbeat(
+                            policy_url=policy_url, policy_ok=True, task_prompt=live_prompt,
+                            drive_real_arm=obs.drive_real_arm, dry_run=cfg.dry_run,
+                            last_action_idx=step, note="estopped",
+                        )
+                        return
+                    print(f"  POST failed: {msg}", file=sys.stderr)
+                    return
+            step += 1
+            posts += 1
+        # else: queue empty and inference still in flight — hold the last pose
+        # (position-controlled, so it just stays put) until the chunk lands.
+
+        # ── Steady fixed-rate tick (drain cadence = training cadence). ──
+        next_tick += period
+        sleep_for = next_tick - time.perf_counter()
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+        else:
+            next_tick = time.perf_counter()   # fell behind — resync, don't burst
+
+    elapsed = max(1e-6, time.perf_counter() - start_wall)
+    print(
+        f"[eval] queue done · {posts} posts over {elapsed:.1f}s "
+        f"(~{posts / elapsed:.0f} Hz effective) · {n_chunks} chunks"
+    )
+    daemon.heartbeat(
+        policy_url=policy_url, policy_ok=True, task_prompt=live_prompt,
+        dry_run=cfg.dry_run, last_action_idx=step, note="done · queue",
+    )
+    if cfg.log_dir:
+        _write_queue_logs(cfg, period)
+
+
+def run_sync_loop(
+    *,
+    daemon: FarmDaemonClient,
+    policy: Policy,
+    cfg: LoopConfig,
+    policy_url: str,
+) -> None:
+    """Strict synchronous, no-skip executor — the simplest faithful loop.
+
+    One chunk at a time, fully::
+
+        obs ─▶ infer (BLOCKING) ─▶ POST every waypoint in order, one per
+        1/rate_hz tick, skipping NONE ─▶ settle ─▶ repeat.
+
+    Inference runs BETWEEN chunks (no background thread, no pipelining), so
+    while the next chunk is being computed the arm just dwells at the current
+    chunk's final waypoint, then continues from wherever it actually came to
+    rest. Because nothing is ever skipped to chase a wall-clock deadline and the
+    cadence doesn't depend on inference latency, what you see on the arm is
+    exactly the model's predicted trajectory (at ``motion_scale``). That makes
+    this the loop to use when you want to JUDGE THE MODEL, not the harness.
+
+    Contrast:
+
+    * ``run_loop`` (default, pipelined) overlaps inference with motion and
+      *skips* waypoints whose timed deadline already passed when a late chunk
+      lands — that skip is what reads as jerking.
+    * ``run_queue_loop`` never skips either, but keeps a pipelined FIFO with
+      water-marks + backlog shedding — smoother under load, more moving parts.
+    * This loop trades the inter-chunk pause (~50–180 ms while inference runs)
+      for total simplicity and latency-independence. The policy was trained on
+      continuous teleop, so it can overshoot slightly at the pause→resume seam;
+      lower ``--rate-hz`` (longer per-waypoint dwell) gives the arm more time to
+      land each target if that bothers a particular task.
+
+    No RTC alignment is used: chunks never overlap here, so there is no seam to
+    blend. When RTC is enabled we still send ``rtc_reset`` each inference so a
+    patched server treats every chunk independently.
+    """
+    period = 1.0 / max(0.5, cfg.rate_hz)
+    settle = max(0.0, cfg.settle_s)
+    print(
+        f"[eval] SYNC · task={cfg.task!r} · rate={cfg.rate_hz}Hz "
+        f"({period * 1000:.0f} ms/waypoint) · settle={settle * 1000:.0f}ms · "
+        f"motion_scale={cfg.motion_scale} · action_mode={cfg.action_mode} · "
+        f"rtc={'reset-each' if cfg.rtc else 'off'} · dry_run={cfg.dry_run} · "
+        f"blocking · no-skip"
+    )
+
+    def _rtc() -> dict[str, Any] | None:
+        # Chunks never overlap in this loop, so there is no seam to blend —
+        # tell a (patched) server to treat every chunk as a fresh start.
+        return {"rtc_reset": True} if cfg.rtc else None
+
+    def _infer() -> dict[str, Any]:
+        """One blocking (obs fetch → infer) pass."""
+        obs_wall_t = time.perf_counter()
+        try:
+            o = daemon.observation(task=cfg.task)
+        except Exception as exc:
+            return {"error": f"obs fetch failed: {exc}"}
+        if o.estopped:
+            return {"estopped": True, "obs": o}
+        prompt = daemon.policy_prompt() or cfg.task
+        try:
+            t0 = time.perf_counter()
+            ac = policy.infer(_make_policy_obs(o, prompt=prompt, rtc=_rtc()))
+            return {
+                "ok": True, "obs": o, "obs_time": obs_wall_t, "prompt": prompt,
+                "action_chunk": ac, "infer_ms": (time.perf_counter() - t0) * 1000,
+            }
+        except Exception as exc:
+            return {"ok": False, "error": f"infer failed: {exc}", "obs": o}
+
+    daemon.heartbeat(
+        policy_url=policy_url, policy_ok=None, task_prompt=cfg.task,
+        drive_real_arm=False, dry_run=cfg.dry_run, note="warming up",
+    )
+
+    log_t0: float | None = None
+    step = 0
+    n_chunks = 0
+    consecutive_fail = 0
+    live_prompt = cfg.task
+    start_wall = time.perf_counter()
+
+    while step < cfg.max_steps:
+        result = _infer()
+        if result.get("estopped"):
+            print("[eval] daemon e-stopped — aborting", file=sys.stderr)
+            daemon.heartbeat(
+                policy_url=policy_url, policy_ok=True, task_prompt=live_prompt,
+                dry_run=cfg.dry_run, last_action_idx=step, note="estopped",
+            )
+            return
+        if not result.get("ok"):
+            consecutive_fail += 1
+            print(
+                f"[eval] infer failed ({consecutive_fail}): {result.get('error')}",
+                file=sys.stderr,
+            )
+            if consecutive_fail >= 5:
+                print("[eval] too many inference failures — aborting", file=sys.stderr)
+                return
+            time.sleep(0.5)
+            continue
+        consecutive_fail = 0
+
+        obs = result["obs"]
+        live_prompt = result["prompt"]
+        chunk = result["action_chunk"]
+        if log_t0 is None:
+            log_t0 = result["obs_time"]
+        n_chunks += 1
+        cfg.deltas_seen.append(chunk[:, :7].copy())
+
+        # Project the WHOLE chunk — every waypoint, no truncation (--steps-per-chunk
+        # does not apply here; the point is to execute all of them).
+        plan = _apply_delta_chunk(
+            base_state=obs.state,
+            action_chunk=chunk,
+            motion_scale=cfg.motion_scale,
+            action_mode=cfg.action_mode,
+            steps_per_chunk=int(chunk.shape[0]),
+        )
+        if cfg.log_dir:
+            cfg.batch_log.append(
+                {"obs_t": result["obs_time"] - log_t0, "targets": plan}
+            )
+
+        mags = np.linalg.norm(chunk[:, :6], axis=1)
+        print(
+            f"[chunk {n_chunks:3d}] shape={chunk.shape} in "
+            f"{result.get('infer_ms', 0):.0f}ms · {len(plan)} waypoints · "
+            f"|joint| mean={mags.mean():.4f} max={mags.max():.4f} · "
+            f"grip[{float(chunk[:, 6].min()):.2f},{float(chunk[:, 6].max()):.2f}]"
+        )
+        daemon.heartbeat(
+            policy_url=policy_url, policy_ok=True, task_prompt=live_prompt,
+            drive_real_arm=obs.drive_real_arm, dry_run=cfg.dry_run,
+            last_chunk_ms=result.get("infer_ms"), last_action_idx=step,
+        )
+
+        # Drain the whole chunk in order, one waypoint per fixed tick. NOTHING
+        # is skipped: if a POST runs long we just resync and send the next one
+        # immediately — the arm still receives every commanded target, only the
+        # cadence tightens for a tick. (The daemon's 250 Hz lerp continues from
+        # the arm's actual position, so a slightly-late waypoint never jumps.)
+        next_tick = time.perf_counter()
+        for i, (joints, gripper) in enumerate(plan):
+            if step >= cfg.max_steps:
+                break
+            gripper_send = None if cfg.no_gripper else gripper
+            if cfg.dry_run:
+                if i == 0 or i == len(plan) - 1:
+                    line = (
+                        f"  [sync] c{n_chunks} wp{i:<2d} target_joints=["
+                        + ", ".join(f"{x:+.4f}" for x in joints.tolist())
+                        + "]"
+                    )
+                    if gripper_send is not None:
+                        line += f"  gripper={gripper_send:+.3f}"
+                    print(line)
+            else:
+                try:
+                    resp = daemon.post_joints(
+                        list(joints.tolist()), gripper=gripper_send
+                    )
+                    if (
+                        isinstance(resp, dict)
+                        and resp.get("drive_real_arm") is False
+                        and obs.drive_real_arm
+                    ):
+                        print(
+                            "  drive_real_arm turned OFF mid-chunk; real arm stopped.",
+                            file=sys.stderr,
+                        )
+                except Exception as exc:
+                    msg = str(exc)
+                    if "estop" in msg.lower() or "409" in msg:
+                        print(f"  POST refused (likely e-stop): {msg}", file=sys.stderr)
+                        daemon.heartbeat(
+                            policy_url=policy_url, policy_ok=True,
+                            task_prompt=live_prompt, drive_real_arm=obs.drive_real_arm,
+                            dry_run=cfg.dry_run, last_action_idx=step, note="estopped",
+                        )
+                        return
+                    print(f"  POST failed: {msg}", file=sys.stderr)
+                    return
+            step += 1
+            next_tick += period
+            sleep_for = next_tick - time.perf_counter()
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+            else:
+                next_tick = time.perf_counter()   # fell behind — resync, don't burst
+
+        # Let the arm settle onto the final waypoint before we photograph the
+        # next observation, so the next chunk is predicted from where the arm
+        # actually came to rest (not mid-motion). The blocking inference that
+        # follows adds even more dwell, which is fine — the arm just holds.
+        if settle > 0 and not cfg.dry_run:
+            time.sleep(settle)
+
+    elapsed = max(1e-6, time.perf_counter() - start_wall)
+    print(
+        f"[eval] sync done · {step} posts over {elapsed:.1f}s "
+        f"(~{step / elapsed:.0f} Hz effective) · {n_chunks} chunks"
+    )
+    daemon.heartbeat(
+        policy_url=policy_url, policy_ok=True, task_prompt=live_prompt,
+        dry_run=cfg.dry_run, last_action_idx=step, note="done · sync",
+    )
+    if cfg.log_dir:
+        _write_queue_logs(cfg, period)
+
+
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
 
@@ -1254,6 +1830,64 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             f"how many actions of each chunk to execute before re-querying "
             f"(default: {DEFAULT_STEPS_PER_CHUNK} of 10)"
+        ),
+    )
+    p.add_argument(
+        "--sync", action="store_true",
+        help=(
+            "strict synchronous, no-skip loop: infer (blocking) → POST all "
+            "waypoints of the chunk in order, one per 1/--rate-hz tick, skipping "
+            "NONE → settle → infer again. Inference runs BETWEEN chunks (not "
+            "pipelined), so the arm dwells at the last waypoint while the next "
+            "chunk is computed. The cadence is independent of inference latency, "
+            "so the arm traces exactly the model's predicted trajectory — use "
+            "this to judge the MODEL rather than the harness. Trade-off: a brief "
+            "start-stop pause between chunks (lower --rate-hz for gentler dwell). "
+            "Overrides --queue / --stream-hz."
+        ),
+    )
+    p.add_argument(
+        "--settle", type=float, default=0.10,
+        help=(
+            "sync loop only: seconds to dwell after the final waypoint of each "
+            "chunk before capturing the next observation, so the arm reaches that "
+            "waypoint first (default: 0.10; the daemon's lerp lands within ~80 ms). "
+            "0 disables the dwell."
+        ),
+    )
+    p.add_argument(
+        "--queue", action="store_true",
+        help=(
+            "use the in-order FIFO queue loop instead of the timed-waypoint "
+            "loop. Drains queued joint targets one per tick with NO deadline "
+            "skipping; a low-water refill + hard cap keep the queue short so it "
+            "can't backlog into overshoot. Trade-off: throughput is capped at "
+            "~(horizon - infer_latency) fresh steps/chunk, so the arm may briefly "
+            "hold its pose if inference lags (vs the timed loop's skip-to-catch-up)."
+        ),
+    )
+    p.add_argument(
+        "--queue-low", type=int, default=4,
+        help=(
+            "queue loop only: low-water mark — run the next inference once the "
+            "queue drains to this many items (default: 4). Higher = longer queue, "
+            "fewer holds but staler; lower = shorter queue, fresher but more holds."
+        ),
+    )
+    p.add_argument(
+        "--queue-max", type=int, default=12,
+        help=(
+            "queue loop only: hard cap on queue length (default: 12). If exceeded, "
+            "the stalest (oldest) targets are dropped so the arm never ploughs a "
+            "long stale backlog (overshoot guard)."
+        ),
+    )
+    p.add_argument(
+        "--log-dir", default="",
+        help=(
+            "queue loop only: write per-batch DESIRED-angle CSVs to this folder "
+            "(a time × batch matrix per joint + a tidy long form). Defaults to "
+            "'test_logging' when --queue is set; pass a path to override or '' to disable."
         ),
     )
     p.add_argument(
@@ -1390,6 +2024,15 @@ def main(argv: list[str] | None = None) -> int:
         dry_run=dry_run,
         rtc=not bool(args.no_rtc),
         stream_hz=float(args.stream_hz),
+        queue=bool(args.queue),
+        queue_low=int(args.queue_low),
+        queue_max=int(args.queue_max),
+        sync=bool(args.sync),
+        settle_s=float(args.settle),
+        log_dir=(
+            args.log_dir if args.log_dir
+            else ("test_logging" if (args.queue or args.sync) else "")
+        ),
     )
     if not dry_run:
         print(
@@ -1410,6 +2053,11 @@ def main(argv: list[str] | None = None) -> int:
     def _shutdown(signum, frame):  # noqa: ARG001
         print("\n[eval] stop received — halting policy loop (no e-stop) …", file=sys.stderr)
         try:
+            if (cfg.queue or cfg.sync) and cfg.log_dir:
+                _write_queue_logs(cfg, 1.0 / max(0.5, cfg.rate_hz))
+        except Exception:
+            pass
+        try:
             policy.close()
         except Exception:
             pass
@@ -1418,9 +2066,26 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
+    if cfg.sync and (cfg.queue or (cfg.stream_hz and cfg.stream_hz > 0)):
+        print(
+            "[eval] --sync overrides --queue/--stream-hz "
+            "(mutually exclusive execution loops).",
+            file=sys.stderr,
+        )
+    elif cfg.queue and cfg.stream_hz and cfg.stream_hz > 0:
+        print(
+            "[eval] --queue and --stream-hz are both set; using --queue "
+            "(they are mutually exclusive execution loops).",
+            file=sys.stderr,
+        )
+
     _policy_url = args.policy_url if args.policy_backend == "ws" else "stub"
     try:
-        if cfg.stream_hz and cfg.stream_hz > 0:
+        if cfg.sync:
+            run_sync_loop(daemon=daemon, policy=policy, cfg=cfg, policy_url=_policy_url)
+        elif cfg.queue:
+            run_queue_loop(daemon=daemon, policy=policy, cfg=cfg, policy_url=_policy_url)
+        elif cfg.stream_hz and cfg.stream_hz > 0:
             run_stream_loop(daemon=daemon, policy=policy, cfg=cfg, policy_url=_policy_url)
         else:
             run_loop(daemon=daemon, policy=policy, cfg=cfg, policy_url=_policy_url)
