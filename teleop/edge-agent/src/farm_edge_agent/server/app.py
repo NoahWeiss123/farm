@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import contextlib
 import json
 import logging
 import math
@@ -64,7 +65,7 @@ ASSETS_DIR = Path(__file__).resolve().parents[3] / "assets"
 # The dashboard lives at the repo-level ui/ folder; the daemon serves it from there.
 UI_DIR = REPO_ROOT / "ui"
 # Teleop recordings land here (gitignored, under the consolidated datasets/ dir).
-DATASETS_DIR = REPO_ROOT / "datasets" / "dataset3"
+DATASETS_DIR = REPO_ROOT / "datasets" / "dataset4"
 EVAL_SCRIPT = REPO_ROOT / "model" / "eval_pi05.py"
 _VALID_AXES = {"x", "y", "z", "rx", "ry", "rz"}
 DEFAULT_STEP_MM = 5.0
@@ -93,6 +94,22 @@ def _episode_dir(name: str) -> Path | None:
 
 def _sse(event: dict[str, Any]) -> bytes:
     return f"data: {json.dumps(event, separators=(',', ':'))}\n\n".encode()
+
+
+def _is_local_origin(request: web.Request) -> bool:
+    """CSRF guard for state-changing endpoints. A browser attaches an Origin
+    header on cross-site requests; allow only when it's absent (curl / the eval
+    client / same-origin GETs) or matches the daemon's own host. This blocks a
+    foreign web page the operator has open from POSTing a run that moves the arm.
+    """
+    origin = request.headers.get("Origin")
+    if not origin:
+        return True
+    from urllib.parse import urlparse
+
+    host = (urlparse(origin).hostname or "").lower()
+    req_host = (request.host or "").split(":")[0].lower()
+    return host in ("127.0.0.1", "localhost", "::1") or host == req_host
 
 
 # ── routes ──────────────────────────────────────────────────────────────────
@@ -341,6 +358,8 @@ async def post_policy_run(request: web.Request) -> web.Response:
         {
             "policy_url":    "ws://127.0.0.1:8000",
             "live":          true,            # else --dry-run
+            "mode":          "queue",         # default | queue | sync (execution loop)
+            "rtc":           true,            # Real-Time Chunking seam smoothing
             "max_steps":     600,
             "steps_per_chunk": 3,
             "rate_hz":       5.0,
@@ -361,6 +380,24 @@ async def post_policy_run(request: web.Request) -> web.Response:
         body = {}
     if not isinstance(body, dict):
         body = {}
+
+    # If a cluster serve is being driven, make sure the two-hop tunnel is up
+    # BEFORE the eval client tries to connect. The client now retries for ~45 s,
+    # but bringing the relay + port-forward up first means Run just works instead
+    # of burning that window (and avoids the "Run does nothing" confusion when the
+    # tunnel had quietly torn down). Best-effort — never blocks the run.
+    try:
+        from farm_edge_agent.server import cluster
+        serve_job = request.app.get("serve_job")
+        if serve_job and cluster.available():
+            state, node = await asyncio.to_thread(cluster.serve_state, serve_job["job_id"])
+            if state == "RUNNING" and node:
+                serve_job["node"] = node
+                if not serve_job.get("socat"):
+                    serve_job["socat"] = await asyncio.to_thread(cluster.serve_socat_up, node)
+                await asyncio.to_thread(_serve_pf_start, request.app)
+    except Exception as exc:
+        log.warning("serve tunnel pre-check before run failed: %s", exc)
 
     args: list[str] = [
         sys.executable,
@@ -387,6 +424,15 @@ async def post_policy_run(request: web.Request) -> web.Response:
     args.append("--live" if body.get("live", True) else "--dry-run")
     if not body.get("rtc", False):
         args.append("--no-rtc")
+    # Execution-loop selector (eval_pi05.py's newer executors). "default" = the
+    # proven timed-waypoint run_loop; "queue" = pipelined in-order FIFO (smooth,
+    # self-limiting, never skips); "sync" = strict blocking no-skip (judge the
+    # model, not the harness). RTC seam-smoothing composes with any of them.
+    mode = str(body.get("mode", "default")).lower()
+    if mode == "queue":
+        args.append("--queue")
+    elif mode == "sync":
+        args.append("--sync")
     if body.get("no_gripper"):
         args.append("--no-gripper")
 
@@ -462,6 +508,181 @@ async def get_policy_run_state(request: web.Request) -> web.Response:
         "args": request.app.get("eval_cmd", []),
         "log": log_lines,
     })
+
+
+# ── Serving the trained policy on the cluster (dashboard-driven) ───────────
+# The serve runs on a cluster GPU and binds :8000 on its worker. To reach it
+# from the laptop we relay through two hops: a login-pod ``socat`` (worker →
+# login pod, stood up by server/cluster.py) and a laptop-side
+# ``kubectl port-forward`` (login pod → localhost, the daemon-managed subprocess
+# below). Once both are up, ws://127.0.0.1:8000 reaches the policy — the exact
+# URL the eval client (model/eval_pi05.py) already defaults to.
+
+def _serve_pf_running(app: web.Application) -> bool:
+    proc = app.get("serve_pf_proc")
+    return proc is not None and proc.poll() is None
+
+
+def _serve_pf_start(app: web.Application) -> bool:
+    """Start the laptop-side ``kubectl port-forward pod/<login-pod> 8000:8000``.
+    Idempotent — no-op if already running. This is the CLAUDE.md-sanctioned
+    'forward to my own pod' path; the login-pod socat handles pod → worker."""
+    if _serve_pf_running(app):
+        return True
+    from farm_edge_agent.server import cluster
+    pod = cluster._pod()
+    if not pod:
+        return False
+    port = cluster.SERVE_PORT
+    try:
+        proc = subprocess.Popen(  # noqa: S603
+            ["kubectl", "port-forward", "-n", cluster.NS, f"pod/{pod}", f"{port}:{port}"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as exc:
+        log.warning("serve port-forward spawn failed: %s", exc)
+        return False
+    app["serve_pf_proc"] = proc
+    log.info("serve port-forward started · pid=%s · localhost:%s → pod/%s", proc.pid, port, pod)
+    return True
+
+
+def _serve_pf_stop(app: web.Application) -> None:
+    proc = app.get("serve_pf_proc")
+    if proc is not None and proc.poll() is None:
+        try:
+            proc.terminate()
+            proc.wait(timeout=2.0)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    app["serve_pf_proc"] = None
+
+
+def _serve_reachable(port: int) -> bool:
+    """Does a TCP connect to the forwarded local port succeed? (End-to-end the
+    tunnel is live and the serve has bound its socket.)"""
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.6):
+            return True
+    except Exception:
+        return False
+
+
+def _serve_phase(state: str, launched: bool, bound: bool) -> str:
+    if state in ("PENDING", "CONFIGURING"):
+        return "queued"
+    if state in ("FAILED", "CANCELLED", "CANCELLED+", "TIMEOUT", "OUT_OF_MEMORY", "NODE_FAIL"):
+        return "stopped"
+    if state == "RUNNING":
+        if bound:
+            return "serving"      # websocket server actually accepting → ready for Run
+        if launched:
+            return "loading"      # serve_policy launched, restoring params / JIT
+        return "starting"         # container build / boot on the worker
+    return "starting"
+
+
+async def post_serve_start(request: web.Request) -> web.Response:
+    """Submit the policy-serve sbatch on the cluster. Body (all optional)::
+
+        {"model": "lora_gse", "step": "9999"}
+
+    The tunnel is stood up lazily by /v1/serve/status once the job is RUNNING."""
+    from farm_edge_agent.server import cluster
+    if not cluster.available():
+        return web.json_response({"error": "kubectl not available on this host"}, status=503)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    model = str(body.get("model", "lora_gse"))
+    step = body.get("step")
+    cur = request.app.get("serve_job")
+    if cur:
+        state, _ = await asyncio.to_thread(cluster.serve_state, cur["job_id"])
+        if state in ("RUNNING", "PENDING", "CONFIGURING", "COMPLETING"):
+            return web.json_response({"error": "serve already active", "job": cur}, status=409)
+    res = await asyncio.to_thread(cluster.serve_launch, model, step)
+    if "error" in res:
+        return web.json_response(res, status=500)
+    res.update(started_at=time.time(), node="", socat=False)
+    request.app["serve_job"] = res
+    log.info("serve job submitted · %s", res)
+    return web.json_response({"ok": True, **res})
+
+
+async def get_serve_status(request: web.Request) -> web.Response:
+    """Lifecycle poll the dashboard uses to drive the serve control: SLURM
+    state + tunnel health, and it lazily stands up the relay once RUNNING."""
+    from farm_edge_agent.server import cluster
+    app = request.app
+    if not cluster.available():
+        return web.json_response({"running": False, "kubectl": False})
+    job = app.get("serve_job")
+    if job is None:
+        found = await asyncio.to_thread(cluster.serve_discover)
+        if found is None:
+            return web.json_response({"running": False, "kubectl": True})
+        found.update(started_at=time.time(), node="", socat=False)
+        app["serve_job"] = job = found
+    job_id = job["job_id"]
+    state, node = await asyncio.to_thread(cluster.serve_state, job_id)
+    if state == "GONE":
+        _serve_pf_stop(app)
+        await asyncio.to_thread(cluster.serve_socat_down)
+        app["serve_job"] = None
+        return web.json_response({"running": False, "kubectl": True, "state": "GONE", "job_id": job_id})
+    if node and not job.get("node"):
+        job["node"] = node
+    tail = await asyncio.to_thread(cluster.serve_log_tail, job_id, 30)
+    launched, bound = await asyncio.to_thread(cluster.serve_markers, job_id)
+    # Latch bound: a serve stays accepting once bound (until the job ends), so
+    # never let a transient log/grep miss flip it back to "starting".
+    bound = bool(job.get("bound") or bound)
+    job["bound"] = bound
+    # Once the worker is known, stand up the relay + laptop forward (idempotent),
+    # so the tunnel is already in place by the time the serve binds.
+    if state == "RUNNING" and node:
+        if not job.get("socat"):
+            job["socat"] = await asyncio.to_thread(cluster.serve_socat_up, node)
+        await asyncio.to_thread(_serve_pf_start, app)
+    # NB: a bare TCP probe to the forwarded port lies (kubectl's local listener
+    # accepts before the upstream serve exists), so phase is driven by the log's
+    # bound marker, not reachability. reachable is reported only as a hint.
+    reachable = (await asyncio.to_thread(_serve_reachable, cluster.SERVE_PORT)
+                 if _serve_pf_running(app) else False)
+    return web.json_response({
+        "running": True, "kubectl": True, "job_id": job_id,
+        "model": job.get("model"), "step": job.get("step"),
+        "state": state, "node": node, "phase": _serve_phase(state, launched, bound),
+        "bound": bound, "launched": launched,
+        "socat": bool(job.get("socat")), "port_forward": _serve_pf_running(app),
+        "reachable": reachable,
+        "elapsed_s": round(time.time() - job.get("started_at", time.time())),
+        "log_tail": "\n".join(tail.strip().splitlines()[-12:]),
+    })
+
+
+async def post_serve_stop(request: web.Request) -> web.Response:
+    """Cancel the serve job and tear down both tunnel hops."""
+    from farm_edge_agent.server import cluster
+    app = request.app
+    job = app.get("serve_job")
+    _serve_pf_stop(app)
+    if job is None:
+        await asyncio.to_thread(cluster.serve_socat_down)
+        return web.json_response({"ok": True, "running": False, "note": "no tracked job"})
+    res = await asyncio.to_thread(cluster.serve_stop, job["job_id"])
+    app["serve_job"] = None
+    log.info("serve job stopped · %s", job.get("job_id"))
+    return web.json_response({"ok": res.get("ok", True), "running": False, "job_id": job["job_id"]})
 
 
 async def post_cameras_swap(request: web.Request) -> web.Response:
@@ -1163,6 +1384,92 @@ async def get_train_metrics(request: web.Request) -> web.Response:
     return web.json_response(data)
 
 
+# ── consumer agent (/user page) ───────────────────────────────────────────────
+# The /user page is the consumer-facing surface: type a high-level task, watch
+# the agent look at the scene (DO vision), plan it (GPT-5.5), and execute it by
+# hot-swapping per-object LoRA skills on the resident FFT-56k base. The
+# orchestrator (server/agent.py) runs the pipeline and publishes events over SSE.
+
+
+async def serve_user(_: web.Request) -> web.Response:
+    page = UI_DIR / "user.html"
+    if not page.is_file():
+        return web.Response(text="user page missing (ui/user.html)", status=500)
+    return web.Response(body=page.read_bytes(), content_type="text/html")
+
+
+async def get_agent_config(_: web.Request) -> web.Response:
+    from farm_edge_agent.server import agent
+    return web.json_response(agent.agent_config())
+
+
+async def post_agent_run(request: web.Request) -> web.Response:
+    """Start an agent run. Body (all optional except task)::
+
+        {"task": str, "base_model": "fft_hotswap"|"fft",
+         "skills": ["bottle","bear",...], "thinking_model": str,
+         "vision_model": str, "execute": true, "step_seconds": 14}
+
+    409 if a run is already in progress."""
+    if not _is_local_origin(request):
+        return web.json_response({"error": "cross-origin requests are not allowed"}, status=403)
+    orch = request.app["orchestrator"]
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be a JSON object"}, status=400)
+    if not str(body.get("task", "")).strip():
+        return web.json_response({"error": "body must include a non-empty 'task'"}, status=400)
+    try:
+        orch.start(body)
+    except RuntimeError as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    return web.json_response({"ok": True})
+
+
+async def post_agent_stop(request: web.Request) -> web.Response:
+    orch = request.app["orchestrator"]
+    await orch.stop()
+    return web.json_response({"ok": True})
+
+
+async def get_agent_state(request: web.Request) -> web.Response:
+    orch = request.app["orchestrator"]
+    return web.json_response({"running": orch.running, "state": orch.state})
+
+
+async def stream_agent(request: web.Request) -> web.StreamResponse:
+    """SSE of orchestrator events. Replays the current run's history on connect
+    so a page that loads mid-run catches up, then streams live."""
+    orch = request.app["orchestrator"]
+    bus = orch.bus
+    resp = web.StreamResponse(headers=SSE_HEADERS)
+    await resp.prepare(request)
+    # Subscribe BEFORE snapshotting the replay so an event published during the
+    # replay writes still lands in the queue; dedupe the overlap by monotonic seq.
+    q = await bus.subscribe()
+    last_seq = 0
+    for event in bus.replay():
+        await resp.write(_sse(event))
+        last_seq = max(last_seq, event.get("seq", 0))
+    try:
+        while not request.transport.is_closing():
+            try:
+                event = await asyncio.wait_for(q.get(), timeout=15.0)
+            except TimeoutError:
+                await resp.write(b": ping\n\n")
+                continue
+            if event.get("seq", 0) <= last_seq:
+                continue  # already delivered during replay
+            last_seq = event["seq"]
+            await resp.write(_sse(event))
+    finally:
+        bus.unsubscribe(q)
+    return resp
+
+
 # ── wiring ──────────────────────────────────────────────────────────────────
 
 
@@ -1201,11 +1508,23 @@ def build_app(*, backend: RobotBackend | None = None) -> web.Application:
     app["train_job"] = None
     app["train_status_cache"] = {}
     app["train_metrics_cache"] = {}
+    # Cluster policy-serve job (see /v1/serve/* + server/cluster.py) and the
+    # laptop-side `kubectl port-forward` subprocess that relays it to localhost.
+    app["serve_job"] = None
+    app["serve_pf_proc"] = None
+    # Consumer-agent orchestrator (/user page): scene → plan → skill-swap exec.
+    from farm_edge_agent.server.agent import Orchestrator
+    app["orchestrator"] = Orchestrator(app)
 
     async def _on_startup(_: web.Application) -> None:
         bus.attach_loop(asyncio.get_running_loop())
 
     async def _on_cleanup(_: web.Application) -> None:
+        # Stop any in-flight agent run (which also stops its policy subprocess).
+        orch = app.get("orchestrator")
+        if orch is not None and orch.running:
+            with contextlib.suppress(Exception):
+                await orch.stop()
         # Bring down the eval subprocess if it's still running so a
         # daemon exit doesn't leave the policy commanding the arm.
         proc = app.get("eval_process")
@@ -1218,6 +1537,10 @@ def build_app(*, backend: RobotBackend | None = None) -> web.Application:
                     proc.kill()
                 except Exception:
                     pass
+        # Drop the laptop-side serve port-forward (local). The GPU serve job +
+        # login-pod socat are left running so a daemon restart re-adopts them
+        # (stop the job explicitly from the dashboard to free the GPU).
+        _serve_pf_stop(app)
         supervisor.shutdown()
 
     app.on_startup.append(_on_startup)
@@ -1227,6 +1550,12 @@ def build_app(*, backend: RobotBackend | None = None) -> web.Application:
         web.get("/", serve_dashboard),
         web.get("/review", serve_review),
         web.get("/train", serve_train),
+        web.get("/user", serve_user),
+        web.get("/v1/agent/config", get_agent_config),
+        web.post("/v1/agent/run", post_agent_run),
+        web.post("/v1/agent/stop", post_agent_stop),
+        web.get("/v1/agent/state", get_agent_state),
+        web.get("/v1/agent/stream", stream_agent),
         web.get("/v1/train/models", get_train_models),
         web.post("/v1/train/launch", post_train_launch),
         web.get("/v1/train/status", get_train_status),
@@ -1249,6 +1578,9 @@ def build_app(*, backend: RobotBackend | None = None) -> web.Application:
         web.post("/v1/policy/run", post_policy_run),
         web.post("/v1/policy/stop", post_policy_stop),
         web.get("/v1/policy/run/state", get_policy_run_state),
+        web.post("/v1/serve/start", post_serve_start),
+        web.get("/v1/serve/status", get_serve_status),
+        web.post("/v1/serve/stop", post_serve_stop),
         web.get("/v1/cameras/{name}.jpg", get_camera_jpeg),
         web.post("/v1/cameras/swap", post_cameras_swap),
         web.post("/v1/teleop/drive_mode", post_drive_mode),

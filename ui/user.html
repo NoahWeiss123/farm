@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FARM · Run a task</title>
+<style>
+  :root {
+    --bg: #f5f5f5; --card: #ffffff; --fg: #111; --muted: #6b6b6b;
+    --soft: #d6d6d6; --line: #000; --accent: #111;
+    --green: #2a8a3a; --green-soft: #f0f9f3; --red: #c0392b; --red-soft: #fdf0f0;
+    --amber: #c08a2a; --blue: #2563eb; --pad: 16px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%; background: var(--bg); color: var(--fg);
+    font: 13px/1.45 -apple-system, "Segoe UI", system-ui, sans-serif;
+    overflow: hidden;
+  }
+  body { display: flex; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  .panel {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  }
+  .sec-label {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.12em;
+    text-transform: uppercase; color: #888;
+  }
+
+  /* ── Sidebar ──────────────────────────────────────────────────────────── */
+  #side {
+    width: 340px; flex-shrink: 0; height: 100vh; background: var(--card);
+    border-right: 1px solid var(--line); display: flex; flex-direction: column;
+  }
+  #brand {
+    padding: 14px var(--pad) 12px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  #brand .logo { font-weight: 700; letter-spacing: 0.04em; }
+  #brand .tag { font-size: 11px; color: var(--muted); }
+  #nav { margin-left: auto; display: flex; gap: 10px; font-size: 11px; }
+  #nav a { color: var(--muted); text-decoration: none; }
+  #nav a:hover { color: var(--accent); }
+  #nav a.cur { color: var(--accent); font-weight: 600; }
+  #cfg { flex: 1; overflow-y: auto; padding: var(--pad); display: flex; flex-direction: column; gap: 18px; }
+  .field { display: flex; flex-direction: column; gap: 8px; }
+
+  /* base model radio cards */
+  .opt {
+    border: 1px solid var(--soft); border-radius: 6px; padding: 9px 11px; cursor: pointer;
+    display: flex; flex-direction: column; gap: 2px; transition: border-color 80ms, background 80ms;
+  }
+  .opt:hover { background: #f5f5f5; }
+  .opt.sel { border-color: var(--accent); background: #f3f3f3; }
+  .opt .nm { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 7px; }
+  .opt .ds { font-size: 11px; color: var(--muted); }
+  .opt input { margin: 0; }
+
+  /* skills checklist */
+  #skills { display: flex; flex-direction: column; gap: 6px; }
+  .skill {
+    border: 1px solid var(--soft); border-radius: 6px; padding: 8px 10px;
+    display: grid; grid-template-columns: 18px 1fr; gap: 9px; align-items: start;
+    cursor: pointer; transition: border-color 80ms, background 80ms;
+  }
+  .skill:hover { background: #f5f5f5; }
+  .skill.on { border-color: var(--accent); }
+  .skill.off { opacity: 0.5; }
+  .skill input { margin-top: 2px; }
+  .skill .nm { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .skill .meta { font-size: 10px; color: var(--muted); }
+  .skill .repo { font-size: 10px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
+
+  /* task input + presets */
+  #task {
+    width: 100%; min-height: 64px; resize: vertical; padding: 9px 10px;
+    font: inherit; border: 1px solid var(--soft); border-radius: 6px; background: #fff;
+  }
+  #task:focus { outline: 2px solid #888; outline-offset: -2px; }
+  #presets { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    font-size: 11px; padding: 4px 9px; border: 1px solid var(--soft); border-radius: 14px;
+    background: #fff; cursor: pointer; color: var(--fg);
+  }
+  .chip:hover { border-color: var(--accent); }
+
+  /* selects + toggles */
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  select.sel {
+    width: 100%; height: 30px; padding: 0 6px; font: inherit; font-size: 12px;
+    border: 1px solid var(--soft); border-radius: 6px; background: #fff; cursor: pointer;
+  }
+  .toggle { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+  .toggle .hint { color: var(--muted); font-size: 11px; }
+  .switch { position: relative; width: 38px; height: 22px; flex-shrink: 0; }
+  .switch input { display: none; }
+  .switch .track {
+    position: absolute; inset: 0; background: var(--soft); border-radius: 11px; transition: background 120ms;
+  }
+  .switch .track::after {
+    content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px;
+    background: #fff; border-radius: 50%; transition: transform 120ms; box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+  }
+  .switch input:checked + .track { background: var(--accent); }
+  .switch input:checked + .track::after { transform: translateX(16px); }
+
+  /* buttons */
+  .btn {
+    width: 100%; height: 36px; padding: 0 12px; font: inherit; font-size: 13px; font-weight: 600;
+    border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--fg); cursor: pointer;
+    transition: background 80ms;
+  }
+  .btn:hover:not(:disabled) { background: #f3f3f3; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn.primary { background: var(--accent); color: #fff; }
+  .btn.primary:hover:not(:disabled) { background: #2a2a2a; }
+  .btn.danger { background: var(--red-soft); color: #8a2118; border-color: var(--red); }
+  #runRow { display: flex; gap: 8px; }
+
+  /* status mini-panels */
+  .statline { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+  .dot.ok { background: var(--green); } .dot.warn { background: var(--amber); } .dot.bad { background: var(--red); }
+  .pill {
+    display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px;
+    letter-spacing: 0.1em; text-transform: uppercase; font-weight: 700; color: #fff; background: #888;
+  }
+  .pill.ok { background: var(--green); } .pill.warn { background: var(--amber); } .pill.bad { background: var(--red); }
+  .pill.live { background: var(--accent); }
+  #serveBtn { height: 30px; font-size: 12px; }
+
+  /* ── Main ─────────────────────────────────────────────────────────────── */
+  #main { flex: 1; height: 100vh; display: flex; flex-direction: column; padding: var(--pad); gap: var(--pad); overflow: hidden; }
+  #top { display: flex; align-items: center; gap: 12px; }
+  #top h1 { font-size: 16px; font-weight: 700; }
+  #top .spacer { flex: 1; }
+  #phase { font-size: 12px; color: var(--muted); }
+  #modeBadge { display: none; }
+
+  #grid { flex: 1; display: grid; grid-template-columns: 1.35fr 1fr; grid-template-rows: 1fr 1fr; gap: var(--pad); min-height: 0; }
+  .card { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .card .hd { padding: 9px 12px; border-bottom: 1px solid var(--soft); display: flex; align-items: center; gap: 8px; }
+  .card .hd .t { font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #555; }
+  .card .hd .r { margin-left: auto; font-size: 11px; color: var(--muted); }
+  .card .bd { flex: 1; min-height: 0; overflow: auto; }
+
+  /* camera stage (spans the left column, both rows) */
+  #stage { grid-row: 1 / 3; }
+  #camWrap { position: relative; flex: 1; background: #000; min-height: 0; }
+  #camBase { width: 100%; height: 100%; object-fit: cover; display: block; visibility: hidden; }
+  #camBase.live { visibility: visible; }
+  #camNo { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+           color: rgba(255,255,255,0.55); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; }
+  #camWrap.live #camNo { display: none; }
+  #wristTile {
+    position: absolute; right: 10px; top: 10px; width: 150px; height: 112px; border-radius: 6px;
+    overflow: hidden; border: 1px solid rgba(255,255,255,0.5); background: #000;
+  }
+  #wristTile img { width: 100%; height: 100%; object-fit: cover; visibility: hidden; }
+  #wristTile img.live { visibility: visible; }
+  #wristTile .cap { position: absolute; top: 4px; left: 6px; font-size: 9px; color: #fff;
+                    text-transform: uppercase; letter-spacing: 0.1em; text-shadow: 0 1px 2px #000; }
+  #liveDot {
+    position: absolute; left: 12px; top: 12px; display: flex; align-items: center; gap: 6px;
+    color: #fff; font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
+    background: rgba(0,0,0,0.5); padding: 4px 9px; border-radius: 12px;
+  }
+  #liveDot .d { width: 7px; height: 7px; border-radius: 50%; background: #888; }
+  #liveDot.on .d { background: #3ad06a; box-shadow: 0 0 6px #3ad06a; }
+
+  /* on-camera "now running" overlay */
+  #nowBar {
+    position: absolute; left: 0; right: 0; bottom: 0; padding: 12px 14px 14px;
+    background: linear-gradient(to top, rgba(0,0,0,0.78), rgba(0,0,0,0) 100%);
+    color: #fff; display: none;
+  }
+  #nowBar.show { display: block; }
+  #nowTop { display: flex; align-items: center; gap: 10px; }
+  #nowSkill { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  #nowStep { font-size: 11px; color: rgba(255,255,255,0.7); letter-spacing: 0.04em; }
+  #nowSwap { margin-left: auto; font-size: 11px; font-family: ui-monospace, Menlo, monospace;
+             color: rgba(255,255,255,0.85); display: flex; align-items: center; gap: 6px; }
+  #nowSwap .ad { padding: 2px 7px; border: 1px solid rgba(255,255,255,0.35); border-radius: 4px; }
+  #nowSwap .ar { opacity: 0.7; }
+  #nowSwap.swapping .ad.to { background: rgba(58,208,106,0.25); border-color: #3ad06a; }
+  #nowProg { margin-top: 9px; height: 6px; background: rgba(255,255,255,0.22); border-radius: 3px; overflow: hidden; }
+  #nowProg .fill { height: 100%; width: 0%; background: #fff; transition: width 350ms ease; }
+  #nowMeta { margin-top: 5px; font-size: 10px; color: rgba(255,255,255,0.65); font-family: ui-monospace, Menlo, monospace; }
+
+  /* thinking consoles */
+  #think { grid-column: 2; grid-row: 1; }
+  #think .bd { padding: 0; display: flex; flex-direction: column; }
+  .stream { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .stream + .stream { border-top: 1px solid var(--soft); }
+  .stream .lab { padding: 6px 12px 2px; font-size: 10px; font-weight: 600; letter-spacing: 0.1em;
+                 text-transform: uppercase; color: #555; display: flex; align-items: center; gap: 6px; }
+  .stream .lab .spin { width: 9px; height: 9px; border-radius: 50%; border: 2px solid var(--soft);
+                       border-top-color: var(--accent); animation: sp 0.8s linear infinite; display: none; }
+  .stream.busy .lab .spin { display: inline-block; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  .stream .out {
+    flex: 1; min-height: 0; overflow: auto; padding: 4px 12px 10px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; line-height: 1.55;
+    color: #1a1a1a; white-space: pre-wrap; word-break: break-word;
+  }
+  .stream .out .ph { color: var(--muted); font-style: italic; }
+
+  /* plan rail */
+  #plan { grid-column: 2; grid-row: 2; }
+  #planSummary { padding: 9px 12px; font-size: 12px; color: #333; border-bottom: 1px solid var(--soft); }
+  #planSummary .ph { color: var(--muted); font-style: italic; }
+  #steps { padding: 8px 12px; display: flex; flex-direction: column; gap: 0; }
+  .step {
+    display: grid; grid-template-columns: 26px 1fr; gap: 10px; padding: 8px 0; position: relative;
+  }
+  .step:not(:last-child)::before {
+    content: ''; position: absolute; left: 12px; top: 28px; bottom: -8px; width: 2px; background: var(--soft);
+  }
+  .step.done:not(:last-child)::before { background: var(--green); }
+  .step .num {
+    width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--soft); background: #fff;
+    display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; z-index: 1;
+  }
+  .step.active .num { border-color: var(--accent); background: var(--accent); color: #fff; }
+  .step.done .num { border-color: var(--green); background: var(--green); color: #fff; }
+  .step .body .nm { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .step .body .sub { font-size: 11px; color: var(--muted); }
+  .step .body .lora { font-size: 10px; font-family: ui-monospace, Menlo, monospace; color: var(--muted); margin-top: 2px; }
+  .step.active .body .lora { color: var(--accent); }
+  .step .st { margin-left: auto; }
+
+  /* log strip */
+  #logCard { grid-column: 1 / 3; grid-row: 3; display: none; }
+  #log {
+    height: 100%; overflow: auto; padding: 8px 12px; background: #0a0a0a; color: #cfcfcf;
+    font-family: ui-monospace, Menlo, monospace; font-size: 10px; line-height: 1.5; white-space: pre-wrap;
+  }
+
+  /* error banner */
+  #err {
+    position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 60;
+    background: #fff; color: var(--red); border: 2px solid var(--red); padding: 10px 14px;
+    border-radius: 6px; display: none; align-items: center; gap: 12px; max-width: 70vw;
+    box-shadow: 0 4px 12px rgba(192,57,43,0.25); font-weight: 600;
+  }
+  #err.show { display: flex; }
+  #err button { background: none; border: none; color: var(--red); font-size: 20px; cursor: pointer; }
+  #toast {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); padding: 8px 16px;
+    background: #1a1a1a; color: #fff; border-radius: 6px; font-size: 12px; opacity: 0;
+    pointer-events: none; transition: opacity 200ms; z-index: 100;
+  }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+  <div id="err"><span id="errMsg"></span><button id="errX" title="dismiss">×</button></div>
+
+  <!-- ── Sidebar / config ─────────────────────────────────────────────── -->
+  <aside id="side">
+    <div id="brand">
+      <span class="logo">FARM</span><span class="tag">run a task</span>
+      <nav id="nav">
+        <a href="/">live</a><a href="/review">review</a><a href="/train">train</a>
+        <a href="/user" class="cur">user</a>
+      </nav>
+    </div>
+    <div id="cfg">
+      <div class="field">
+        <span class="sec-label">Base model</span>
+        <div id="bases"></div>
+      </div>
+
+      <div class="field">
+        <span class="sec-label">Skills <span id="skillsHint" style="color:#aaa;text-transform:none;letter-spacing:0;font-weight:400"></span></span>
+        <div id="skills"></div>
+      </div>
+
+      <div class="field">
+        <span class="sec-label">Task</span>
+        <textarea id="task" placeholder="e.g. place the items on the box"></textarea>
+        <div id="presets"></div>
+      </div>
+
+      <div class="field">
+        <span class="sec-label">Reasoning</span>
+        <div class="row2">
+          <select class="sel" id="thinkModel" title="planner (thinking) model"></select>
+          <select class="sel" id="visionModel" title="scene (vision) model"></select>
+        </div>
+        <label class="toggle">
+          <span>Drive the arm <span class="hint">live policy</span></span>
+          <span class="switch"><input type="checkbox" id="execute" checked><span class="track"></span></span>
+        </label>
+      </div>
+
+      <div id="runRow">
+        <button class="btn primary" id="runBtn">▶ Run task</button>
+        <button class="btn danger" id="stopBtn" style="display:none">■ Stop</button>
+      </div>
+
+      <div class="field panel" style="padding:10px;gap:8px">
+        <span class="sec-label">Policy server</span>
+        <div class="statline"><span class="dot" id="serveDot"></span><span id="serveTxt" class="mono">checking…</span></div>
+        <button class="btn" id="serveBtn">Start hot-swap server</button>
+      </div>
+
+      <div class="field" style="gap:6px">
+        <div class="statline"><span class="dot" id="doDot"></span><span id="doTxt">DigitalOcean</span></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── Main / stage ─────────────────────────────────────────────────── -->
+  <main id="main">
+    <div id="top">
+      <h1>What should the arm do?</h1>
+      <span class="pill" id="modeBadge">preview</span>
+      <span class="spacer"></span>
+      <span id="phase">idle</span>
+    </div>
+
+    <div id="grid">
+      <!-- camera hero -->
+      <div class="card panel" id="stage">
+        <div class="hd"><span class="t">Workspace</span><span class="r" id="stageR">base camera</span></div>
+        <div id="camWrap">
+          <img id="camBase" alt="base camera">
+          <div id="camNo">no camera feed</div>
+          <div id="liveDot"><span class="d"></span><span>live</span></div>
+          <div id="wristTile"><img id="camWrist" alt="wrist"><span class="cap">wrist</span></div>
+          <div id="nowBar">
+            <div id="nowTop">
+              <div id="nowSkill"><span id="nowEmoji"></span><span id="nowName"></span></div>
+              <div id="nowStep"></div>
+              <div id="nowSwap"><span class="ad from"></span><span class="ar">→</span><span class="ad to"></span></div>
+            </div>
+            <div id="nowProg"><div class="fill"></div></div>
+            <div id="nowMeta"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- thinking -->
+      <div class="card panel" id="think">
+        <div class="hd"><span class="t">Thinking</span><span class="r" id="thinkR"></span></div>
+        <div class="bd">
+          <div class="stream" id="visionStream">
+            <div class="lab">👁 Perception <span class="spin"></span></div>
+            <div class="out" id="visionOut"><span class="ph">looks at the table when you run a task…</span></div>
+          </div>
+          <div class="stream" id="planStream">
+            <div class="lab">🧠 Plan <span class="spin"></span></div>
+            <div class="out" id="planOut"><span class="ph">decomposes the task into skill steps…</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- plan rail -->
+      <div class="card panel" id="plan">
+        <div class="hd"><span class="t">Plan</span><span class="r" id="planR"></span></div>
+        <div class="bd">
+          <div id="planSummary"><span class="ph">the ordered skill plan appears here</span></div>
+          <div id="steps"></div>
+        </div>
+      </div>
+
+      <!-- log -->
+      <div class="card panel" id="logCard">
+        <div class="hd"><span class="t">Log</span></div>
+        <div class="bd" style="padding:0"><div id="log" class="mono"></div></div>
+      </div>
+    </div>
+  </main>
+
+  <div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const S = {
+  cfg: null, skills: [], bases: [], base: 'fft_hotswap',
+  enabled: new Set(), running: false, steps: [], serve: null, lastSeq: 0,
+};
+
+// ── helpers ──────────────────────────────────────────────────────────────
+function toast(msg, bad) {
+  const t = $('toast'); t.textContent = msg; t.style.background = bad ? '#c0392b' : '#1a1a1a';
+  t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2200);
+}
+function showErr(m) { $('errMsg').textContent = m; $('err').classList.add('show'); }
+$('errX').onclick = () => $('err').classList.remove('show');
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// ── boot: config + catalogue ─────────────────────────────────────────────
+async function boot() {
+  try {
+    const r = await fetch('/v1/agent/config'); S.cfg = await r.json();
+  } catch (e) { showErr('daemon unreachable — is `farm serve` running?'); return; }
+  S.skills = S.cfg.skills || []; S.bases = S.cfg.base_models || [];
+  renderBases(); renderSkills(); renderPresets(); renderModels();
+  // DO availability
+  const ok = S.cfg.do_available;
+  $('doDot').className = 'dot ' + (ok ? 'ok' : 'bad');
+  $('doTxt').textContent = ok ? 'DigitalOcean · ' + (S.cfg.default_thinking_model || 'connected')
+                              : 'DigitalOcean key not found (preview only)';
+  connectStream(); pollServe(); pollCameras();
+  setInterval(pollServe, 3500);
+}
+
+function renderBases() {
+  const el = $('bases'); el.innerHTML = '';
+  for (const b of S.bases) {
+    const d = document.createElement('label');
+    d.className = 'opt' + (b.key === S.base ? ' sel' : '');
+    d.innerHTML = `<span class="nm"><input type="radio" name="base" ${b.key===S.base?'checked':''}> ${escapeHtml(b.label)}</span>`
+      + `<span class="ds">${escapeHtml(b.note||'')}</span>`;
+    d.onclick = () => { S.base = b.key; renderBases(); renderSkills(); };
+    el.appendChild(d);
+  }
+}
+function baseSkillsEnabled() {
+  const b = S.bases.find(x => x.key === S.base); return b ? b.skills_enabled !== false : true;
+}
+function renderSkills() {
+  const el = $('skills'); el.innerHTML = '';
+  const usable = baseSkillsEnabled();
+  $('skillsHint').textContent = usable ? '' : '(generalist base — skills informational)';
+  if (S.enabled.size === 0) S.skills.forEach(s => S.enabled.add(s.key));
+  for (const s of S.skills) {
+    const on = S.enabled.has(s.key);
+    const d = document.createElement('label');
+    d.className = 'skill ' + (on ? 'on' : 'off');
+    d.innerHTML = `<input type="checkbox" ${on?'checked':''}>`
+      + `<div><div class="nm">${s.emoji||''} ${escapeHtml(s.label)}</div>`
+      + `<div class="meta">${escapeHtml(s.note||'')}</div>`
+      + `<div class="repo">${escapeHtml(s.repo||'')}</div></div>`;
+    d.querySelector('input').onclick = ev => {
+      ev.stopPropagation();
+      if (ev.target.checked) S.enabled.add(s.key); else S.enabled.delete(s.key);
+      renderSkills();
+    };
+    el.appendChild(d);
+  }
+}
+function renderPresets() {
+  const el = $('presets'); el.innerHTML = '';
+  const presets = [
+    'Place the items on the box',
+    'Tidy up — put everything on the box',
+    'Pick up the bottle and place it on the box',
+    'Clear the table onto the box',
+  ];
+  for (const p of presets) {
+    const c = document.createElement('button'); c.className = 'chip'; c.textContent = p;
+    c.onclick = () => { $('task').value = p; };
+    el.appendChild(c);
+  }
+}
+function renderModels() {
+  const fill = (sel, list, def) => {
+    sel.innerHTML = ''; (list||[]).forEach(m => {
+      const o = document.createElement('option'); o.value = m; o.textContent = m;
+      if (m === def) o.selected = true; sel.appendChild(o);
+    });
+  };
+  fill($('thinkModel'), S.cfg.thinking_models, S.cfg.default_thinking_model);
+  fill($('visionModel'), S.cfg.vision_models, S.cfg.default_vision_model);
+}
+
+// ── run / stop ───────────────────────────────────────────────────────────
+$('runBtn').onclick = async () => {
+  const task = $('task').value.trim();
+  if (!task) { toast('type a task first', true); $('task').focus(); return; }
+  const body = {
+    task, base_model: S.base, skills: [...S.enabled],
+    thinking_model: $('thinkModel').value, vision_model: $('visionModel').value,
+    execute: $('execute').checked,
+  };
+  resetRunUI();
+  try {
+    const r = await fetch('/v1/agent/run', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    setRunning(true);
+  } catch (e) { showErr('could not start: ' + e.message); }
+};
+$('stopBtn').onclick = async () => {
+  try { await fetch('/v1/agent/stop', { method:'POST' }); } catch (e) {}
+  toast('stopping…');
+};
+function setRunning(on) {
+  S.running = on;
+  $('runBtn').style.display = on ? 'none' : 'block';
+  $('stopBtn').style.display = on ? 'block' : 'none';
+}
+function resetRunUI() {
+  $('visionOut').innerHTML = ''; $('planOut').innerHTML = '';
+  $('planSummary').innerHTML = '<span class="ph">planning…</span>'; $('steps').innerHTML = '';
+  $('nowBar').classList.remove('show'); $('modeBadge').style.display = 'none';
+  $('log').textContent = ''; $('logCard').style.display = 'none'; S.steps = [];
+}
+
+// ── SSE event stream ─────────────────────────────────────────────────────
+function connectStream() {
+  const es = new EventSource('/v1/agent/stream');
+  es.onmessage = ev => { try { handle(JSON.parse(ev.data)); } catch (e) {} };
+  es.onerror = () => { /* EventSource auto-reconnects */ };
+}
+function appendStream(outId, streamId, ev) {
+  const out = $(outId), stream = $(streamId);
+  if (ev.reset) { out.textContent = ''; stream.classList.add('busy'); }
+  if (ev.delta) {
+    if (out.querySelector('.ph')) out.textContent = '';
+    out.textContent += ev.delta; out.scrollTop = out.scrollHeight;
+  }
+  if (ev.done) stream.classList.remove('busy');
+}
+function handle(ev) {
+  // Dedupe replayed events (the server re-sends history on every EventSource
+  // reconnect); seq is monotonic per daemon process.
+  if (ev.seq != null) {
+    if (ev.seq <= S.lastSeq) return;
+    S.lastSeq = ev.seq;
+  }
+  switch (ev.type) {
+    case 'state': onState(ev); break;
+    case 'config': $('thinkR').textContent = ev.thinking_model || ''; break;
+    case 'camera': $('stageR').textContent = ev.available ? 'base camera · live' : (ev.note || 'no camera'); break;
+    case 'thinking':
+      if (ev.channel === 'vision') appendStream('visionOut','visionStream', ev);
+      else appendStream('planOut','planStream', ev);
+      break;
+    case 'detect': onDetect(ev); break;
+    case 'plan': onPlan(ev); break;
+    case 'step': onStep(ev); break;
+    case 'swap': onSwap(ev); break;
+    case 'progress': onProgress(ev); break;
+    case 'serve': onServeEvent(ev); break;
+    case 'log': onLog(ev.line); break;
+    case 'error': showErr(ev.message); break;
+    case 'done': onDone(ev); break;
+  }
+}
+const PHASE_TXT = {
+  idle:'idle', starting:'warming up', capturing:'looking at the workspace',
+  detecting:'identifying objects', planning:'planning steps', executing:'executing',
+  done:'done', stopped:'stopped', error:'error',
+};
+function onState(ev) {
+  $('phase').textContent = (PHASE_TXT[ev.phase] || ev.phase) + (ev.message ? ' · ' + ev.message : '');
+  if (ev.phase === 'executing' && ev.mode) {
+    $('modeBadge').style.display = 'inline-block';
+    $('modeBadge').textContent = ev.mode === 'live' ? 'live' : 'preview';
+    $('modeBadge').className = 'pill ' + (ev.mode === 'live' ? 'live' : 'warn');
+  }
+  if (['idle','done','stopped','error'].includes(ev.phase)) setRunning(false);
+  else setRunning(true);
+}
+function onDetect(ev) {
+  const names = (ev.objects||[]).filter(o => o.present).map(o => o.object)
+    .concat((ev.present||[]).map(k => (S.skills.find(s=>s.key===k)||{}).object).filter(Boolean));
+  const uniq = [...new Set(names)];
+  $('stageR').textContent = uniq.length ? 'detected: ' + uniq.join(', ') : 'base camera';
+}
+function onPlan(ev) {
+  S.steps = ev.steps || [];
+  $('planSummary').innerHTML = ev.summary ? escapeHtml(ev.summary) : '<span class="ph">plan ready</span>';
+  $('planR').textContent = S.steps.length + ' step' + (S.steps.length===1?'':'s');
+  const el = $('steps'); el.innerHTML = '';
+  S.steps.forEach((s, i) => {
+    const d = document.createElement('div'); d.className = 'step'; d.id = 'step' + i;
+    d.innerHTML = `<div class="num">${i+1}</div>`
+      + `<div class="body"><div class="nm">${s.emoji||''} ${escapeHtml(s.label||s.object)}</div>`
+      + `<div class="sub">${escapeHtml(s.rationale || s.prompt || '')}</div>`
+      + `<div class="lora">${escapeHtml(s.repo || '')}</div></div>`;
+    el.appendChild(d);
+  });
+}
+function onStep(ev) {
+  const d = $('step' + ev.index); if (!d) return;
+  if (ev.status === 'active') {
+    document.querySelectorAll('.step.active').forEach(x => x.classList.remove('active'));
+    d.classList.add('active');
+    const s = S.steps[ev.index] || ev;
+    $('nowBar').classList.add('show');
+    $('nowEmoji').textContent = s.emoji || ev.emoji || '';
+    $('nowName').textContent = s.label || ev.label || ev.object || '';
+    $('nowStep').textContent = `step ${ev.index+1} / ${ev.total}`;
+    $('nowMeta').textContent = ev.prompt || '';
+    $('nowProg').querySelector('.fill').style.width = '0%';
+  } else if (ev.status === 'done') {
+    d.classList.remove('active'); d.classList.add('done');
+  }
+}
+function onSwap(ev) {
+  const sw = $('nowSwap');
+  sw.querySelector('.from').textContent = ev.from_label ? ('lora:' + (ev.from_key||'')) : 'base';
+  sw.querySelector('.to').textContent = 'lora:' + (ev.to_key||'');
+  sw.classList.add('swapping');
+  setTimeout(() => sw.classList.remove('swapping'), 1200);
+  onLog(`hot-swap adapter → ${ev.repo || ev.to_key}`);
+}
+function onProgress(ev) {
+  $('nowProg').querySelector('.fill').style.width = (ev.pct||0) + '%';
+  if (ev.note) $('nowMeta').textContent = (S.steps[ev.index]?.prompt || '') + (ev.note ? '   ·   ' + ev.note : '');
+}
+function onDone(ev) {
+  $('phase').textContent = ev.mode === 'live' ? 'done · task complete' : 'done · preview complete';
+  $('nowBar').classList.remove('show');
+  document.querySelectorAll('.step.active').forEach(x => { x.classList.remove('active'); x.classList.add('done'); });
+  setRunning(false);
+  toast(ev.mode === 'live' ? 'task complete' : 'preview complete');
+}
+function onLog(line) {
+  $('logCard').style.display = 'flex';
+  const l = $('log'); l.textContent += (l.textContent ? '\n' : '') + line; l.scrollTop = l.scrollHeight;
+}
+
+// ── policy server (cluster hot-swap serve) ───────────────────────────────
+async function pollServe() {
+  let d; try { d = await (await fetch('/v1/serve/status')).json(); } catch (e) { return; }
+  S.serve = d;
+  const dot = $('serveDot'), txt = $('serveTxt'), btn = $('serveBtn');
+  if (!d.kubectl) { dot.className='dot bad'; txt.textContent='cluster unreachable (no kubectl)'; btn.disabled=true; return; }
+  btn.disabled = false;
+  if (!d.running) { dot.className='dot'; txt.textContent='not running'; btn.textContent='Start hot-swap server'; btn.dataset.act='start'; return; }
+  const phase = d.phase || d.state || 'starting';
+  const bound = d.bound;
+  dot.className = 'dot ' + (bound ? 'ok' : 'warn');
+  txt.textContent = `${d.model||'serve'} · ${phase}` + (d.elapsed_s ? ` · ${d.elapsed_s}s` : '');
+  btn.textContent = 'Stop server'; btn.dataset.act = 'stop';
+}
+function onServeEvent(ev) { /* serve snapshot from a run; pollServe drives the panel */ }
+$('serveBtn').onclick = async () => {
+  const act = $('serveBtn').dataset.act || 'start';
+  try {
+    if (act === 'start') {
+      const r = await fetch('/v1/serve/start', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ model:'fftlora_hotswap', step:'55999' }) });
+      const d = await r.json(); if (!r.ok) throw new Error(d.error||('HTTP '+r.status));
+      toast('hot-swap server submitted'); pollServe();
+    } else {
+      await fetch('/v1/serve/stop', { method:'POST' }); toast('server stopping'); pollServe();
+    }
+  } catch (e) { showErr('serve: ' + e.message); }
+};
+
+// ── live camera polling (base + wrist) ───────────────────────────────────
+function pollCameras() {
+  const base = $('camBase'), wrist = $('camWrist'), wrap = $('camWrap'), dot = $('liveDot');
+  const tick = (img, name, onLive) => {
+    const probe = new Image();
+    probe.onload = () => { img.src = probe.src; img.classList.add('live'); onLive(true); };
+    probe.onerror = () => { img.classList.remove('live'); onLive(false); };
+    probe.src = `/v1/cameras/${name}.jpg?t=${Date.now()}`;
+  };
+  setInterval(() => {
+    if (document.hidden) return;   // don't burn network/CPU on a backgrounded tab
+    tick(base, 'base', live => { wrap.classList.toggle('live', live); dot.classList.toggle('on', live); });
+    tick(wrist, 'wrist', () => {});
+  }, 120);
+}
+
+boot();
+</script>
+</body>
+</html>

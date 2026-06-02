@@ -29,6 +29,51 @@ NS = os.environ.get("FARM_CLUSTER_NS", "slurm")
 WORKDIR = os.environ.get("FARM_CLUSTER_WORKDIR", "~/farm-train")
 SELECTOR = os.environ.get("FARM_CLUSTER_SELECTOR", f"stanford/user={USER}")
 
+# Serve launchers (distinct from training): key → sbatch script + metadata. The
+# serve binds :SERVE_PORT on its worker; the dashboard relays it to the laptop via
+# a two-hop tunnel — login-pod ``socat`` → worker, then a laptop-side
+# ``kubectl port-forward`` → the login pod (managed in server/app.py). The worker
+# isn't a pod the laptop can see, so the login-pod socat hop is required.
+SERVE_PORT = int(os.environ.get("FARM_SERVE_PORT", "8000"))
+# Serve jobs request a SHORT walltime + modest memory on purpose: the cluster's
+# priority is flat FIFO and idle GPUs get reserved for earlier jobs, so a long
+# (4 h, whole-node-memory) serve queues for hours. A ~1.5 h / 96 G job slots into
+# a backfill gap and usually starts within minutes. Re-launch from the dashboard
+# to extend a session. Override via env if a node is wide open.
+SERVE_WALLTIME = os.environ.get("FARM_SERVE_WALLTIME", "01:30:00")
+SERVE_MEM = os.environ.get("FARM_SERVE_MEM", "96G")
+SERVE_MODELS: dict[str, dict] = {
+    "fft": {
+        "script": "serve_fft_multiobject.sbatch", "log": "serve",
+        "label": "FFT multiobject (all 4 objects)", "default_step": "latest",
+        "steps": ["latest", "8000", "16000", "24000", "32000", "40000", "48000", "55999"],
+        "job_name": "serve-fft-multiobj",
+    },
+    "fftlora_hotswap": {
+        # FFT-56k base resident + every per-object LoRA preloaded; the serve
+        # routes the incoming task prompt to a skill and hot-swaps just the
+        # adapter leaves (no base reload, no recompile). Drives the /user page.
+        "script": "serve_fftlora_hotswap.sbatch", "log": "serve",
+        "label": "FFT-56k + LoRA hot-swap (all skills)", "default_step": "55999",
+        "steps": ["55999"],
+        "job_name": "serve-fftlora-hotswap",
+    },
+    "lora_gse": {
+        "script": "serve_pi05_lora_gse.sbatch", "log": "serve",
+        "label": "LoRA-off-GSE (bottle)", "default_step": "9999",
+        "steps": ["2000", "4000", "6000", "8000", "9999"],
+        "job_name": "serve-lora-gse",
+    },
+}
+# Serve lifecycle markers in the job log. The sbatch echoes _LAUNCHED just
+# BEFORE exec'ing serve_policy.py (params still loading + JIT); openpi logs
+# _BOUND only once the websocket server is actually accepting — that's the real
+# "ready to infer" signal. (A bare TCP probe to the forwarded port is NOT
+# reliable: kubectl port-forward's local listener accepts before the upstream
+# serve exists, so it reports reachable while the container is still building.)
+_SERVE_LAUNCHED_RE = re.compile(r">>> serve_policy\.py on :\d+")
+_SERVE_BOUND_RE = re.compile(r"server listening on|Creating server \(host")
+
 # model key → (sbatch script, log-file prefix, openpi config name, default steps/gpus)
 MODELS: dict[str, dict] = {
     "full": {"script": "train_pi05.sbatch", "log": "train", "config": "pi05_farm_uf850",
@@ -340,3 +385,123 @@ def metrics(job_id: str) -> dict:
 def stop(job_id: str) -> dict:
     rc, out = _exec(f"scancel {job_id} 2>&1", timeout=15.0)
     return {"ok": rc == 0, "out": out.strip()[:200]}
+
+
+# ── Serving the policy from the dashboard ──────────────────────────────────
+# The serve job is submitted like training, but instead of tracking loss we
+# track its lifecycle (queued → starting → loading → serving) and stand up the
+# login-pod side of the tunnel. The laptop-side port-forward lives in app.py.
+
+def serve_launch(model: str, step: str | None) -> dict:
+    """Submit a serve job (``STEP=<step> sbatch <serve script>``). Returns
+    ``{"job_id", "model", "step"}`` or ``{"error"}``."""
+    spec = SERVE_MODELS.get(model)
+    if spec is None:
+        return {"error": f"unknown serve model {model!r}"}
+    step = str(step or spec["default_step"])
+    if spec.get("steps") and step not in spec["steps"]:
+        return {"error": f"step {step!r} not in {spec['steps']}"}
+    cmd = (
+        f"cd {WORKDIR} && STEP={step} "
+        f"sbatch --time={SERVE_WALLTIME} --mem={SERVE_MEM} {spec['script']} 2>&1"
+    )
+    rc, out = _exec(cmd, timeout=30.0)
+    m = _SUBMIT_RE.search(out)
+    if rc != 0 or not m:
+        return {"error": f"sbatch failed: {out.strip()[:400]}"}
+    return {"job_id": m.group(1), "model": model, "step": step}
+
+
+def serve_state(job_id: str) -> tuple[str, str]:
+    """``(state, node)`` for a serve job. ``node`` is empty until it RUNs.
+    ``squeue`` ``%R`` is the nodelist when running, or the pend reason in parens."""
+    rc, out = _exec(f"squeue -j {job_id} -h -o '%T|%R' 2>/dev/null | head -1", timeout=15.0)
+    line = out.strip().splitlines()[0] if out.strip() else ""
+    if "|" not in line:
+        return ("GONE", "")  # not in queue (finished/cancelled/never-ran)
+    state, node = (p.strip() for p in line.split("|", 1))
+    if node.startswith("("):  # e.g. "(Resources)", "(Priority)" — still pending
+        node = ""
+    return (state.upper() or "UNKNOWN", node)
+
+
+def serve_log_tail(job_id: str, n: int = 30) -> str:
+    rc, out = _exec(f"tail -n {n} {WORKDIR}/serve-{job_id}.out 2>/dev/null || true", timeout=20.0)
+    return out
+
+
+def serve_markers(job_id: str) -> tuple[bool, bool]:
+    """``(launched, bound)`` by grepping the WHOLE job log. The startup markers
+    appear exactly once and the log only grows, so a 30-line tail scrolls past
+    them and detection flickers — grep the full file instead (it's monotonic)."""
+    f = f"{WORKDIR}/serve-{job_id}.out"
+    rc, out = _exec(
+        f"grep -qE '>>> serve_policy[.]py on :' {f} 2>/dev/null && echo LAUNCHED; "
+        f"grep -qE 'server listening on|Creating server [(]host' {f} 2>/dev/null && echo BOUND; "
+        f"true",
+        timeout=15.0,
+    )
+    return ("LAUNCHED" in out, "BOUND" in out)
+
+
+def serve_is_launched(log_text: str) -> bool:
+    """serve_policy.py has been exec'd — params restoring / JIT (not yet bound)."""
+    return bool(_SERVE_LAUNCHED_RE.search(log_text))
+
+
+def serve_is_bound(log_text: str) -> bool:
+    """The websocket server is actually accepting connections — ready to infer.
+    This (not a TCP probe) is the authoritative 'serving' signal."""
+    return bool(_SERVE_BOUND_RE.search(log_text))
+
+
+_SOCAT_TMUX = "farm_serve_socat"
+
+
+def serve_socat_up(node: str, *, port: int = SERVE_PORT) -> bool:
+    """(Re)point the login-pod relay ``socat :port → <node>:port``, inside a
+    DETACHED tmux session. A plain ``... &`` backgrounded forking listener holds
+    the one-shot ``kubectl exec`` channel open and gets torn down (exit 143);
+    tmux daemonizes it so the exec returns immediately and the relay survives.
+    Idempotent (kills any prior session first). Returns True iff the relay is
+    actually accepting connections afterward (real /dev/tcp probe, not pgrep)."""
+    if not node:
+        return False
+    remote = (
+        f"tmux kill-session -t {_SOCAT_TMUX} 2>/dev/null; "
+        f"tmux new-session -d -s {_SOCAT_TMUX} "
+        f"'socat TCP-LISTEN:{port},fork,reuseaddr TCP:{node}:{port}'; "
+        f"sleep 0.8; "
+        f"if tmux has-session -t {_SOCAT_TMUX} 2>/dev/null && "
+        f"(exec 3<>/dev/tcp/127.0.0.1/{port}) 2>/dev/null; then echo SOCAT_UP; else echo SOCAT_FAIL; fi"
+    )
+    rc, out = _exec(remote, timeout=20.0)
+    return "SOCAT_UP" in out
+
+
+def serve_socat_down(*, port: int = SERVE_PORT) -> None:
+    _exec(f"tmux kill-session -t {_SOCAT_TMUX} 2>/dev/null; "
+          f"pkill -f 'socat .*TCP-LISTEN:{port}' 2>/dev/null; true", timeout=10.0)
+
+
+def serve_stop(job_id: str, *, port: int = SERVE_PORT) -> dict:
+    """Cancel the serve job and tear down the login-pod relay."""
+    rc, out = _exec(f"scancel {job_id} 2>&1; tmux kill-session -t {_SOCAT_TMUX} 2>/dev/null; "
+                    f"pkill -f 'socat .*TCP-LISTEN:{port}' 2>/dev/null; true",
+                    timeout=15.0)
+    return {"ok": rc == 0, "out": out.strip()[:200]}
+
+
+def serve_discover() -> dict | None:
+    """Find a running/queued serve job to adopt (so the dashboard survives a
+    daemon restart). Matched by the serve job name."""
+    names = {spec["job_name"]: key for key, spec in SERVE_MODELS.items()}
+    _, out = _exec("squeue -u \"$USER\" -h -o '%i|%j|%T' 2>/dev/null", timeout=15.0)
+    for line in out.splitlines():
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) < 3:
+            continue
+        jid, name, st = parts[0], parts[1], parts[2].upper()
+        if name in names and st in ("RUNNING", "PENDING", "CONFIGURING", "COMPLETING"):
+            return {"job_id": jid, "model": names[name], "adopted": True}
+    return None

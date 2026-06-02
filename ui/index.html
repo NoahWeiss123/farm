@@ -204,14 +204,17 @@
     .ep-stat.ok  .ep-val { color: #1a7f37; }
     .ep-stat.bad .ep-val { color: #b3261e; }
     /* ── Policy prompt input (lives inside the eval panel) ────────────── */
-    #promptInput {
-      width: 100%; box-sizing: border-box;
-      height: 30px; padding: 0 8px; margin-top: 4px;
-      font-family: inherit; font-size: 12px; color: var(--text);
-      border: 1px solid var(--soft); border-radius: 4px;
-      background: #fff;
+    #promptPresets { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+    .preset-btn {
+      width: 100%; box-sizing: border-box; text-align: left;
+      padding: 6px 10px; font-family: inherit; font-size: 12px; color: var(--text);
+      border: 1px solid var(--soft); border-radius: 4px; background: #fff; cursor: pointer;
     }
-    #promptInput:focus { outline: 2px solid #888; outline-offset: -2px; }
+    .preset-btn:hover { border-color: #888; }
+    .preset-btn.active {
+      border-color: var(--accent); color: var(--accent); font-weight: 600;
+      background: color-mix(in srgb, var(--accent) 12%, #fff);
+    }
     #promptStatus {
       margin-top: 6px; font-size: 11px; color: var(--muted);
       font-family: ui-monospace, "SF Mono", Menlo, monospace;
@@ -223,7 +226,7 @@
       display: flex; gap: 8px; align-items: center; margin-top: 10px;
     }
     #evalRunBtn {
-      flex: 1; height: 32px; padding: 0 12px;
+      width: 100%; box-sizing: border-box; margin-top: 8px; height: 32px; padding: 0 12px;
       font-family: inherit; font-size: 12px; font-weight: 600;
       letter-spacing: 0.04em;
       border: 1px solid var(--soft); border-radius: 4px;
@@ -235,12 +238,17 @@
     }
     #evalRunBtn.running:hover { background: #a32d22; }
     #evalRunBtn:disabled { opacity: 0.55; cursor: not-allowed; }
-    #evalRunMode {
-      width: 92px; height: 32px; padding: 0 6px;
+    #evalRunMode, #evalLoopMode {
+      flex: 1; min-width: 0; height: 32px; padding: 0 6px;
       font-family: inherit; font-size: 11px; color: var(--fg);
       border: 1px solid var(--soft); border-radius: 4px;
       background: #fff; cursor: pointer;
     }
+    #evalRtcLab {
+      display: flex; align-items: center; gap: 4px;
+      font-size: 11px; color: var(--fg); white-space: nowrap; cursor: pointer;
+    }
+    #evalRtcLab input { margin: 0; cursor: pointer; }
     #evalLog {
       margin-top: 8px;
       max-height: 140px; overflow-y: auto;
@@ -252,6 +260,31 @@
       white-space: pre-wrap; word-break: break-all;
     }
     #evalLog:empty { display: none; }
+    /* ── Policy server (cluster serve) control ────────────────────────── */
+    #serveRow { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+    #serveModel, #serveStep {
+      flex: 1; min-width: 0; height: 32px; padding: 0 6px;
+      font-family: inherit; font-size: 11px; color: var(--fg);
+      border: 1px solid var(--soft); border-radius: 4px; background: #fff; cursor: pointer;
+    }
+    #serveBtn {
+      width: 100%; box-sizing: border-box; margin-top: 8px; height: 32px; padding: 0 12px;
+      font-family: inherit; font-size: 12px; font-weight: 600; letter-spacing: 0.04em;
+      border: 1px solid var(--soft); border-radius: 4px;
+      background: #fff; color: var(--fg); cursor: pointer;
+    }
+    #serveBtn:hover { background: #f3f3f3; }
+    #serveBtn.running { background: #b3261e; color: #fff; border-color: #b3261e; }
+    #serveBtn.running:hover { background: #a32d22; }
+    #serveBtn:disabled { opacity: 0.55; cursor: not-allowed; }
+    #serveStatus {
+      margin-top: 6px; font-size: 11px; color: var(--muted);
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #serveStatus.ok { color: var(--accent); }
+    #serveStatus.warn { color: #b06d00; }
+    #serveStatus.bad { color: #b3261e; }
     /* ── Smoothing (1€) stepper rows ──────────────────────────────────── */
     #filter .row { margin-top: 10px; }
     #filter .row:first-child { margin-top: 0; }
@@ -551,6 +584,7 @@
       <div style="display:flex; gap:14px; font-size:12px;">
         <a href="/review" style="color:var(--accent); text-decoration:none;">Episode review ›</a>
         <a href="/train" style="color:var(--accent); text-decoration:none;">Train ›</a>
+        <a href="/user" style="color:var(--accent); text-decoration:none;">Run a task ›</a>
       </div>
     </div>
     <div class="section">
@@ -698,19 +732,41 @@
           </div>
         </div>
         <div class="ep-group">
-          <div class="ep-section-label">Policy prompt</div>
-          <input id="promptInput" type="text"
-                 value="pick up the cube and place it on the box"
-                 placeholder="task for eval client (Enter to send)"
-                 autocomplete="off">
-          <div id="promptStatus">press Enter to push to the eval client</div>
+          <div class="ep-section-label">Policy server (cluster)</div>
+          <div id="serveRow">
+            <select id="serveModel" title="which trained policy to serve on the cluster">
+              <option value="fft" selected>FFT multiobject</option>
+              <option value="lora_gse">LoRA-GSE (bottle)</option>
+            </select>
+            <select id="serveStep" title="checkpoint step — FFT defaults to the latest written">
+              <option value="latest" selected>latest</option>
+            </select>
+          </div>
+          <button id="serveBtn" type="button">▶ Start server</button>
+          <div id="serveStatus">policy server: not running</div>
+        </div>
+        <div class="ep-group">
+          <div class="ep-section-label">Policy task</div>
+          <div id="promptPresets">
+            <button type="button" class="preset-btn" data-prompt="Picking up the bottle and placing it on the box">🍾 Bottle → box</button>
+            <button type="button" class="preset-btn" data-prompt="Pick up the stuffed bear and place it on the box">🧸 Stuffed bear → box</button>
+            <button type="button" class="preset-btn" data-prompt="Pick up the rubber duck and place it on the box">🦆 Rubber duck → box</button>
+            <button type="button" class="preset-btn" data-prompt="Pick up the hat and place it on the box">🎩 Hat → box</button>
+          </div>
+          <div id="promptStatus">pick a task to send to the policy</div>
           <div id="evalRunRow">
             <select id="evalRunMode" title="dry-run = print only · live = POST joints to daemon">
               <option value="live" selected>Live</option>
               <option value="dry">Dry-run</option>
             </select>
-            <button id="evalRunBtn" type="button">▶ Run</button>
+            <select id="evalLoopMode" title="execution loop — Sync: no-skip, posts every waypoint then re-infers when the queue empties · Queue: pipelined FIFO (may trim stale targets) · Default: timed-waypoint (skips late waypoints)">
+              <option value="sync" selected>Sync (no-skip)</option>
+              <option value="queue">Queue</option>
+              <option value="default">Default</option>
+            </select>
+            <label id="evalRtcLab" title="Real-Time Chunking — smooths action-chunk seams (recommended on)"><input type="checkbox" id="evalRtc" checked> RTC</label>
           </div>
+          <button id="evalRunBtn" type="button">▶ Run</button>
           <div id="evalLog"></div>
         </div>
       </div>
@@ -1456,26 +1512,14 @@
 
     // ── Policy prompt input (for the eval client) ─────────────────────────
     (() => {
-      const input = document.getElementById('promptInput');
+      const presets = document.getElementById('promptPresets');
       const status = document.getElementById('promptStatus');
-      if (!input || !status) return;
-      const setStatus = (prompt, mode) => {
-        if (mode === 'pushed') {
-          status.textContent = `pushed → ${prompt}`;
-          status.classList.add('set');
-        } else if (mode === 'live') {
-          status.textContent = `live → ${prompt}`;
-          status.classList.add('set');
-        } else if (mode === 'empty') {
-          status.textContent = '(no prompt set — eval client uses its --task default)';
-          status.classList.remove('set');
-        } else {
-          status.textContent = 'press Enter to push to the eval client';
-          status.classList.remove('set');
-        }
+      if (!presets || !status) return;
+      const buttons = [...presets.querySelectorAll('.preset-btn')];
+      const setActive = (prompt) => {
+        buttons.forEach((b) => b.classList.toggle('active', b.dataset.prompt === prompt));
       };
-      const push = async () => {
-        const prompt = input.value.trim();
+      const push = async (prompt) => {
         try {
           const r = await fetch('/v1/policy/prompt', {
             method: 'POST',
@@ -1483,22 +1527,24 @@
             body: JSON.stringify({ prompt }),
           });
           if (!r.ok) {
-            console.error('prompt push failed', r.status);
-            status.textContent = `push failed (${r.status})`;
+            console.error('prompt set failed', r.status);
+            status.textContent = `set failed (${r.status})`;
+            status.classList.remove('set');
             return;
           }
-          setStatus(prompt || '(cleared)', prompt ? 'pushed' : 'empty');
+          status.textContent = `task → ${prompt}`;
+          status.classList.add('set');
+          setActive(prompt);
         } catch (e) {
-          console.error('prompt push failed', e);
-          status.textContent = 'push failed (network)';
+          console.error('prompt set failed', e);
+          status.textContent = 'set failed (network)';
+          status.classList.remove('set');
         }
       };
-      input.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Enter') { ev.preventDefault(); push(); }
-      });
-      // Pre-populate the daemon with the input's default value on page
-      // load so a freshly started eval client picks it up without the
-      // user having to hit Enter first.
+      buttons.forEach((b) => b.addEventListener('click', () => push(b.dataset.prompt)));
+      // On load adopt the daemon's current task and highlight the matching
+      // preset. NO auto-push of a default — the operator picks an exact,
+      // trained task string, so a typo/case mismatch can never reach the model.
       (async () => {
         try {
           const r = await fetch('/v1/policy/prompt');
@@ -1506,15 +1552,12 @@
             const p = await r.json();
             const live = (typeof p.prompt === 'string') ? p.prompt : '';
             if (live) {
-              // Daemon already has a prompt (e.g. another tab pushed it) —
-              // adopt it so two tabs don't fight over what's "current".
-              input.value = live;
-              setStatus(live, 'live');
-              return;
+              status.textContent = `task → ${live}`;
+              status.classList.add('set');
+              setActive(live);
             }
           }
-        } catch (e) { /* fall through to push the HTML default */ }
-        await push();
+        } catch (e) { /* leave the default hint */ }
       })();
     })();
 
@@ -1522,8 +1565,10 @@
     (() => {
       const btn = document.getElementById('evalRunBtn');
       const mode = document.getElementById('evalRunMode');
+      const loopMode = document.getElementById('evalLoopMode');
+      const rtcChk = document.getElementById('evalRtc');
       const logEl = document.getElementById('evalLog');
-      if (!btn || !mode || !logEl) return;
+      if (!btn || !mode || !loopMode || !rtcChk || !logEl) return;
 
       let running = false;
 
@@ -1531,8 +1576,10 @@
         running = isRunning;
         btn.classList.toggle('running', isRunning);
         btn.textContent = isRunning ? '■ Stop' : '▶ Run';
-        // Mode dropdown only matters when starting, so dim while running.
+        // Mode controls only matter when starting, so dim while running.
         mode.disabled = isRunning;
+        loopMode.disabled = isRunning;
+        rtcChk.disabled = isRunning;
       };
       paint(false);
 
@@ -1542,7 +1589,11 @@
           if (running) {
             await fetch('/v1/policy/stop', { method: 'POST' });
           } else {
-            const body = { live: mode.value === 'live' };
+            const body = {
+              live: mode.value === 'live',
+              mode: loopMode.value,
+              rtc: rtcChk.checked,
+            };
             const r = await fetch('/v1/policy/run', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -1586,6 +1637,108 @@
       };
       tick();
       setInterval(tick, 1500);
+    })();
+
+    // ── Policy server (cluster serve) Start/Stop + lifecycle ──────────────
+    (() => {
+      const btn = document.getElementById('serveBtn');
+      const modelSel = document.getElementById('serveModel');
+      const stepSel = document.getElementById('serveStep');
+      const statusEl = document.getElementById('serveStatus');
+      if (!btn || !modelSel || !stepSel || !statusEl) return;
+
+      let running = false;
+
+      // Checkpoint choices per model. FFT serves the latest written checkpoint
+      // by default (training is ongoing); LoRA-GSE has its fixed job-383 steps.
+      const STEPS = {
+        fft: ['latest', '40000', '32000', '24000', '16000', '8000'],
+        lora_gse: ['9999', '8000', '6000', '4000', '2000'],
+      };
+      const fillSteps = () => {
+        const opts = STEPS[modelSel.value] || ['latest'];
+        stepSel.innerHTML = opts.map((s, i) =>
+          `<option value="${s}"${i === 0 ? ' selected' : ''}>${s === 'latest' ? 'latest' : 'step-' + s}</option>`
+        ).join('');
+      };
+      modelSel.addEventListener('change', fillSteps);
+      fillSteps();
+
+      const setStatus = (cls, text) => {
+        statusEl.className = cls || '';
+        statusEl.textContent = text;
+      };
+
+      const paint = (isRunning) => {
+        running = isRunning;
+        btn.classList.toggle('running', isRunning);
+        btn.textContent = isRunning ? '■ Stop server' : '▶ Start server';
+        modelSel.disabled = isRunning;
+        stepSel.disabled = isRunning;
+      };
+      paint(false);
+
+      const handle = async () => {
+        btn.disabled = true;
+        try {
+          if (running) {
+            await fetch('/v1/serve/stop', { method: 'POST' });
+          } else {
+            const body = { model: modelSel.value, step: stepSel.value };
+            const r = await fetch('/v1/serve/start', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+            if (r.status === 409) {
+              console.warn('serve already active');
+            } else if (!r.ok) {
+              const text = await r.text();
+              setStatus('bad', `start failed: HTTP ${r.status} ${text.slice(0, 80)}`);
+            }
+          }
+        } catch (e) {
+          setStatus('bad', `network error: ${e}`);
+        } finally {
+          btn.disabled = false;
+          tick();
+        }
+      };
+      btn.addEventListener('click', handle);
+
+      // phase → (status class, human label). 'serving' = tunnel live + bound.
+      const PHASE = {
+        queued:   ['warn', 'queued on cluster…'],
+        starting: ['warn', 'starting (container build / boot)…'],
+        loading:  ['warn', 'loading params + JIT…'],
+        serving:  ['ok',   'serving · ws://127.0.0.1:8000 ready — hit Run'],
+        stopped:  ['bad',  'job stopped'],
+      };
+
+      const tick = async () => {
+        try {
+          const r = await fetch('/v1/serve/status', { cache: 'no-store' });
+          if (!r.ok) return;
+          const s = await r.json();
+          if (s.kubectl === false) {
+            paint(false);
+            setStatus('bad', 'cluster unavailable (kubectl not on PATH)');
+            return;
+          }
+          if (!s.running) {
+            paint(false);
+            setStatus('', 'policy server: not running');
+            return;
+          }
+          paint(true);
+          const [cls, label] = PHASE[s.phase] || ['warn', s.phase || s.state];
+          const stp = s.step ? ` step-${s.step}` : '';
+          const where = s.node ? ` @${s.node}` : '';
+          setStatus(cls, `#${s.job_id}${stp}${where} · ${label}`);
+        } catch (e) { /* ignore — next tick retries */ }
+      };
+      tick();
+      setInterval(tick, 2500);
     })();
 
     // ── Recording UI ──────────────────────────────────────────────────────
