@@ -1,0 +1,11 @@
+[04:16:40Z] state=RUNNING|0:52 json=10/6 |  
+[04:17:44Z] state=RUNNING|1:55 json=10/6 |  
+[04:18:47Z] state=RUNNING|2:59 json=10/6 |  
+[04:19:50Z] state=RUNNING|4:01 json=10/6 | ================ EVAL full  cfg=pi05_farm_uf850  ckpt=/home/nhweiss/farm-train/openpi/checkpoints/pi05_farm_uf850/farm_uf850_pi05_113/19999 ================
+[04:20:53Z] state=RUNNING|5:05 json=10/6 | ================ EVAL full  cfg=pi05_farm_uf850  ckpt=/home/nhweiss/farm-train/openpi/checkpoints/pi05_farm_uf850/farm_uf850_pi05_113/19999 ================
+[04:21:56Z] state=RUNNING|6:08 json=10/6 | ================ EVAL lora  cfg=pi05_farm_bottle_lora  ckpt=/home/nhweiss/farm-train/openpi/checkpoints/pi05_farm_bottle_lora/pi05_farm_bottle_lora_188/9999 ================
+[04:23:00Z] state=RUNNING|7:11 json=11/6 | ================ EVAL lora  cfg=pi05_farm_bottle_lora  ckpt=/home/nhweiss/farm-train/openpi/checkpoints/pi05_farm_bottle_lora/pi05_farm_bottle_lora_188/9999 ================
+[04:24:03Z] state=RUNNING|8:14 json=12/6 | ================ EVAL multiobject  cfg=pi05_farm_multiobject_gse  ckpt=/home/nhweiss/farm-train/openpi/checkpoints/pi05_farm_multiobject_gse/farm_gse_multiobject_robust_190/5999 ================
+[04:25:06Z] state=RUNNING|9:18 json=13/6 | ================ EVAL multiobject  cfg=pi05_farm_multiobject_gse  ckpt=/home/nhweiss/farm-train/openpi/checkpoints/pi05_farm_multiobject_gse/farm_gse_multiobject_robust_190/5999 ================
+[04:26:09Z] state=<gone> json=14/6 | ================ EVAL multiobject done ================
+TERMINAL COMPLETED json=14/6

@@ -1,0 +1,52 @@
+{
+  "per_step": {
+    "24000": {
+      "train_deg": 1.5503790378570557,
+      "train_acc5": 99.73958333333334,
+      "held_clean_deg": 1.9540468986582438,
+      "held_robust_deg": 2.3882534159845714
+    },
+    "32000": {
+      "train_deg": 1.3916488885879517,
+      "train_acc5": 99.73958333333334,
+      "held_clean_deg": 1.802169531613371,
+      "held_robust_deg": 2.245057098028253
+    },
+    "40000": {
+      "train_deg": 1.1911221742630005,
+      "train_acc5": 100.0,
+      "held_clean_deg": 1.7413445626202917,
+      "held_robust_deg": 2.1616343671614473
+    },
+    "55999": {
+      "train_deg": 0.9832645654678345,
+      "train_acc5": 100.0,
+      "held_clean_deg": 1.6844227265727576,
+      "held_robust_deg": 2.1187244200332365
+    },
+    "48000": {
+      "train_deg": 1.0607309341430664,
+      "train_acc5": 100.0,
+      "held_clean_deg": 1.7271104483899853,
+      "held_robust_deg": 2.152532061264421
+    },
+    "8000": {
+      "train_deg": 2.540236234664917,
+      "train_acc5": 94.01041666666666,
+      "held_clean_deg": 2.3435777096659485,
+      "held_robust_deg": 3.0282695242381266
+    },
+    "16000": {
+      "train_deg": 1.9248039722442627,
+      "train_acc5": 97.65625,
+      "held_clean_deg": 2.135714776098362,
+      "held_robust_deg": 2.6154966466401666
+    }
+  },
+  "best_train": 55999,
+  "best_heldout": 55999,
+  "best_robust": 55999,
+  "final": 55999,
+  "recommended": 55999,
+  "verdict": "the final step 55999 also generalizes best \u2014 no over-memorisation penalty; use 55999."
+}

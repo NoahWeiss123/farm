@@ -1,0 +1,2 @@
+VERDICT: TRAINING on 6/6 GPUs loaded
+first steps: 0 → 0 · rate 0 it/s · ETA ~n/a min to 6000

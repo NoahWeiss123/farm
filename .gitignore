@@ -81,3 +81,9 @@ MUJOCO_LOG.TXT
 /gse_vs_full.pdf
 # but DO keep the curated analysis figures (override the global *.png ignore)
 !analysis/*.png
+
+# FFT-LoRA: raw adapter dumps (1GB; the models live on HuggingFace)
+analysis/fftLoRA_report/vectors/
+analysis/realdata_lora_gse/raw/
+.DS_Store
+**/.DS_Store

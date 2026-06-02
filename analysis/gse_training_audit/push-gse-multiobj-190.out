@@ -1,0 +1,16 @@
+[push] ensured model repo exists: NoahWeiss/farm_uf850_multiobject_gse_robust
+[push] watching /home/nhweiss/farm-train/openpi/checkpoints/pi05_farm_multiobject_gse/farm_gse_multiobject_robust_190 → NoahWeiss/farm_uf850_multiobject_gse_robust every 60s
+[push] step-1000: uploading /home/nhweiss/farm-train/openpi/checkpoints/pi05_farm_multiobject_gse/farm_gse_multiobject_robust_190/1000
+[push] step-1000: done in 40s
+[push] step-2000: uploading /home/nhweiss/farm-train/openpi/checkpoints/pi05_farm_multiobject_gse/farm_gse_multiobject_robust_190/2000
+[push] step-2000: done in 39s
+[push] step-3000: uploading /home/nhweiss/farm-train/openpi/checkpoints/pi05_farm_multiobject_gse/farm_gse_multiobject_robust_190/3000
+[push] step-3000: done in 36s
+[push] step-4000: uploading /home/nhweiss/farm-train/openpi/checkpoints/pi05_farm_multiobject_gse/farm_gse_multiobject_robust_190/4000
+[push] step-4000: done in 37s
+[push] step-5000: uploading /home/nhweiss/farm-train/openpi/checkpoints/pi05_farm_multiobject_gse/farm_gse_multiobject_robust_190/5000
+[push] step-5000: done in 37s
+[push] received stop signal, draining once before exit
+[push] step-5999: uploading /home/nhweiss/farm-train/openpi/checkpoints/pi05_farm_multiobject_gse/farm_gse_multiobject_robust_190/5999
+[push] step-5999: done in 38s
+[push] drained 6 step(s); exiting
