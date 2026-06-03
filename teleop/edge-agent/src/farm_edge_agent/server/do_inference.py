@@ -34,19 +34,22 @@ import aiohttp
 
 log = logging.getLogger("farm.do")
 
-BASE_URL = "https://inference.do-ai.run/v1"
-# NB: the OpenAI/Anthropic slugs (gpt-5.5, claude-*) are listed by /v1/models but
-# 403 on this account's subscription tier — only open-weights models are callable.
-# llama-4-maverick is the strongest available and is multimodal, so it serves as
-# both the default "thinking" model and the default scene/vision model. Both are
-# user-overridable from the /user page (see get_agent_config in app.py).
-DEFAULT_THINKING_MODEL = "llama-4-maverick"
-DEFAULT_VISION_MODEL = "llama-4-maverick"
+DO_BASE_URL = "https://inference.do-ai.run/v1"   # OpenAI-compatible · DigitalOcean key
+OPENAI_BASE_URL = "https://api.openai.com/v1"    # OpenAI direct · OPENAI_API_KEY
+BASE_URL = DO_BASE_URL  # back-compat alias
+# Model routing: OpenAI slugs (gpt-*, o1/o3/o4) go DIRECT to OpenAI with the
+# OPENAI_API_KEY; everything else (open-weights: llama, nemotron, …) goes to
+# DigitalOcean. The DO subscription tier 403s the OpenAI/Anthropic slugs, but the
+# OpenAI key reaches them directly — so the consumer page defaults to real OpenAI
+# reasoning + vision. Both models are user-overridable from the /user page.
+DEFAULT_THINKING_MODEL = "gpt-5.4-mini"
+DEFAULT_VISION_MODEL = "gpt-4o"
 
 # Env var names that may hold the DO model-access key, most-specific first. The
 # bare ``DigitalOcean`` is what this repo's .env uses.
 _KEY_NAMES = ("DigitalOcean", "DIGITALOCEAN_INFERENCE_KEY", "DO_INFERENCE_KEY",
               "DIGITALOCEAN_API_KEY", "DO_API_KEY")
+_OPENAI_KEY_NAMES = ("OPENAI_API_KEY",)
 # server → farm_edge_agent → src → edge-agent → teleop → repo root
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 
@@ -81,43 +84,61 @@ def _parse_env_file(path: Path, name: str) -> str | None:
     return None
 
 
-def api_key() -> str | None:
-    """The DO model-access key, or None if it can't be found. Cached.
-
-    Checks the process environment first (any of ``_KEY_NAMES``), then falls
-    back to parsing ``<repo>/.env`` — the daemon isn't started with .env
-    exported, so the file fallback is the common path.
-    """
-    if "key" in _key_cache:
-        return _key_cache["key"]
+def _resolve_key(names: tuple[str, ...], cache_key: str) -> str | None:
+    """Find the first set key among ``names`` in the process env, then in
+    ``<repo>/.env`` (the daemon isn't started with .env exported). Cached."""
+    if cache_key in _key_cache:
+        return _key_cache[cache_key]
     import os
 
     found: str | None = None
-    for name in _KEY_NAMES:
+    for name in names:
         v = os.environ.get(name)
         if v and v.strip():
             found = v.strip()
             break
     if found is None:
         env_path = _REPO_ROOT / ".env"
-        for name in _KEY_NAMES:
+        for name in names:
             v = _parse_env_file(env_path, name)
             if v:
                 found = v
                 break
-    _key_cache["key"] = found
-    if found is None:
-        log.warning("no DigitalOcean key found (looked for %s in env + %s/.env)",
-                    "/".join(_KEY_NAMES), _REPO_ROOT)
+    _key_cache[cache_key] = found
     return found
 
 
+def api_key() -> str | None:
+    """DigitalOcean model-access key (open-weights models)."""
+    return _resolve_key(_KEY_NAMES, "do")
+
+
+def _openai_key() -> str | None:
+    """OpenAI API key (gpt-* / o-series models, called directly)."""
+    return _resolve_key(_OPENAI_KEY_NAMES, "openai")
+
+
+def _is_openai_model(model: str) -> bool:
+    m = (model or "").lower()
+    # OpenAI's own slugs — NOT DigitalOcean's open-weights 'openai-gpt-oss-*'.
+    return m.startswith(("gpt-", "o1", "o3", "o4", "chatgpt"))
+
+
+def _route(model: str) -> tuple[str, str | None]:
+    """``(base_url, key)`` for a model: OpenAI slugs go direct to OpenAI; every
+    other slug goes to DigitalOcean."""
+    if _is_openai_model(model) and _openai_key():
+        return OPENAI_BASE_URL, _openai_key()
+    return DO_BASE_URL, api_key()
+
+
 def available() -> bool:
-    return api_key() is not None
+    """Can we reach any inference provider (OpenAI or DigitalOcean)?"""
+    return bool(_openai_key() or api_key())
 
 
-def _headers() -> dict[str, str]:
-    return {"Authorization": f"Bearer {api_key()}", "Content-Type": "application/json"}
+def _headers(key: str | None) -> dict[str, str]:
+    return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
 
 def _extract_json(text: str) -> Any | None:
@@ -166,11 +187,12 @@ async def stream_chat(
     Params are kept minimal (no temperature) because the GPT-5.x reasoning
     models reject non-default sampling knobs. Raises on HTTP/auth errors.
     """
+    base, key = _route(model)
     payload = {"model": model, "messages": messages, "stream": True, **params}
     full: list[str] = []
     async with session.post(
-        f"{BASE_URL}/chat/completions",
-        headers=_headers(),
+        f"{base}/chat/completions",
+        headers=_headers(key),
         json=payload,
         timeout=aiohttp.ClientTimeout(total=timeout),
     ) as resp:
@@ -330,5 +352,56 @@ async def plan_task(
     return {
         "steps": steps,
         "summary": (parsed.get("summary") or "").strip(),
+        "raw": text,
+    }
+
+
+async def confirm_action(
+    session: aiohttp.ClientSession,
+    image_jpeg: bytes,
+    step: dict[str, Any],
+    *,
+    model: str = DEFAULT_VISION_MODEL,
+    on_delta: Callable[[str], Any] | None = None,
+) -> dict[str, Any]:
+    """Visually verify that a just-executed step actually succeeded.
+
+    Shown the workspace AFTER the attempt, the model decides whether the step's
+    object is now on the box. Returns ``{"done": bool, "confidence": 0..1,
+    "note": str, "arm_blocking": bool, "raw": str}`` — ``arm_blocking`` lets the
+    orchestrator move the arm out of the way and re-check when the view is
+    occluded.
+    """
+    b64 = base64.b64encode(image_jpeg).decode("ascii")
+    obj = step.get("object") or "the object"
+    sys_prompt = (
+        "You verify a tabletop pick-and-place robot's work. You are shown one "
+        "camera frame of the workspace AFTER an attempted step. Decide whether it "
+        "succeeded. Reply with a fenced ```json block: "
+        '{"done": true|false, "confidence": 0..1, "note": "<short>", '
+        '"arm_blocking": true|false}. Set arm_blocking=true if the robot arm is '
+        "occluding the box so you cannot actually tell."
+    )
+    task = step.get("prompt") or f"place the {obj} on the box"
+    user_content = [
+        {"type": "text", "text": f"The step was: {task!r}. Is the {obj} now resting on the box?"},
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+    ]
+    text = await stream_chat(
+        session, model,
+        [{"role": "system", "content": sys_prompt},
+         {"role": "user", "content": user_content}],
+        on_delta=on_delta,
+    )
+    p = _extract_json(text) or {}
+    try:
+        conf = max(0.0, min(1.0, float(p.get("confidence"))))
+    except (TypeError, ValueError):
+        conf = 0.0
+    return {
+        "done": bool(p.get("done")),
+        "confidence": conf,
+        "note": str(p.get("note") or "").strip(),
+        "arm_blocking": bool(p.get("arm_blocking")),
         "raw": text,
     }

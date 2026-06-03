@@ -3,664 +3,469 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FARM · Run a task</title>
+<title>FARM</title>
 <style>
   :root {
-    --bg: #f5f5f5; --card: #ffffff; --fg: #111; --muted: #6b6b6b;
-    --soft: #d6d6d6; --line: #000; --accent: #111;
-    --green: #2a8a3a; --green-soft: #f0f9f3; --red: #c0392b; --red-soft: #fdf0f0;
-    --amber: #c08a2a; --blue: #2563eb; --pad: 16px;
+    --bg: #ffffff; --panel: #f6f6f7; --panel2: #ececed; --text: #0d0d0d;
+    --muted: #57575f; --faint: #9a9aa6; --border: #e7e7ea; --border2: #d8d8de;
+    --accent: #4f46e5; --accent-soft: #eeedfb;
+    --green: #0f9d58; --green-soft: #e7f6ed; --green-line: #18a558;
+    --red: #d92d20; --red-soft: #fdeceb; --amber: #b25e09;
+    --radius: 14px;
   }
+  /* Light only, by design. */
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body {
-    height: 100%; background: var(--bg); color: var(--fg);
-    font: 13px/1.45 -apple-system, "Segoe UI", system-ui, sans-serif;
-    overflow: hidden;
+  html, body { height: 100%; background: var(--bg); color: var(--text); }
+  body {
+    font: 14.5px/1.55 -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; display: flex; flex-direction: column;
   }
-  body { display: flex; }
   .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
-  .panel {
-    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
-  }
-  .sec-label {
-    font-size: 10px; font-weight: 600; letter-spacing: 0.12em;
-    text-transform: uppercase; color: #888;
-  }
+  .muted { color: var(--muted); }
+  button { font: inherit; cursor: pointer; color: var(--text); }
+  a { color: inherit; }
 
-  /* ── Sidebar ──────────────────────────────────────────────────────────── */
-  #side {
-    width: 340px; flex-shrink: 0; height: 100vh; background: var(--card);
-    border-right: 1px solid var(--line); display: flex; flex-direction: column;
+  /* top bar */
+  .topbar {
+    height: 50px; flex-shrink: 0; display: flex; align-items: center; gap: 14px;
+    padding: 0 20px; border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; background: rgba(255,255,255,0.9);
+    backdrop-filter: saturate(180%) blur(10px); z-index: 20;
   }
-  #brand {
-    padding: 14px var(--pad) 12px; border-bottom: 1px solid var(--line);
-    display: flex; align-items: baseline; gap: 8px;
-  }
-  #brand .logo { font-weight: 700; letter-spacing: 0.04em; }
-  #brand .tag { font-size: 11px; color: var(--muted); }
-  #nav { margin-left: auto; display: flex; gap: 10px; font-size: 11px; }
-  #nav a { color: var(--muted); text-decoration: none; }
-  #nav a:hover { color: var(--accent); }
-  #nav a.cur { color: var(--accent); font-weight: 600; }
-  #cfg { flex: 1; overflow-y: auto; padding: var(--pad); display: flex; flex-direction: column; gap: 18px; }
-  .field { display: flex; flex-direction: column; gap: 8px; }
-
-  /* base model radio cards */
-  .opt {
-    border: 1px solid var(--soft); border-radius: 6px; padding: 9px 11px; cursor: pointer;
-    display: flex; flex-direction: column; gap: 2px; transition: border-color 80ms, background 80ms;
-  }
-  .opt:hover { background: #f5f5f5; }
-  .opt.sel { border-color: var(--accent); background: #f3f3f3; }
-  .opt .nm { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 7px; }
-  .opt .ds { font-size: 11px; color: var(--muted); }
-  .opt input { margin: 0; }
-
-  /* skills checklist */
-  #skills { display: flex; flex-direction: column; gap: 6px; }
-  .skill {
-    border: 1px solid var(--soft); border-radius: 6px; padding: 8px 10px;
-    display: grid; grid-template-columns: 18px 1fr; gap: 9px; align-items: start;
-    cursor: pointer; transition: border-color 80ms, background 80ms;
-  }
-  .skill:hover { background: #f5f5f5; }
-  .skill.on { border-color: var(--accent); }
-  .skill.off { opacity: 0.5; }
-  .skill input { margin-top: 2px; }
-  .skill .nm { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
-  .skill .meta { font-size: 10px; color: var(--muted); }
-  .skill .repo { font-size: 10px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
-
-  /* task input + presets */
-  #task {
-    width: 100%; min-height: 64px; resize: vertical; padding: 9px 10px;
-    font: inherit; border: 1px solid var(--soft); border-radius: 6px; background: #fff;
-  }
-  #task:focus { outline: 2px solid #888; outline-offset: -2px; }
-  #presets { display: flex; flex-wrap: wrap; gap: 6px; }
+  .topbar .spacer { flex: 1; }
   .chip {
-    font-size: 11px; padding: 4px 9px; border: 1px solid var(--soft); border-radius: 14px;
-    background: #fff; cursor: pointer; color: var(--fg);
+    display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted);
+    padding: 4px 10px; border: 1px solid var(--border2); border-radius: 100px;
   }
-  .chip:hover { border-color: var(--accent); }
-
-  /* selects + toggles */
-  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  select.sel {
-    width: 100%; height: 30px; padding: 0 6px; font: inherit; font-size: 12px;
-    border: 1px solid var(--soft); border-radius: 6px; background: #fff; cursor: pointer;
-  }
-  .toggle { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
-  .toggle .hint { color: var(--muted); font-size: 11px; }
-  .switch { position: relative; width: 38px; height: 22px; flex-shrink: 0; }
-  .switch input { display: none; }
-  .switch .track {
-    position: absolute; inset: 0; background: var(--soft); border-radius: 11px; transition: background 120ms;
-  }
-  .switch .track::after {
-    content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px;
-    background: #fff; border-radius: 50%; transition: transform 120ms; box-shadow: 0 1px 2px rgba(0,0,0,0.3);
-  }
-  .switch input:checked + .track { background: var(--accent); }
-  .switch input:checked + .track::after { transform: translateX(16px); }
-
-  /* buttons */
-  .btn {
-    width: 100%; height: 36px; padding: 0 12px; font: inherit; font-size: 13px; font-weight: 600;
-    border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--fg); cursor: pointer;
-    transition: background 80ms;
-  }
-  .btn:hover:not(:disabled) { background: #f3f3f3; }
-  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .btn.primary { background: var(--accent); color: #fff; }
-  .btn.primary:hover:not(:disabled) { background: #2a2a2a; }
-  .btn.danger { background: var(--red-soft); color: #8a2118; border-color: var(--red); }
-  #runRow { display: flex; gap: 8px; }
-
-  /* status mini-panels */
-  .statline { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex-shrink: 0; }
   .dot.ok { background: var(--green); } .dot.warn { background: var(--amber); } .dot.bad { background: var(--red); }
-  .pill {
-    display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px;
-    letter-spacing: 0.1em; text-transform: uppercase; font-weight: 700; color: #fff; background: #888;
+  .nav { display: flex; gap: 16px; font-size: 13px; }
+  .nav a { color: var(--muted); text-decoration: none; }
+  .nav a:hover { color: var(--text); }
+
+  .page { flex: 1; overflow-y: auto; }
+  .col { max-width: 1040px; margin: 0 auto; padding: 30px 24px 120px; }
+
+  .hero { text-align: center; margin: 14px 0 20px; }
+  .hero h1 { font-size: 25px; font-weight: 640; letter-spacing: -0.02em; }
+  .hero p { color: var(--muted); margin-top: 7px; }
+  body.busy .hero { display: none; }
+
+  /* composer */
+  .composer {
+    max-width: 720px; margin: 0 auto; border: 1px solid var(--border2); border-radius: var(--radius);
+    background: var(--bg); box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 10px 30px rgba(0,0,0,0.05);
   }
-  .pill.ok { background: var(--green); } .pill.warn { background: var(--amber); } .pill.bad { background: var(--red); }
-  .pill.live { background: var(--accent); }
-  #serveBtn { height: 30px; font-size: 12px; }
-
-  /* ── Main ─────────────────────────────────────────────────────────────── */
-  #main { flex: 1; height: 100vh; display: flex; flex-direction: column; padding: var(--pad); gap: var(--pad); overflow: hidden; }
-  #top { display: flex; align-items: center; gap: 12px; }
-  #top h1 { font-size: 16px; font-weight: 700; }
-  #top .spacer { flex: 1; }
-  #phase { font-size: 12px; color: var(--muted); }
-  #modeBadge { display: none; }
-
-  #grid { flex: 1; display: grid; grid-template-columns: 1.35fr 1fr; grid-template-rows: 1fr 1fr; gap: var(--pad); min-height: 0; }
-  .card { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-  .card .hd { padding: 9px 12px; border-bottom: 1px solid var(--soft); display: flex; align-items: center; gap: 8px; }
-  .card .hd .t { font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #555; }
-  .card .hd .r { margin-left: auto; font-size: 11px; color: var(--muted); }
-  .card .bd { flex: 1; min-height: 0; overflow: auto; }
-
-  /* camera stage (spans the left column, both rows) */
-  #stage { grid-row: 1 / 3; }
-  #camWrap { position: relative; flex: 1; background: #000; min-height: 0; }
-  #camBase { width: 100%; height: 100%; object-fit: cover; display: block; visibility: hidden; }
-  #camBase.live { visibility: visible; }
-  #camNo { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-           color: rgba(255,255,255,0.55); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; }
-  #camWrap.live #camNo { display: none; }
-  #wristTile {
-    position: absolute; right: 10px; top: 10px; width: 150px; height: 112px; border-radius: 6px;
-    overflow: hidden; border: 1px solid rgba(255,255,255,0.5); background: #000;
+  .composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+  .composer textarea {
+    width: 100%; border: none; background: none; resize: none; color: var(--text); font: inherit;
+    padding: 15px 17px 4px; outline: none; max-height: 180px;
   }
-  #wristTile img { width: 100%; height: 100%; object-fit: cover; visibility: hidden; }
-  #wristTile img.live { visibility: visible; }
-  #wristTile .cap { position: absolute; top: 4px; left: 6px; font-size: 9px; color: #fff;
-                    text-transform: uppercase; letter-spacing: 0.1em; text-shadow: 0 1px 2px #000; }
-  #liveDot {
-    position: absolute; left: 12px; top: 12px; display: flex; align-items: center; gap: 6px;
-    color: #fff; font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
-    background: rgba(0,0,0,0.5); padding: 4px 9px; border-radius: 12px;
+  .composer textarea::placeholder { color: var(--faint); }
+  .cfoot { display: flex; align-items: center; gap: 8px; padding: 8px 10px 10px 13px; }
+  .cfoot .spacer { flex: 1; }
+  .ghost {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted);
+    background: none; border: 1px solid transparent; border-radius: 9px; padding: 7px 11px;
   }
-  #liveDot .d { width: 7px; height: 7px; border-radius: 50%; background: #888; }
-  #liveDot.on .d { background: #3ad06a; box-shadow: 0 0 6px #3ad06a; }
-
-  /* on-camera "now running" overlay */
-  #nowBar {
-    position: absolute; left: 0; right: 0; bottom: 0; padding: 12px 14px 14px;
-    background: linear-gradient(to top, rgba(0,0,0,0.78), rgba(0,0,0,0) 100%);
-    color: #fff; display: none;
+  .ghost:hover { background: var(--panel); color: var(--text); }
+  .btn-dark {
+    display: inline-flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 560;
+    color: #fff; background: #0d0d0d; border: none; border-radius: 10px; padding: 9px 16px;
   }
-  #nowBar.show { display: block; }
-  #nowTop { display: flex; align-items: center; gap: 10px; }
-  #nowSkill { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
-  #nowStep { font-size: 11px; color: rgba(255,255,255,0.7); letter-spacing: 0.04em; }
-  #nowSwap { margin-left: auto; font-size: 11px; font-family: ui-monospace, Menlo, monospace;
-             color: rgba(255,255,255,0.85); display: flex; align-items: center; gap: 6px; }
-  #nowSwap .ad { padding: 2px 7px; border: 1px solid rgba(255,255,255,0.35); border-radius: 4px; }
-  #nowSwap .ar { opacity: 0.7; }
-  #nowSwap.swapping .ad.to { background: rgba(58,208,106,0.25); border-color: #3ad06a; }
-  #nowProg { margin-top: 9px; height: 6px; background: rgba(255,255,255,0.22); border-radius: 3px; overflow: hidden; }
-  #nowProg .fill { height: 100%; width: 0%; background: #fff; transition: width 350ms ease; }
-  #nowMeta { margin-top: 5px; font-size: 10px; color: rgba(255,255,255,0.65); font-family: ui-monospace, Menlo, monospace; }
+  .btn-dark:hover { background: #242424; } .btn-dark:active { transform: scale(0.98); }
+  .btn-dark:disabled { opacity: 0.4; cursor: default; }
+  .btn-dark .kbd { font-size: 11px; opacity: 0.65; }
+  .btn-stop {
+    display: none; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 540; color: var(--red);
+    background: #fff; border: 1px solid var(--red); border-radius: 10px; padding: 9px 15px;
+  }
+  .btn-stop:hover { background: var(--red-soft); }
+  body.busy .btn-dark { display: none; } body.busy .btn-stop { display: inline-flex; }
 
-  /* thinking consoles */
-  #think { grid-column: 2; grid-row: 1; }
-  #think .bd { padding: 0; display: flex; flex-direction: column; }
-  .stream { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-  .stream + .stream { border-top: 1px solid var(--soft); }
-  .stream .lab { padding: 6px 12px 2px; font-size: 10px; font-weight: 600; letter-spacing: 0.1em;
-                 text-transform: uppercase; color: #555; display: flex; align-items: center; gap: 6px; }
-  .stream .lab .spin { width: 9px; height: 9px; border-radius: 50%; border: 2px solid var(--soft);
-                       border-top-color: var(--accent); animation: sp 0.8s linear infinite; display: none; }
-  .stream.busy .lab .spin { display: inline-block; }
+  .suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px auto 0; max-width: 720px; justify-content: center; }
+  .sugg { font-size: 13px; color: var(--text); background: var(--panel); border: 1px solid var(--border2);
+          border-radius: 100px; padding: 7px 14px; }
+  .sugg:hover { background: var(--panel2); }
+  body.busy .suggestions { display: none; }
+
+  /* options */
+  .opts-panel { display: none; max-width: 720px; margin: 12px auto 0; border: 1px solid var(--border);
+                border-radius: var(--radius); background: var(--panel); padding: 16px; gap: 18px; flex-direction: column; }
+  .opts-panel.open { display: flex; }
+  .opt { display: flex; flex-direction: column; gap: 8px; }
+  .opt-label { font-size: 11px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  .seg { display: flex; gap: 8px; flex-wrap: wrap; }
+  .seg-item { flex: 1; min-width: 200px; border: 1px solid var(--border2); border-radius: 10px; padding: 9px 12px;
+              background: var(--bg); cursor: pointer; }
+  .seg-item.sel { border-color: var(--accent); background: var(--accent-soft); }
+  .seg-item .t { font-weight: 560; font-size: 13.5px; } .seg-item .d { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .skillrow { display: flex; gap: 8px; flex-wrap: wrap; }
+  .spill { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; border: 1px solid var(--border2);
+           border-radius: 100px; padding: 7px 13px; background: var(--bg); cursor: pointer; user-select: none; }
+  .spill.on { border-color: var(--accent); background: var(--accent-soft); } .spill.off { opacity: 0.5; }
+  .spill .ck { color: var(--accent); width: 13px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  select.sel-in { width: 100%; height: 34px; padding: 0 9px; font: inherit; font-size: 13px; color: var(--text);
+                  border: 1px solid var(--border2); border-radius: 9px; background: var(--bg); }
+  .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .switch { position: relative; width: 40px; height: 23px; flex-shrink: 0; }
+  .switch input { display: none; }
+  .switch .tr { position: absolute; inset: 0; background: var(--border2); border-radius: 100px; transition: background 120ms; }
+  .switch .tr::after { content:''; position:absolute; top:2px; left:2px; width:19px; height:19px; background:#fff;
+                       border-radius:50%; transition: transform 120ms; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+  .switch input:checked + .tr { background: var(--accent); }
+  .switch input:checked + .tr::after { transform: translateX(17px); }
+  .serveline { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+  .serveline .spacer { flex: 1; }
+  .mini-btn { font-size: 12.5px; color: var(--text); background: var(--bg); border: 1px solid var(--border2);
+              border-radius: 8px; padding: 6px 11px; }
+  .mini-btn:hover { background: var(--panel2); } .mini-btn:disabled { opacity: 0.4; cursor: default; }
+
+  /* abilities bar */
+  .abilities { max-width: 1040px; margin: 22px auto 0; }
+  .ab-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .ab-head .t { font-size: 11px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  .ab-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .ab-card { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border2); border-radius: 12px;
+             padding: 9px 12px; background: var(--bg); cursor: pointer; transition: border-color 120ms, background 120ms; }
+  .ab-card:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .ab-card .ab-run { color: var(--muted); display: inline-flex; }
+  .ab-card .ab-run svg { width: 15px; height: 15px; }
+  .ab-card .ab-meta .nm { font-weight: 560; font-size: 13.5px; }
+  .ab-card .ab-meta .sub { font-size: 11.5px; color: var(--muted); }
+  .ab-card .ab-x { color: var(--faint); border: none; background: none; font-size: 16px; padding: 0 2px; }
+  .ab-card .ab-x:hover { color: var(--red); }
+  .ab-save { display: inline-flex; align-items: center; gap: 7px; border: 1px dashed var(--border2); border-radius: 12px;
+             padding: 9px 13px; background: var(--bg); color: var(--muted); font-size: 13px; }
+  .ab-save:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* workflow graph */
+  .graph-wrap { max-width: 1040px; margin: 24px auto 0; border: 1px solid var(--border); border-radius: var(--radius);
+                background: var(--panel); padding: 26px 18px; overflow-x: auto; min-height: 132px; }
+  .graph-empty { display: flex; align-items: center; justify-content: center; min-height: 80px; color: var(--faint); font-size: 13.5px; }
+  .graph { display: flex; align-items: flex-start; gap: 0; width: max-content; min-width: 100%; justify-content: center; }
+  .gconn { width: 34px; height: 2px; background: var(--border2); margin-top: 27px; flex-shrink: 0; border-radius: 2px;
+           transition: background 200ms; }
+  .gconn.lit { background: var(--green-line); }
+  .gnode { display: flex; flex-direction: column; align-items: center; width: 92px; flex-shrink: 0; }
+  .gbox { position: relative; width: 56px; height: 56px; border-radius: 16px; border: 1.5px solid var(--border2);
+          background: var(--bg); display: flex; align-items: center; justify-content: center; color: var(--muted);
+          transition: border-color 160ms, box-shadow 160ms, background 160ms; }
+  .gbox svg { width: 23px; height: 23px; }
+  .gbox .emoji { font-size: 26px; line-height: 1; }
+  .gnode.confirm .gbox { width: 44px; height: 44px; border-radius: 13px; border-style: dashed; margin-top: 6px; }
+  .glabel { margin-top: 9px; font-size: 12.5px; font-weight: 540; text-align: center; color: var(--text); max-width: 88px;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gsub { font-size: 10.5px; color: var(--faint); text-align: center; margin-top: 1px; max-width: 88px;
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* progress bar inside active skill node */
+  .gbox .gprog { position: absolute; left: 6px; right: 6px; bottom: 5px; height: 3px; background: var(--border2);
+                 border-radius: 2px; overflow: hidden; opacity: 0; }
+  .gnode[data-status="active"] .gbox .gprog { opacity: 1; }
+  .gbox .gprog span { display: block; height: 100%; width: 0%; background: var(--accent); transition: width 300ms; }
+  /* states */
+  .gnode[data-status="active"] .gbox {
+    border-color: var(--green); color: var(--green);
+    box-shadow: 0 0 0 4px var(--green-soft); animation: glow 1.6s ease-in-out infinite;
+  }
+  @keyframes glow { 0%,100% { box-shadow: 0 0 0 3px var(--green-soft); } 50% { box-shadow: 0 0 0 5px var(--green-soft); } }
+  .gnode[data-status="active"] .glabel { color: var(--green); }
+  .gnode[data-status="done"] .gbox { border-color: var(--green-line); background: var(--green-soft); color: var(--green); }
+  .gnode[data-status="failed"] .gbox { border-color: var(--red); background: var(--red-soft); color: var(--red); border-style: solid; }
+  .gnode .badge { margin-top: 5px; font-size: 10.5px; font-weight: 600; padding: 1px 7px; border-radius: 100px; display: none; }
+  .gnode[data-status="done"].confirm .badge { display: inline-block; background: var(--green-soft); color: var(--green); }
+  .gnode[data-status="failed"].confirm .badge { display: inline-block; background: var(--red-soft); color: var(--red); }
+
+  /* details disclosure */
+  .details { max-width: 1040px; margin: 18px auto 0; }
+  .det-toggle { font-size: 13px; color: var(--muted); background: none; border: none; display: flex; align-items: center; gap: 7px; }
+  .det-toggle:hover { color: var(--text); }
+  .det-toggle .chev { font-size: 10px; transition: transform 140ms; color: var(--faint); }
+  .details.open .det-toggle .chev { transform: rotate(90deg); }
+  .det-body { display: none; margin-top: 12px; flex-direction: column; gap: 12px; }
+  .details.open .det-body { display: flex; }
+  .stream { border: 1px solid var(--border); border-radius: 12px; background: var(--bg); overflow: hidden; }
+  .stream-h { display: flex; align-items: center; gap: 8px; padding: 9px 13px; font-size: 12px; font-weight: 600;
+              letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+  .stream-h .spin { width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--border2);
+                    border-top-color: var(--accent); animation: sp 0.7s linear infinite; margin-left: auto; display: none; }
+  .stream.busy .stream-h .spin { display: inline-block; }
   @keyframes sp { to { transform: rotate(360deg); } }
-  .stream .out {
-    flex: 1; min-height: 0; overflow: auto; padding: 4px 12px 10px;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; line-height: 1.55;
-    color: #1a1a1a; white-space: pre-wrap; word-break: break-word;
-  }
-  .stream .out .ph { color: var(--muted); font-style: italic; }
+  .stream-b { padding: 0 13px 12px; font-size: 12.5px; line-height: 1.6; color: var(--muted); white-space: pre-wrap;
+              word-break: break-word; max-height: 220px; overflow-y: auto; }
+  .stream-b:empty { display: none; }
+  #log { background: #0e0f12; color: #d7d8db; border-radius: 12px; padding: 10px 13px; font-size: 11px; line-height: 1.55;
+         max-height: 160px; overflow: auto; white-space: pre-wrap; }
+  #log:empty { display: none; }
 
-  /* plan rail */
-  #plan { grid-column: 2; grid-row: 2; }
-  #planSummary { padding: 9px 12px; font-size: 12px; color: #333; border-bottom: 1px solid var(--soft); }
-  #planSummary .ph { color: var(--muted); font-style: italic; }
-  #steps { padding: 8px 12px; display: flex; flex-direction: column; gap: 0; }
-  .step {
-    display: grid; grid-template-columns: 26px 1fr; gap: 10px; padding: 8px 0; position: relative;
-  }
-  .step:not(:last-child)::before {
-    content: ''; position: absolute; left: 12px; top: 28px; bottom: -8px; width: 2px; background: var(--soft);
-  }
-  .step.done:not(:last-child)::before { background: var(--green); }
-  .step .num {
-    width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--soft); background: #fff;
-    display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; z-index: 1;
-  }
-  .step.active .num { border-color: var(--accent); background: var(--accent); color: #fff; }
-  .step.done .num { border-color: var(--green); background: var(--green); color: #fff; }
-  .step .body .nm { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
-  .step .body .sub { font-size: 11px; color: var(--muted); }
-  .step .body .lora { font-size: 10px; font-family: ui-monospace, Menlo, monospace; color: var(--muted); margin-top: 2px; }
-  .step.active .body .lora { color: var(--accent); }
-  .step .st { margin-left: auto; }
-
-  /* log strip */
-  #logCard { grid-column: 1 / 3; grid-row: 3; display: none; }
-  #log {
-    height: 100%; overflow: auto; padding: 8px 12px; background: #0a0a0a; color: #cfcfcf;
-    font-family: ui-monospace, Menlo, monospace; font-size: 10px; line-height: 1.5; white-space: pre-wrap;
-  }
-
-  /* error banner */
-  #err {
-    position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 60;
-    background: #fff; color: var(--red); border: 2px solid var(--red); padding: 10px 14px;
-    border-radius: 6px; display: none; align-items: center; gap: 12px; max-width: 70vw;
-    box-shadow: 0 4px 12px rgba(192,57,43,0.25); font-weight: 600;
-  }
-  #err.show { display: flex; }
-  #err button { background: none; border: none; color: var(--red); font-size: 20px; cursor: pointer; }
-  #toast {
-    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); padding: 8px 16px;
-    background: #1a1a1a; color: #fff; border-radius: 6px; font-size: 12px; opacity: 0;
-    pointer-events: none; transition: opacity 200ms; z-index: 100;
-  }
-  #toast.show { opacity: 1; }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(18px); background: #0d0d0d;
+           color: #fff; padding: 11px 18px; border-radius: 11px; font-size: 13.5px; opacity: 0; pointer-events: none;
+           transition: all 200ms; z-index: 50; box-shadow: 0 8px 30px rgba(0,0,0,0.2); }
+  .toast.show { opacity: 1; transform: translateX(-50%); }
+  .toast.err { background: var(--red); }
 </style>
 </head>
 <body>
-  <div id="err"><span id="errMsg"></span><button id="errX" title="dismiss">×</button></div>
+  <div class="topbar">
+    <div class="spacer"></div>
+    <div class="chip"><span class="dot" id="doDot"></span><span id="doTxt">connecting</span></div>
+    <div class="nav"><a href="/">dashboard</a><a href="/review">episodes</a></div>
+  </div>
 
-  <!-- ── Sidebar / config ─────────────────────────────────────────────── -->
-  <aside id="side">
-    <div id="brand">
-      <span class="logo">FARM</span><span class="tag">run a task</span>
-      <nav id="nav">
-        <a href="/">live</a><a href="/review">review</a><a href="/train">train</a>
-        <a href="/user" class="cur">user</a>
-      </nav>
-    </div>
-    <div id="cfg">
-      <div class="field">
-        <span class="sec-label">Base model</span>
-        <div id="bases"></div>
-      </div>
-
-      <div class="field">
-        <span class="sec-label">Skills <span id="skillsHint" style="color:#aaa;text-transform:none;letter-spacing:0;font-weight:400"></span></span>
-        <div id="skills"></div>
-      </div>
-
-      <div class="field">
-        <span class="sec-label">Task</span>
-        <textarea id="task" placeholder="e.g. place the items on the box"></textarea>
-        <div id="presets"></div>
-      </div>
-
-      <div class="field">
-        <span class="sec-label">Reasoning</span>
-        <div class="row2">
-          <select class="sel" id="thinkModel" title="planner (thinking) model"></select>
-          <select class="sel" id="visionModel" title="scene (vision) model"></select>
-        </div>
-        <label class="toggle">
-          <span>Drive the arm <span class="hint">live policy</span></span>
-          <span class="switch"><input type="checkbox" id="execute" checked><span class="track"></span></span>
-        </label>
-      </div>
-
-      <div id="runRow">
-        <button class="btn primary" id="runBtn">▶ Run task</button>
-        <button class="btn danger" id="stopBtn" style="display:none">■ Stop</button>
-      </div>
-
-      <div class="field panel" style="padding:10px;gap:8px">
-        <span class="sec-label">Policy server</span>
-        <div class="statline"><span class="dot" id="serveDot"></span><span id="serveTxt" class="mono">checking…</span></div>
-        <button class="btn" id="serveBtn">Start hot-swap server</button>
-      </div>
-
-      <div class="field" style="gap:6px">
-        <div class="statline"><span class="dot" id="doDot"></span><span id="doTxt">DigitalOcean</span></div>
-      </div>
-    </div>
-  </aside>
-
-  <!-- ── Main / stage ─────────────────────────────────────────────────── -->
-  <main id="main">
-    <div id="top">
+  <div class="page"><div class="col">
+    <div class="hero">
       <h1>What should the arm do?</h1>
-      <span class="pill" id="modeBadge">preview</span>
-      <span class="spacer"></span>
-      <span id="phase">idle</span>
+      <p>Describe a task. The arm looks at the table, plans the steps, and confirms each one as it goes.</p>
     </div>
 
-    <div id="grid">
-      <!-- camera hero -->
-      <div class="card panel" id="stage">
-        <div class="hd"><span class="t">Workspace</span><span class="r" id="stageR">base camera</span></div>
-        <div id="camWrap">
-          <img id="camBase" alt="base camera">
-          <div id="camNo">no camera feed</div>
-          <div id="liveDot"><span class="d"></span><span>live</span></div>
-          <div id="wristTile"><img id="camWrist" alt="wrist"><span class="cap">wrist</span></div>
-          <div id="nowBar">
-            <div id="nowTop">
-              <div id="nowSkill"><span id="nowEmoji"></span><span id="nowName"></span></div>
-              <div id="nowStep"></div>
-              <div id="nowSwap"><span class="ad from"></span><span class="ar">→</span><span class="ad to"></span></div>
-            </div>
-            <div id="nowProg"><div class="fill"></div></div>
-            <div id="nowMeta"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- thinking -->
-      <div class="card panel" id="think">
-        <div class="hd"><span class="t">Thinking</span><span class="r" id="thinkR"></span></div>
-        <div class="bd">
-          <div class="stream" id="visionStream">
-            <div class="lab">👁 Perception <span class="spin"></span></div>
-            <div class="out" id="visionOut"><span class="ph">looks at the table when you run a task…</span></div>
-          </div>
-          <div class="stream" id="planStream">
-            <div class="lab">🧠 Plan <span class="spin"></span></div>
-            <div class="out" id="planOut"><span class="ph">decomposes the task into skill steps…</span></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- plan rail -->
-      <div class="card panel" id="plan">
-        <div class="hd"><span class="t">Plan</span><span class="r" id="planR"></span></div>
-        <div class="bd">
-          <div id="planSummary"><span class="ph">the ordered skill plan appears here</span></div>
-          <div id="steps"></div>
-        </div>
-      </div>
-
-      <!-- log -->
-      <div class="card panel" id="logCard">
-        <div class="hd"><span class="t">Log</span></div>
-        <div class="bd" style="padding:0"><div id="log" class="mono"></div></div>
+    <div class="composer">
+      <textarea id="task" rows="1" placeholder="e.g. place the items on the box"></textarea>
+      <div class="cfoot">
+        <button class="ghost" id="optsBtn">Options</button>
+        <div class="spacer"></div>
+        <button class="btn-stop" id="stopBtn">Stop</button>
+        <button class="btn-dark" id="runBtn">Run <span class="kbd">&#8984;&#9166;</span></button>
       </div>
     </div>
-  </main>
 
-  <div id="toast"></div>
+    <div class="suggestions" id="suggestions"></div>
+
+    <div class="opts-panel" id="optsPanel">
+      <div class="opt"><span class="opt-label">Base model</span><div class="seg" id="bases"></div></div>
+      <div class="opt"><span class="opt-label">Skills</span><div class="skillrow" id="skills"></div></div>
+      <div class="opt"><span class="opt-label">Models (OpenAI)</span>
+        <div class="grid2"><select class="sel-in" id="thinkModel" title="reasoning"></select>
+        <select class="sel-in" id="visionModel" title="vision"></select></div></div>
+      <div class="opt"><div class="switch-row">
+        <div><div style="font-weight:540">Drive the arm</div><div class="muted" style="font-size:12.5px">run the live policy, off is plan only</div></div>
+        <label class="switch"><input type="checkbox" id="execute" checked><span class="tr"></span></label></div></div>
+      <div class="opt"><span class="opt-label">Policy server</span>
+        <div class="serveline"><span class="dot" id="serveDot"></span><span id="serveTxt" class="muted">checking</span>
+        <span class="spacer"></span><button class="mini-btn" id="serveBtn">Start server</button></div></div>
+    </div>
+
+    <div class="abilities" id="abilities" style="display:none">
+      <div class="ab-head"><span class="t">Abilities</span></div>
+      <div class="ab-row" id="abRow"></div>
+    </div>
+
+    <div class="graph-wrap"><div id="graph" class="graph-empty">Your workflow will appear here.</div></div>
+
+    <div class="details" id="details">
+      <button class="det-toggle" id="detToggle"><span class="chev">&#9656;</span> Details</button>
+      <div class="det-body">
+        <div class="stream" id="visionStream"><div class="stream-h">Perception <span class="spin"></span></div><div class="stream-b" id="visionOut"></div></div>
+        <div class="stream" id="planStream"><div class="stream-h">Reasoning <span class="spin"></span></div><div class="stream-b" id="planOut"></div></div>
+        <div id="log" class="mono"></div>
+      </div>
+    </div>
+  </div></div>
+
+  <div class="toast" id="toast"></div>
 
 <script>
 const $ = id => document.getElementById(id);
-const S = {
-  cfg: null, skills: [], bases: [], base: 'fft_hotswap',
-  enabled: new Set(), running: false, steps: [], serve: null, lastSeq: 0,
+const S = { cfg:null, skills:[], bases:[], base:'fft_hotswap', enabled:new Set(),
+            running:false, lastSeq:0, nodeOrder:[], current:null, abilities:[] };
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const skillBy = k => S.skills.find(s=>s.key===k) || {};
+
+let toastT;
+function toast(msg, err){ const t=$('toast'); t.textContent=msg; t.classList.toggle('err',!!err); t.classList.add('show');
+  clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'), err?5000:2400); }
+
+// icons (stroke, monochrome) for the system nodes
+const ICON = {
+  trigger:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>',
+  perceive:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+  plan:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>',
+  confirm:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.4 2.4 4.6-5.3"/></svg>',
+  done:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.6 2.6 5.4-6"/></svg>',
+  skill:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.7 7.2 12 12l8.3-4.8M12 12v9.3"/></svg>',
+  play:'<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"/></svg>',
 };
-
-// ── helpers ──────────────────────────────────────────────────────────────
-function toast(msg, bad) {
-  const t = $('toast'); t.textContent = msg; t.style.background = bad ? '#c0392b' : '#1a1a1a';
-  t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2200);
-}
-function showErr(m) { $('errMsg').textContent = m; $('err').classList.add('show'); }
-$('errX').onclick = () => $('err').classList.remove('show');
-function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-
-// ── boot: config + catalogue ─────────────────────────────────────────────
-async function boot() {
-  try {
-    const r = await fetch('/v1/agent/config'); S.cfg = await r.json();
-  } catch (e) { showErr('daemon unreachable — is `farm serve` running?'); return; }
-  S.skills = S.cfg.skills || []; S.bases = S.cfg.base_models || [];
-  renderBases(); renderSkills(); renderPresets(); renderModels();
-  // DO availability
-  const ok = S.cfg.do_available;
-  $('doDot').className = 'dot ' + (ok ? 'ok' : 'bad');
-  $('doTxt').textContent = ok ? 'DigitalOcean · ' + (S.cfg.default_thinking_model || 'connected')
-                              : 'DigitalOcean key not found (preview only)';
-  connectStream(); pollServe(); pollCameras();
-  setInterval(pollServe, 3500);
+function nodeInner(n){
+  if(n.kind==='skill') return `${ICON.skill}<div class="gprog"><span></span></div>`;
+  return (ICON[n.kind]||ICON.plan);
 }
 
-function renderBases() {
-  const el = $('bases'); el.innerHTML = '';
-  for (const b of S.bases) {
-    const d = document.createElement('label');
-    d.className = 'opt' + (b.key === S.base ? ' sel' : '');
-    d.innerHTML = `<span class="nm"><input type="radio" name="base" ${b.key===S.base?'checked':''}> ${escapeHtml(b.label)}</span>`
-      + `<span class="ds">${escapeHtml(b.note||'')}</span>`;
-    d.onclick = () => { S.base = b.key; renderBases(); renderSkills(); };
-    el.appendChild(d);
-  }
+// boot
+async function boot(){
+  try { S.cfg = await (await fetch('/v1/agent/config')).json(); }
+  catch(e){ $('doTxt').textContent='daemon offline'; $('doDot').className='dot bad'; return; }
+  S.skills=S.cfg.skills||[]; S.bases=S.cfg.base_models||[]; S.abilities=S.cfg.abilities||[];
+  S.skills.forEach(s=>S.enabled.add(s.key));
+  renderSuggestions(); renderBases(); renderSkills(); renderModels(); renderAbilities();
+  const ok=S.cfg.do_available;
+  $('doDot').className='dot '+(ok?'ok':'warn');
+  $('doTxt').textContent = ok ? (S.cfg.default_thinking_model||'connected') : 'planning offline';
+  connectStream(); pollServe(); setInterval(pollServe,3500);
 }
-function baseSkillsEnabled() {
-  const b = S.bases.find(x => x.key === S.base); return b ? b.skills_enabled !== false : true;
+function renderSuggestions(){
+  const ps=['Place the items on the box','Tidy up, put everything on the box','Pick up the bottle and place it on the box'];
+  $('suggestions').innerHTML=''; ps.forEach(p=>{ const b=document.createElement('button'); b.className='sugg'; b.textContent=p;
+    b.onclick=()=>{ $('task').value=p; autogrow(); $('task').focus(); }; $('suggestions').appendChild(b); });
 }
-function renderSkills() {
-  const el = $('skills'); el.innerHTML = '';
-  const usable = baseSkillsEnabled();
-  $('skillsHint').textContent = usable ? '' : '(generalist base — skills informational)';
-  if (S.enabled.size === 0) S.skills.forEach(s => S.enabled.add(s.key));
-  for (const s of S.skills) {
-    const on = S.enabled.has(s.key);
-    const d = document.createElement('label');
-    d.className = 'skill ' + (on ? 'on' : 'off');
-    d.innerHTML = `<input type="checkbox" ${on?'checked':''}>`
-      + `<div><div class="nm">${s.emoji||''} ${escapeHtml(s.label)}</div>`
-      + `<div class="meta">${escapeHtml(s.note||'')}</div>`
-      + `<div class="repo">${escapeHtml(s.repo||'')}</div></div>`;
-    d.querySelector('input').onclick = ev => {
-      ev.stopPropagation();
-      if (ev.target.checked) S.enabled.add(s.key); else S.enabled.delete(s.key);
-      renderSkills();
-    };
-    el.appendChild(d);
-  }
+function renderBases(){
+  const el=$('bases'); el.innerHTML='';
+  S.bases.forEach(b=>{ const d=document.createElement('div'); d.className='seg-item'+(b.key===S.base?' sel':'');
+    d.innerHTML=`<div class="t">${esc(b.label)}</div><div class="d">${esc(b.note||'')}</div>`;
+    d.onclick=()=>{ S.base=b.key; renderBases(); }; el.appendChild(d); });
 }
-function renderPresets() {
-  const el = $('presets'); el.innerHTML = '';
-  const presets = [
-    'Place the items on the box',
-    'Tidy up — put everything on the box',
-    'Pick up the bottle and place it on the box',
-    'Clear the table onto the box',
-  ];
-  for (const p of presets) {
-    const c = document.createElement('button'); c.className = 'chip'; c.textContent = p;
-    c.onclick = () => { $('task').value = p; };
-    el.appendChild(c);
-  }
+function renderSkills(){
+  const el=$('skills'); el.innerHTML='';
+  S.skills.forEach(s=>{ const on=S.enabled.has(s.key); const d=document.createElement('div'); d.className='spill '+(on?'on':'off');
+    d.innerHTML=`<span class="ck">${on?'&#10003;':''}</span>${esc(s.label)}`;
+    d.onclick=()=>{ on?S.enabled.delete(s.key):S.enabled.add(s.key); renderSkills(); }; el.appendChild(d); });
 }
-function renderModels() {
-  const fill = (sel, list, def) => {
-    sel.innerHTML = ''; (list||[]).forEach(m => {
-      const o = document.createElement('option'); o.value = m; o.textContent = m;
-      if (m === def) o.selected = true; sel.appendChild(o);
-    });
-  };
-  fill($('thinkModel'), S.cfg.thinking_models, S.cfg.default_thinking_model);
-  fill($('visionModel'), S.cfg.vision_models, S.cfg.default_vision_model);
+function renderModels(){
+  const fill=(sel,list,def)=>{ sel.innerHTML=''; (list||[]).forEach(m=>{ const o=document.createElement('option'); o.value=m; o.textContent=m; if(m===def)o.selected=true; sel.appendChild(o); }); };
+  fill($('thinkModel'),S.cfg.thinking_models,S.cfg.default_thinking_model);
+  fill($('visionModel'),S.cfg.vision_models,S.cfg.default_vision_model);
+}
+$('optsBtn').onclick=()=>$('optsPanel').classList.toggle('open');
+$('detToggle').onclick=()=>$('details').classList.toggle('open');
+
+// composer
+const ta=$('task');
+function autogrow(){ ta.style.height='auto'; ta.style.height=Math.min(180,ta.scrollHeight)+'px'; }
+ta.addEventListener('input',autogrow);
+ta.addEventListener('keydown',e=>{ if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){ e.preventDefault(); run(); } });
+
+async function run(opts){
+  const body = opts && opts.ability_id
+    ? { ability_id: opts.ability_id, execute:$('execute').checked }
+    : { task: ta.value.trim(), base_model:S.base, skills:[...S.enabled],
+        thinking_model:$('thinkModel').value, vision_model:$('visionModel').value, execute:$('execute').checked };
+  if(!opts && !body.task){ toast('type a task first'); ta.focus(); return; }
+  resetRun();
+  try{
+    const r=await fetch('/v1/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json(); if(!r.ok) throw new Error(d.error||('HTTP '+r.status));
+  }catch(e){ toast('could not start: '+e.message,true); document.body.classList.remove('busy'); }
+}
+$('runBtn').onclick=()=>run();
+$('stopBtn').onclick=async()=>{ try{ await fetch('/v1/agent/stop',{method:'POST'}); }catch(e){} toast('stopping'); };
+function resetRun(){
+  document.body.classList.add('busy'); S.current=null; S.nodeOrder=[];
+  $('visionOut').textContent=''; $('planOut').textContent='';
+  $('visionStream').classList.remove('busy'); $('planStream').classList.remove('busy'); $('log').textContent='';
+  $('graph').className='graph'; $('graph').innerHTML='';
 }
 
-// ── run / stop ───────────────────────────────────────────────────────────
-$('runBtn').onclick = async () => {
-  const task = $('task').value.trim();
-  if (!task) { toast('type a task first', true); $('task').focus(); return; }
-  const body = {
-    task, base_model: S.base, skills: [...S.enabled],
-    thinking_model: $('thinkModel').value, vision_model: $('visionModel').value,
-    execute: $('execute').checked,
-  };
-  resetRunUI();
-  try {
-    const r = await fetch('/v1/agent/run', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
-    setRunning(true);
-  } catch (e) { showErr('could not start: ' + e.message); }
-};
-$('stopBtn').onclick = async () => {
-  try { await fetch('/v1/agent/stop', { method:'POST' }); } catch (e) {}
-  toast('stopping…');
-};
-function setRunning(on) {
-  S.running = on;
-  $('runBtn').style.display = on ? 'none' : 'block';
-  $('stopBtn').style.display = on ? 'block' : 'none';
-}
-function resetRunUI() {
-  $('visionOut').innerHTML = ''; $('planOut').innerHTML = '';
-  $('planSummary').innerHTML = '<span class="ph">planning…</span>'; $('steps').innerHTML = '';
-  $('nowBar').classList.remove('show'); $('modeBadge').style.display = 'none';
-  $('log').textContent = ''; $('logCard').style.display = 'none'; S.steps = [];
-}
-
-// ── SSE event stream ─────────────────────────────────────────────────────
-function connectStream() {
-  const es = new EventSource('/v1/agent/stream');
-  es.onmessage = ev => { try { handle(JSON.parse(ev.data)); } catch (e) {} };
-  es.onerror = () => { /* EventSource auto-reconnects */ };
-}
-function appendStream(outId, streamId, ev) {
-  const out = $(outId), stream = $(streamId);
-  if (ev.reset) { out.textContent = ''; stream.classList.add('busy'); }
-  if (ev.delta) {
-    if (out.querySelector('.ph')) out.textContent = '';
-    out.textContent += ev.delta; out.scrollTop = out.scrollHeight;
-  }
-  if (ev.done) stream.classList.remove('busy');
-}
-function handle(ev) {
-  // Dedupe replayed events (the server re-sends history on every EventSource
-  // reconnect); seq is monotonic per daemon process.
-  if (ev.seq != null) {
-    if (ev.seq <= S.lastSeq) return;
-    S.lastSeq = ev.seq;
-  }
-  switch (ev.type) {
+// SSE
+function connectStream(){ const es=new EventSource('/v1/agent/stream'); es.onmessage=ev=>{ try{ handle(JSON.parse(ev.data)); }catch(e){} }; }
+function handle(ev){
+  if(ev.seq!=null){ if(ev.seq<=S.lastSeq) return; S.lastSeq=ev.seq; }
+  switch(ev.type){
     case 'state': onState(ev); break;
-    case 'config': $('thinkR').textContent = ev.thinking_model || ''; break;
-    case 'camera': $('stageR').textContent = ev.available ? 'base camera · live' : (ev.note || 'no camera'); break;
-    case 'thinking':
-      if (ev.channel === 'vision') appendStream('visionOut','visionStream', ev);
-      else appendStream('planOut','planStream', ev);
-      break;
-    case 'detect': onDetect(ev); break;
+    case 'workflow': renderGraph(ev); break;
+    case 'node': onNode(ev); break;
+    case 'thinking': onThinking(ev); break;
     case 'plan': onPlan(ev); break;
-    case 'step': onStep(ev); break;
     case 'swap': onSwap(ev); break;
     case 'progress': onProgress(ev); break;
-    case 'serve': onServeEvent(ev); break;
     case 'log': onLog(ev.line); break;
-    case 'error': showErr(ev.message); break;
+    case 'error': onError(ev); break;
     case 'done': onDone(ev); break;
   }
 }
-const PHASE_TXT = {
-  idle:'idle', starting:'warming up', capturing:'looking at the workspace',
-  detecting:'identifying objects', planning:'planning steps', executing:'executing',
-  done:'done', stopped:'stopped', error:'error',
-};
-function onState(ev) {
-  $('phase').textContent = (PHASE_TXT[ev.phase] || ev.phase) + (ev.message ? ' · ' + ev.message : '');
-  if (ev.phase === 'executing' && ev.mode) {
-    $('modeBadge').style.display = 'inline-block';
-    $('modeBadge').textContent = ev.mode === 'live' ? 'live' : 'preview';
-    $('modeBadge').className = 'pill ' + (ev.mode === 'live' ? 'live' : 'warn');
-  }
-  if (['idle','done','stopped','error'].includes(ev.phase)) setRunning(false);
-  else setRunning(true);
+function onState(ev){
+  document.body.classList.toggle('busy', !['idle','done','stopped','error'].includes(ev.phase));
+  if(['done','stopped','error'].includes(ev.phase)) document.body.classList.remove('busy');
 }
-function onDetect(ev) {
-  const names = (ev.objects||[]).filter(o => o.present).map(o => o.object)
-    .concat((ev.present||[]).map(k => (S.skills.find(s=>s.key===k)||{}).object).filter(Boolean));
-  const uniq = [...new Set(names)];
-  $('stageR').textContent = uniq.length ? 'detected: ' + uniq.join(', ') : 'base camera';
-}
-function onPlan(ev) {
-  S.steps = ev.steps || [];
-  $('planSummary').innerHTML = ev.summary ? escapeHtml(ev.summary) : '<span class="ph">plan ready</span>';
-  $('planR').textContent = S.steps.length + ' step' + (S.steps.length===1?'':'s');
-  const el = $('steps'); el.innerHTML = '';
-  S.steps.forEach((s, i) => {
-    const d = document.createElement('div'); d.className = 'step'; d.id = 'step' + i;
-    d.innerHTML = `<div class="num">${i+1}</div>`
-      + `<div class="body"><div class="nm">${s.emoji||''} ${escapeHtml(s.label||s.object)}</div>`
-      + `<div class="sub">${escapeHtml(s.rationale || s.prompt || '')}</div>`
-      + `<div class="lora">${escapeHtml(s.repo || '')}</div></div>`;
-    el.appendChild(d);
+function renderGraph(ev){
+  const g=$('graph'); g.className='graph'; g.innerHTML=''; S.nodeOrder=ev.nodes.map(n=>n.id);
+  ev.nodes.forEach((n,i)=>{
+    if(i>0){ const c=document.createElement('div'); c.className='gconn'; c.id='conn-'+i; g.appendChild(c); }
+    const el=document.createElement('div'); el.className='gnode '+n.kind; el.id='gn-'+n.id; el.dataset.status='pending';
+    el.innerHTML=`<div class="gbox">${nodeInner(n)}</div><div class="glabel">${esc(n.title)}</div>`
+      + (n.detail?`<div class="gsub">${esc(n.detail)}</div>`:'')
+      + (n.kind==='confirm'?'<div class="badge"></div>':'');
+    g.appendChild(el);
   });
 }
-function onStep(ev) {
-  const d = $('step' + ev.index); if (!d) return;
-  if (ev.status === 'active') {
-    document.querySelectorAll('.step.active').forEach(x => x.classList.remove('active'));
-    d.classList.add('active');
-    const s = S.steps[ev.index] || ev;
-    $('nowBar').classList.add('show');
-    $('nowEmoji').textContent = s.emoji || ev.emoji || '';
-    $('nowName').textContent = s.label || ev.label || ev.object || '';
-    $('nowStep').textContent = `step ${ev.index+1} / ${ev.total}`;
-    $('nowMeta').textContent = ev.prompt || '';
-    $('nowProg').querySelector('.fill').style.width = '0%';
-  } else if (ev.status === 'done') {
-    d.classList.remove('active'); d.classList.add('done');
+function onNode(ev){
+  const el=$('gn-'+ev.id); if(!el) return;
+  el.dataset.status=ev.status;
+  // light the connector leading into this node once it starts
+  const idx=S.nodeOrder.indexOf(ev.id);
+  if(idx>0 && (ev.status==='active'||ev.status==='done'||ev.status==='failed')){ const c=$('conn-'+idx); if(c) c.classList.add('lit'); }
+  // confirm badge
+  if(ev.id.startsWith('confirm-') && (ev.status==='done'||ev.status==='failed')){
+    const b=el.querySelector('.badge');
+    if(b){ const pct = ev.confidence!=null ? Math.round(ev.confidence*100)+'%' : (ev.status==='done'?'ok':'no');
+      b.textContent = (ev.status==='done'?'✓ ':'✗ ')+pct; b.title=ev.note||''; }
   }
 }
-function onSwap(ev) {
-  const sw = $('nowSwap');
-  sw.querySelector('.from').textContent = ev.from_label ? ('lora:' + (ev.from_key||'')) : 'base';
-  sw.querySelector('.to').textContent = 'lora:' + (ev.to_key||'');
-  sw.classList.add('swapping');
-  setTimeout(() => sw.classList.remove('swapping'), 1200);
-  onLog(`hot-swap adapter → ${ev.repo || ev.to_key}`);
+function onThinking(ev){
+  const out = ev.channel==='vision' ? $('visionOut') : $('planOut');
+  const stream = ev.channel==='vision' ? $('visionStream') : $('planStream');
+  if(ev.reset){ out.textContent=''; stream.classList.add('busy'); $('details').classList.add('open'); }
+  if(ev.delta){ out.textContent+=ev.delta; out.scrollTop=out.scrollHeight; }
+  if(ev.done) stream.classList.remove('busy');
 }
-function onProgress(ev) {
-  $('nowProg').querySelector('.fill').style.width = (ev.pct||0) + '%';
-  if (ev.note) $('nowMeta').textContent = (S.steps[ev.index]?.prompt || '') + (ev.note ? '   ·   ' + ev.note : '');
+function onPlan(ev){
+  S.current={ task:(ev.task||ta.value.trim()), base_model:S.base, summary:ev.summary||'',
+              steps:(ev.steps||[]).map(s=>({key:s.key,object:s.object,label:s.label,emoji:s.emoji,prompt:s.prompt,repo:s.repo,rationale:s.rationale})) };
+  renderAbilities();  // surfaces the "save this" affordance
 }
-function onDone(ev) {
-  $('phase').textContent = ev.mode === 'live' ? 'done · task complete' : 'done · preview complete';
-  $('nowBar').classList.remove('show');
-  document.querySelectorAll('.step.active').forEach(x => { x.classList.remove('active'); x.classList.add('done'); });
-  setRunning(false);
-  toast(ev.mode === 'live' ? 'task complete' : 'preview complete');
+function onSwap(ev){ const el=$('gn-step-'+ev.index); if(!el) return; const sub=el.querySelector('.gsub');
+  if(sub) sub.textContent='skill loaded'; }
+function onProgress(ev){ const el=$('gn-step-'+ev.index); if(!el) return; const bar=el.querySelector('.gprog span'); if(bar) bar.style.width=(ev.pct||0)+'%'; }
+function onLog(line){ const l=$('log'); l.textContent+=(l.textContent?'\n':'')+line; l.scrollTop=l.scrollHeight; }
+function onError(ev){ toast(ev.message||'something went wrong', true); document.body.classList.remove('busy'); }
+function onDone(ev){ document.body.classList.remove('busy');
+  toast(ev.mode==='live'?'Task complete':'Preview complete'); }
+
+// abilities
+function renderAbilities(){
+  const wrap=$('abilities'), row=$('abRow'); row.innerHTML='';
+  S.abilities.forEach(a=>{
+    const card=document.createElement('div'); card.className='ab-card';
+    card.innerHTML=`<span class="ab-run">${ICON.play}</span><div class="ab-meta"><div class="nm">${esc(a.name)}</div>`
+      +`<div class="sub">${a.n_steps} step${a.n_steps===1?'':'s'}</div></div><button class="ab-x" title="delete">&times;</button>`;
+    card.onclick=(e)=>{ if(e.target.classList.contains('ab-x')) return; run({ability_id:a.id}); };
+    card.querySelector('.ab-x').onclick=async(e)=>{ e.stopPropagation();
+      if(!confirm('Delete ability "'+a.name+'"?')) return;
+      await fetch('/v1/abilities/'+encodeURIComponent(a.id),{method:'DELETE'}); await refreshAbilities(); };
+    row.appendChild(card);
+  });
+  if(S.current && S.current.steps && S.current.steps.length){
+    const save=document.createElement('button'); save.className='ab-save'; save.innerHTML='&#43; Save this workflow';
+    save.onclick=saveCurrent; row.appendChild(save);
+  }
+  wrap.style.display = (S.abilities.length || (S.current&&S.current.steps&&S.current.steps.length)) ? 'block' : 'none';
 }
-function onLog(line) {
-  $('logCard').style.display = 'flex';
-  const l = $('log'); l.textContent += (l.textContent ? '\n' : '') + line; l.scrollTop = l.scrollHeight;
+async function refreshAbilities(){ try{ const d=await (await fetch('/v1/abilities')).json(); S.abilities=d.abilities||[]; }catch(e){} renderAbilities(); }
+async function saveCurrent(){
+  if(!S.current||!S.current.steps.length){ toast('run a task first'); return; }
+  const name=prompt('Name this ability', S.current.task||'My ability'); if(!name) return;
+  try{
+    const r=await fetch('/v1/abilities',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name, task:S.current.task, base_model:S.current.base_model, summary:S.current.summary, steps:S.current.steps})});
+    const d=await r.json(); if(!r.ok) throw new Error(d.error||('HTTP '+r.status));
+    toast('saved ability "'+name+'"'); await refreshAbilities();
+  }catch(e){ toast('save failed: '+e.message, true); }
 }
 
-// ── policy server (cluster hot-swap serve) ───────────────────────────────
-async function pollServe() {
-  let d; try { d = await (await fetch('/v1/serve/status')).json(); } catch (e) { return; }
-  S.serve = d;
-  const dot = $('serveDot'), txt = $('serveTxt'), btn = $('serveBtn');
-  if (!d.kubectl) { dot.className='dot bad'; txt.textContent='cluster unreachable (no kubectl)'; btn.disabled=true; return; }
-  btn.disabled = false;
-  if (!d.running) { dot.className='dot'; txt.textContent='not running'; btn.textContent='Start hot-swap server'; btn.dataset.act='start'; return; }
-  const phase = d.phase || d.state || 'starting';
-  const bound = d.bound;
-  dot.className = 'dot ' + (bound ? 'ok' : 'warn');
-  txt.textContent = `${d.model||'serve'} · ${phase}` + (d.elapsed_s ? ` · ${d.elapsed_s}s` : '');
-  btn.textContent = 'Stop server'; btn.dataset.act = 'stop';
+// policy server
+async function pollServe(){
+  let d; try{ d=await (await fetch('/v1/serve/status',{cache:'no-store'})).json(); }catch(e){ return; }
+  const dot=$('serveDot'),txt=$('serveTxt'),btn=$('serveBtn');
+  if(d.kubectl===false){ dot.className='dot'; txt.textContent='cluster not reachable'; btn.disabled=true; btn.textContent='Start server'; btn.dataset.act=''; return; }
+  btn.disabled=false;
+  if(!d.running){ dot.className='dot'; txt.textContent='not running'; btn.textContent='Start server'; btn.dataset.act='start'; return; }
+  dot.className='dot '+(d.bound?'ok':'warn'); txt.textContent=(d.model||'serve')+', '+(d.phase||d.state||'starting');
+  btn.textContent='Stop server'; btn.dataset.act='stop';
 }
-function onServeEvent(ev) { /* serve snapshot from a run; pollServe drives the panel */ }
-$('serveBtn').onclick = async () => {
-  const act = $('serveBtn').dataset.act || 'start';
-  try {
-    if (act === 'start') {
-      const r = await fetch('/v1/serve/start', { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ model:'fftlora_hotswap', step:'55999' }) });
-      const d = await r.json(); if (!r.ok) throw new Error(d.error||('HTTP '+r.status));
-      toast('hot-swap server submitted'); pollServe();
-    } else {
-      await fetch('/v1/serve/stop', { method:'POST' }); toast('server stopping'); pollServe();
-    }
-  } catch (e) { showErr('serve: ' + e.message); }
-};
-
-// ── live camera polling (base + wrist) ───────────────────────────────────
-function pollCameras() {
-  const base = $('camBase'), wrist = $('camWrist'), wrap = $('camWrap'), dot = $('liveDot');
-  const tick = (img, name, onLive) => {
-    const probe = new Image();
-    probe.onload = () => { img.src = probe.src; img.classList.add('live'); onLive(true); };
-    probe.onerror = () => { img.classList.remove('live'); onLive(false); };
-    probe.src = `/v1/cameras/${name}.jpg?t=${Date.now()}`;
-  };
-  setInterval(() => {
-    if (document.hidden) return;   // don't burn network/CPU on a backgrounded tab
-    tick(base, 'base', live => { wrap.classList.toggle('live', live); dot.classList.toggle('on', live); });
-    tick(wrist, 'wrist', () => {});
-  }, 120);
-}
+$('serveBtn').onclick=async()=>{ const act=$('serveBtn').dataset.act;
+  try{ if(act==='start'){ const r=await fetch('/v1/serve/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'fftlora_hotswap',step:'55999'})});
+      const d=await r.json(); if(!r.ok&&r.status!==409) throw new Error(d.error||('HTTP '+r.status)); toast('server starting'); }
+    else if(act==='stop'){ await fetch('/v1/serve/stop',{method:'POST'}); toast('server stopping'); }
+    pollServe();
+  }catch(e){ toast('serve: '+e.message,true); } };
 
 boot();
 </script>

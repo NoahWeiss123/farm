@@ -87,3 +87,9 @@ analysis/fftLoRA_report/vectors/
 analysis/realdata_lora_gse/raw/
 .DS_Store
 **/.DS_Store
+
+# Local-only video script draft (not for GitHub)
+video_script.txt
+
+# saved consumer-agent workflows (user data)
+abilities/

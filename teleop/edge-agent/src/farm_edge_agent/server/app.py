@@ -112,6 +112,72 @@ def _is_local_origin(request: web.Request) -> bool:
     return host in ("127.0.0.1", "localhost", "::1") or host == req_host
 
 
+# ── dev live-reload (opt-in via FARM_DEV_RELOAD=1) ─────────────────────────────
+# When enabled, a middleware injects a tiny EventSource snippet into every served
+# HTML page; the /v1/dev/livereload stream fires "reload" the moment any
+# ui/*.html file changes on disk, so edits show instantly with no manual refresh.
+# Off by default so the operator dashboard never auto-reloads during real use.
+
+_RELOAD_SNIPPET = (
+    b"<script>(function(){try{var e=new EventSource('/v1/dev/livereload');"
+    b"e.onmessage=function(m){if(m.data==='reload')location.reload();};}catch(_){}"
+    b"})();</script>"
+)
+
+
+def _ui_signature() -> str:
+    """Cheap fingerprint of the served HTML files (name + mtime + size)."""
+    parts: list[str] = []
+    if UI_DIR.is_dir():
+        for p in sorted(UI_DIR.glob("*.html")):
+            try:
+                st = p.stat()
+                parts.append(f"{p.name}:{st.st_mtime_ns}:{st.st_size}")
+            except OSError:
+                pass
+    return "|".join(parts)
+
+
+@web.middleware
+async def _dev_livereload_mw(request: web.Request, handler: Any) -> web.StreamResponse:
+    resp = await handler(request)
+    try:
+        if (request.app.get("dev_reload")
+                and isinstance(resp, web.Response)
+                and (resp.content_type or "").startswith("text/html")
+                and isinstance(resp.body, (bytes, bytearray))
+                and b"</body>" in resp.body):
+            resp.body = bytes(resp.body).replace(b"</body>", _RELOAD_SNIPPET + b"</body>", 1)
+    except Exception:  # noqa: BLE001 — dev tooling must never break a page
+        pass
+    return resp
+
+
+async def dev_livereload(request: web.Request) -> web.StreamResponse:
+    """SSE that emits 'reload' whenever a ui/*.html file changes on disk."""
+    if not request.app.get("dev_reload"):
+        return web.Response(status=404)
+    resp = web.StreamResponse(headers=SSE_HEADERS)
+    await resp.prepare(request)
+    sig = _ui_signature()
+    await resp.write(b"data: connected\n\n")
+    ticks = 0
+    try:
+        while not request.transport.is_closing():
+            await asyncio.sleep(0.4)
+            new = _ui_signature()
+            if new != sig:
+                sig = new
+                await resp.write(b"data: reload\n\n")
+            else:
+                ticks += 1
+                if ticks % 35 == 0:  # ~14s keepalive
+                    await resp.write(b": ping\n\n")
+    except (ConnectionResetError, asyncio.CancelledError):
+        pass
+    return resp
+
+
 # ── routes ──────────────────────────────────────────────────────────────────
 
 
@@ -1420,8 +1486,8 @@ async def post_agent_run(request: web.Request) -> web.Response:
         body = {}
     if not isinstance(body, dict):
         return web.json_response({"error": "body must be a JSON object"}, status=400)
-    if not str(body.get("task", "")).strip():
-        return web.json_response({"error": "body must include a non-empty 'task'"}, status=400)
+    if not str(body.get("task", "")).strip() and not str(body.get("ability_id", "")).strip():
+        return web.json_response({"error": "body must include 'task' or 'ability_id'"}, status=400)
     try:
         orch.start(body)
     except RuntimeError as exc:
@@ -1470,6 +1536,49 @@ async def stream_agent(request: web.Request) -> web.StreamResponse:
     return resp
 
 
+# ── abilities (saved, reusable workflows) ─────────────────────────────────────
+
+
+async def get_abilities(_: web.Request) -> web.Response:
+    from farm_edge_agent.server import abilities
+    return web.json_response({"abilities": abilities.list_abilities()})
+
+
+async def post_ability(request: web.Request) -> web.Response:
+    """Save a generated workflow as a reusable Ability. Body is the workflow
+    ``{name, task, base_model, summary, steps:[...]}``."""
+    if not _is_local_origin(request):
+        return web.json_response({"error": "cross-origin requests are not allowed"}, status=403)
+    from farm_edge_agent.server import abilities
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be a JSON object"}, status=400)
+    try:
+        rec = await asyncio.to_thread(abilities.save_ability, body)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response({"ok": True, "ability": rec})
+
+
+async def get_ability_detail(request: web.Request) -> web.Response:
+    from farm_edge_agent.server import abilities
+    ab = abilities.get_ability(request.match_info["id"])
+    if ab is None:
+        return web.json_response({"error": "not found"}, status=404)
+    return web.json_response(ab)
+
+
+async def delete_ability(request: web.Request) -> web.Response:
+    if not _is_local_origin(request):
+        return web.json_response({"error": "cross-origin requests are not allowed"}, status=403)
+    from farm_edge_agent.server import abilities
+    ok = await asyncio.to_thread(abilities.delete_ability, request.match_info["id"])
+    return web.json_response({"ok": ok}, status=200 if ok else 404)
+
+
 # ── wiring ──────────────────────────────────────────────────────────────────
 
 
@@ -1481,7 +1590,10 @@ def build_app(*, backend: RobotBackend | None = None) -> web.Application:
         from farm_edge_agent.backends import SimBackend
         backend = SimBackend()
 
-    app = web.Application(client_max_size=2_000_000)
+    app = web.Application(client_max_size=2_000_000, middlewares=[_dev_livereload_mw])
+    # Dev live-reload: inject the reload watcher + enable /v1/dev/livereload when
+    # FARM_DEV_RELOAD is set. Never on for the operator dashboard by default.
+    app["dev_reload"] = bool(os.environ.get("FARM_DEV_RELOAD"))
     bus = EventBus(history=400)
     supervisor = Supervisor(bus, backend=backend)
     from farm_edge_agent.recorder import Recorder
@@ -1556,6 +1668,11 @@ def build_app(*, backend: RobotBackend | None = None) -> web.Application:
         web.post("/v1/agent/stop", post_agent_stop),
         web.get("/v1/agent/state", get_agent_state),
         web.get("/v1/agent/stream", stream_agent),
+        web.get("/v1/abilities", get_abilities),
+        web.post("/v1/abilities", post_ability),
+        web.get("/v1/abilities/{id}", get_ability_detail),
+        web.delete("/v1/abilities/{id}", delete_ability),
+        web.get("/v1/dev/livereload", dev_livereload),
         web.get("/v1/train/models", get_train_models),
         web.post("/v1/train/launch", post_train_launch),
         web.get("/v1/train/status", get_train_status),
