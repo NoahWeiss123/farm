@@ -156,8 +156,14 @@
   /* add-step box + edit popover */
   .fbox.add { border-style: dashed; cursor: pointer; } .fbox.add .ic, .fbox.add .lab { color: var(--accent); }
   .fbox.add:hover { background: var(--accent-soft); border-color: var(--accent); }
-  .fbox.skill.editable, .fbox.confirm.editable { cursor: pointer; }
-  .fbox.skill.editable:hover, .fbox.confirm.editable:hover { border-color: var(--accent); }
+  .fbox.editable { cursor: pointer; } .fbox.editable:hover { border-color: var(--accent); }
+  .fconn.ins { position: relative; cursor: pointer; }
+  .fconn.ins::before { content: ''; position: absolute; inset: -16px -9px; z-index: 4; }
+  .fconn .plus { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%) scale(0); width: 22px; height: 22px; border-radius: 50%;
+                 background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 16px; line-height: 1; font-weight: 600;
+                 transition: transform 160ms cubic-bezier(.2,1.4,.5,1); z-index: 6; box-shadow: 0 2px 8px rgba(47,107,214,0.45); pointer-events: none; }
+  .fconn.ins:hover .plus { transform: translate(-50%,-50%) scale(1); }
+  .fconn.ins:hover { background: var(--accent); }
   .ed-pop { position: fixed; z-index: 80; width: 264px; background: var(--bg); border: 1px solid var(--border2); border-radius: 12px;
             box-shadow: 0 12px 40px rgba(20,40,80,0.18); padding: 12px; display: none; flex-direction: column; gap: 9px; }
   .ed-pop.open { display: flex; }
@@ -421,16 +427,23 @@ function buildNodes(steps, editable){
   if(!S.isAbility){ nodes.push({id:'perceive',kind:'perceive',title:'Look',detail:'scan the table'}); nodes.push({id:'plan',kind:'plan',title:'Plan',detail:'break into steps'}); }
   const usesSkills=baseSkillsEnabled(), conf=$('confirm').checked;
   steps.forEach((s,i)=>{ const obj=s.object||s.key;
-    if(usesSkills) nodes.push({id:'load-'+i,kind:'load',title:'Load '+(s.label||obj)+' skill',detail:s.repo||''});
+    if(usesSkills) nodes.push({id:'load-'+i,kind:'load',title:'Load '+(s.label||obj)+' skill',detail:s.repo||'',editable});
     nodes.push({id:'step-'+i,kind:'skill',title:'Pick up '+obj,detail:'',editable});
     if(conf) nodes.push({id:'confirm-'+i,kind:'confirm',title:'Confirm '+obj,detail:(s.confirm_prompt||('is the '+obj+' on the box?')),editable}); });
-  if(editable) nodes.push({id:'add',kind:'add',title:'Add step'});
   nodes.push({id:'done',kind:'done',title:'Done'}); return nodes;
 }
 function renderEditable(){ if(!S.editSteps) return; renderFlow({nodes:buildNodes(S.editSteps,true)});
-  S.editSteps.forEach((s,i)=>{ const p=$('fn-step-'+i); if(p) p.onclick=(e)=>{ e.stopPropagation(); openEditor(i,'pick',p); };
+  const usesSkills=baseSkillsEnabled(); const n=S.editSteps.length;
+  S.editSteps.forEach((s,i)=>{
+    const l=$('fn-load-'+i); if(l) l.onclick=(e)=>{ e.stopPropagation(); openEditor(i,'pick',l); };
+    const p=$('fn-step-'+i); if(p) p.onclick=(e)=>{ e.stopPropagation(); openEditor(i,'pick',p); };
     const c=$('fn-confirm-'+i); if(c) c.onclick=(e)=>{ e.stopPropagation(); openEditor(i,'confirm',c); }; });
-  const a=$('fn-add'); if(a) a.onclick=(e)=>{ e.stopPropagation(); addStep(); }; }
+  for(let i=0;i<=n;i++){ const fid = i<n ? ((usesSkills?'load-':'step-')+i) : 'done'; const conn=$('cto-'+fid); if(!conn) continue;
+    conn.classList.add('ins'); if(!conn.querySelector('.plus')){ const pl=document.createElement('span'); pl.className='plus'; pl.textContent='+'; conn.appendChild(pl); }
+    conn.onclick=(e)=>{ e.stopPropagation(); insertStep(i); }; }
+}
+function insertStep(i){ const sk=S.skills.find(x=>S.enabled.has(x.key))||S.skills[0]; if(!sk) return;
+  S.editSteps.splice(i,0,{key:sk.key,object:sk.object,label:sk.label,prompt:sk.prompt,repo:sk.repo,confirm_prompt:''}); renderEditable(); }
 function openEditor(i,type,anchor){ const pop=$('editPop'); const r=anchor.getBoundingClientRect();
   if(type==='pick'){ pop.innerHTML='<div class="ed-h">Edit step</div>'
       +'<select id="edSkill" class="sel-in">'+S.skills.map(s=>`<option value="${s.key}"${s.key===S.editSteps[i].key?' selected':''}>${esc(s.label)}</option>`).join('')+'</select>'
@@ -441,12 +454,12 @@ function openEditor(i,type,anchor){ const pop=$('editPop'); const r=anchor.getBo
       +'<textarea id="edCrit" class="ed-ta" placeholder="e.g. the hat is clearly resting on top of the box">'+esc(S.editSteps[i].confirm_prompt||'')+'</textarea>'
       +'<button class="ed-save" id="edSave">Save</button>';
     setTimeout(()=>{ $('edSave').onclick=()=>{ S.editSteps[i].confirm_prompt=$('edCrit').value.trim(); renderEditable(); closeEditor(); }; $('edCrit').focus(); },0); }
-  pop.classList.add('open'); const w=264, x=Math.max(10,Math.min(r.left, window.innerWidth-w-10));
-  pop.style.left=x+'px'; pop.style.top=(r.top-10)+'px'; pop.style.transform='translateY(-100%)'; }
+  pop.classList.add('open'); const w=264, ph=pop.offsetHeight||190;
+  pop.style.left=Math.max(10,Math.min(r.left, window.innerWidth-w-10))+'px';
+  if(r.top < ph+28){ pop.style.top=(r.bottom+10)+'px'; pop.style.transform='none'; }
+  else { pop.style.top=(r.top-10)+'px'; pop.style.transform='translateY(-100%)'; } }
 function closeEditor(){ $('editPop').classList.remove('open'); }
-function addStep(){ const sk=S.skills.find(x=>S.enabled.has(x.key))||S.skills[0]; if(!sk) return;
-  S.editSteps.push({key:sk.key,object:sk.object,label:sk.label,prompt:sk.prompt,repo:sk.repo,confirm_prompt:''}); renderEditable(); }
-document.addEventListener('click',e=>{ if(!$('editPop').contains(e.target) && !e.target.closest('.fbox')) closeEditor(); });
+document.addEventListener('click',e=>{ if(!$('editPop').contains(e.target) && !e.target.closest('.fbox') && !e.target.closest('.fconn')) closeEditor(); });
 
 // ── devices panel ─────────────────────────────────────────────────────────
 let devCamTimer=null;
