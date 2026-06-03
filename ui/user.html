@@ -58,15 +58,19 @@
   .save-pill { font-size: 12px; text-transform: none; letter-spacing: 0; color: var(--accent); background: var(--accent-soft); border: 1px solid transparent; border-radius: 100px; padding: 4px 11px; font-weight: 560; }
   .save-pill:hover { border-color: var(--accent); }
 
-  /* plan: connected rounded boxes, bigger and centered, winding */
-  .flow { flex: 1; overflow-y: auto; padding: 28px 24px; display: flex; flex-wrap: wrap; align-items: center; align-content: center; justify-content: center; row-gap: 20px; }
-  .fitem { display: flex; align-items: center; }
-  .fconn { width: 24px; height: 2px; background: var(--border2); border-radius: 2px; flex-shrink: 0; transition: background 220ms; }
+  /* plan: boustrophedon snake of connected boxes (L to R, then R to L) */
+  .flow { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .frow { display: flex; align-items: center; flex-shrink: 0; }
+  .frow.rev { flex-direction: row-reverse; }
+  .fturn { position: relative; height: 26px; flex-shrink: 0; }
+  .fconn { background: var(--border2); border-radius: 2px; flex-shrink: 0; transition: background 220ms; }
+  .fconn.h { width: 26px; height: 2px; }
+  .fconn.v { position: absolute; top: 0; bottom: 0; width: 2px; }
   .fconn.lit { background: var(--green-line); }
-  .fbox { position: relative; display: flex; align-items: center; gap: 11px; border: 1.5px solid var(--border2); border-radius: 14px;
-          background: var(--bg); padding: 14px 17px; max-width: 230px; box-shadow: 0 1px 2px rgba(20,40,80,0.05);
+  .fbox { position: relative; width: 166px; display: flex; align-items: center; gap: 11px; border: 1.5px solid var(--border2); border-radius: 14px;
+          background: var(--bg); padding: 15px 16px; box-shadow: 0 1px 3px rgba(20,40,80,0.06);
           transition: border-color 160ms, box-shadow 160ms, background 160ms, color 160ms; }
-  .fbox .ic { display: inline-flex; flex-shrink: 0; color: var(--muted); } .fbox .ic svg { width: 24px; height: 24px; }
+  .fbox .ic { display: inline-flex; flex-shrink: 0; color: var(--muted); } .fbox .ic svg { width: 26px; height: 26px; }
   .fbox .lab { font-size: 14.5px; font-weight: 560; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .fbox.confirm { padding: 11px 14px; border-style: dashed; } .fbox.confirm .ic svg { width: 20px; height: 20px; } .fbox.confirm .lab { font-size: 13px; color: var(--muted); }
   .fbox[data-status="active"] { border-color: var(--green); box-shadow: 0 0 0 4px var(--green-soft); animation: glow 1.6s ease-in-out infinite; }
@@ -295,13 +299,27 @@ function handle(ev){ if(ev.seq!=null){ if(ev.seq<=S.lastSeq) return; S.lastSeq=e
 function onState(ev){ const active=!['idle','done','stopped','error'].includes(ev.phase);
   document.body.classList.toggle('busy',active); document.body.classList.toggle('ready',ev.phase==='ready');
   if(!active){ document.body.classList.remove('busy','ready'); } }
-function renderFlow(ev){ document.body.classList.add('active'); const f=$('flow'); f.innerHTML=''; S.nodeOrder=ev.nodes.map(n=>n.id);
-  ev.nodes.forEach((n,i)=>{ const item=document.createElement('div'); item.className='fitem'; const conn=i>0?`<span class="fconn" id="fc-${i}"></span>`:'';
-    item.innerHTML=conn+`<div class="fbox ${n.kind}" id="fn-${n.id}" data-status="pending"><span class="ic">${nodeIcon(n)}</span><span class="lab">${esc(n.title)}</span>`
-      +(n.kind==='skill'?'<span class="fprog"><span></span></span>':'')+(n.kind==='confirm'?'<span class="fbadge"></span>':'')+'</div>';
-    f.appendChild(item); }); }
+function makeBox(n){ const el=document.createElement('div'); el.className='fbox '+n.kind; el.id='fn-'+n.id; el.dataset.status='pending';
+  el.innerHTML=`<span class="ic">${nodeIcon(n)}</span><span class="lab">${esc(n.title)}</span>`
+    +(n.kind==='skill'?'<span class="fprog"><span></span></span>':'')+(n.kind==='confirm'?'<span class="fbadge"></span>':''); return el; }
+function renderFlow(ev){ document.body.classList.add('active'); const f=$('flow'); f.innerHTML='';
+  const nodes=ev.nodes; S.nodeOrder=nodes.map(n=>n.id);
+  const BOXW=166, CONNW=26, unit=BOXW+CONNW;
+  const flowW=f.clientWidth||800;
+  const cols=Math.max(2, Math.min(nodes.length, Math.floor((flowW-48+CONNW)/unit)));
+  const rowW=cols*BOXW+(cols-1)*CONNW;
+  for(let r=0; r*cols<nodes.length; r++){
+    const rn=nodes.slice(r*cols, r*cols+cols);
+    if(r>0){ const right=((r-1)%2===0); const x=right?((cols-1)*unit+BOXW/2):(BOXW/2);
+      const turn=document.createElement('div'); turn.className='fturn'; turn.style.width=rowW+'px';
+      turn.innerHTML=`<span class="fconn v" id="cto-${rn[0].id}" style="left:${x-1}px"></span>`; f.appendChild(turn); }
+    const row=document.createElement('div'); row.className='frow'+(r%2?' rev':''); row.style.width=rowW+'px';
+    rn.forEach((n,j)=>{ if(j>0){ const c=document.createElement('span'); c.className='fconn h'; c.id='cto-'+n.id; row.appendChild(c); } row.appendChild(makeBox(n)); });
+    f.appendChild(row);
+  }
+}
 function onNode(ev){ const el=$('fn-'+ev.id); if(!el) return; el.dataset.status=ev.status;
-  const idx=S.nodeOrder.indexOf(ev.id); if(ev.status!=='pending'&&idx>0){ const c=$('fc-'+idx); if(c) c.classList.add('lit'); }
+  if(ev.status!=='pending'){ const c=$('cto-'+ev.id); if(c) c.classList.add('lit'); }
   if(ev.status==='active') el.scrollIntoView({block:'nearest',behavior:'smooth'});
   if(ev.id.startsWith('confirm-')&&(ev.status==='done'||ev.status==='failed')){ const b=el.querySelector('.fbadge');
     if(b){ const pct=ev.confidence!=null?Math.round(ev.confidence*100)+'%':(ev.status==='done'?'ok':'no'); b.textContent=(ev.status==='done'?'✓ ':'✗ ')+pct; el.title=ev.note||''; } } }
