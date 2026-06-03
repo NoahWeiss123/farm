@@ -252,9 +252,15 @@ async def detect_objects(
     sys_prompt = (
         "You are the perception module of a tabletop pick-and-place robot. "
         "You are shown one camera frame of the workspace. Identify which of the "
-        "KNOWN OBJECTS are physically present on the table in front of the arm. "
-        "Briefly narrate what you see, then output a fenced ```json block with "
-        'shape {"summary": "<one short sentence>", "present": ["<key>", ...], '
+        "KNOWN OBJECTS are physically present on the table in front of the arm.\n\n"
+        "First, think out loud and describe the scene in detail: walk through the "
+        "table left to right, name what you see, where each object sits "
+        "(near/far, left/right, on or off the box), its orientation and state, "
+        "anything partially hidden, reflections or clutter that could fool you, "
+        "and how sure you are about each call. Write several real sentences, not "
+        "a one-line summary.\n\n"
+        "Then output a fenced ```json block with shape "
+        '{"summary": "<one sentence>", "present": ["<key>", ...], '
         '"objects": [{"key","object","present": true|false,"confidence": 0..1,"note": "<short>"}]}. '
         "Only use keys from the known-objects list. Order 'present' by pick "
         "convenience (nearest/least-occluded first)."
@@ -320,9 +326,15 @@ async def plan_task(
         "- Each step's 'prompt' MUST be the skill's exact policy_prompt.\n"
         "- If the request can't be done with the available skills, still plan "
         "the steps you can and note the gap.\n\n"
-        "Think briefly out loud about the scene and ordering, then output a "
-        'fenced ```json block: {"summary": "<one sentence>", "steps": '
-        '[{"key","object","prompt","rationale"}]}.'
+        "Reason through this thoroughly and out loud before you answer: restate "
+        "the goal in your own words, list the objects that need to move, and work "
+        "through the best order and WHY, step by step, considering which objects "
+        "are most exposed or on top, what might get knocked over or occluded, and "
+        "reachability. Call out anything uncertain, and any object the request "
+        "mentions that you have no skill for. Write several sentences of real "
+        "reasoning, not a one-line summary.\n\n"
+        "Then output a fenced ```json block: "
+        '{"summary": "<one sentence>", "steps": [{"key","object","prompt","rationale"}]}.'
     )
     user_prompt = (
         f"REQUEST: {task}\n\n"
@@ -363,6 +375,7 @@ async def confirm_action(
     step: dict[str, Any],
     *,
     model: str = DEFAULT_VISION_MODEL,
+    criteria: str | None = None,
     on_delta: Callable[[str], Any] | None = None,
 ) -> dict[str, Any]:
     """Visually verify that a just-executed step actually succeeded.
@@ -377,15 +390,21 @@ async def confirm_action(
     obj = step.get("object") or "the object"
     sys_prompt = (
         "You verify a tabletop pick-and-place robot's work. You are shown one "
-        "camera frame of the workspace AFTER an attempted step. Decide whether it "
-        "succeeded. Reply with a fenced ```json block: "
+        "camera frame of the workspace AFTER an attempted step.\n\n"
+        "First, think out loud about what you see and whether the step succeeded: "
+        "where the target object is now, whether it is clearly resting on the box "
+        "or still on the table or only partway, and anything that makes it hard "
+        "to judge (the arm in the way, occlusion, the object near an edge). A "
+        "couple of real sentences of reasoning.\n\n"
+        "Then output a fenced ```json block: "
         '{"done": true|false, "confidence": 0..1, "note": "<short>", '
         '"arm_blocking": true|false}. Set arm_blocking=true if the robot arm is '
         "occluding the box so you cannot actually tell."
     )
     task = step.get("prompt") or f"place the {obj} on the box"
+    question = criteria.strip() if criteria else f"Is the {obj} now resting on the box?"
     user_content = [
-        {"type": "text", "text": f"The step was: {task!r}. Is the {obj} now resting on the box?"},
+        {"type": "text", "text": f"The step was: {task!r}. Confirmation check: {question}"},
         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
     ]
     text = await stream_chat(

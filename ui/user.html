@@ -83,7 +83,7 @@
   .fbox.skill[data-status="active"] .fprog { display: block; } .fbox .fprog span { display: block; height: 100%; width: 0%; background: var(--green); transition: width 300ms; }
 
   /* robot view: bottom of the left (plan) column, on the same background */
-  .robot { position: relative; flex-shrink: 0; height: 400px; overflow: hidden; background: transparent; }
+  .robot { position: relative; flex-shrink: 0; height: 490px; overflow: hidden; background: transparent; }
   #robot3d { position: absolute; inset: 0; } #robot3d canvas { display: block; }
   .robot-msg { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; color: var(--faint); font-size: 13px; }
   #robot3d.failed ~ .robot-msg { display: flex; }
@@ -149,6 +149,38 @@
   .dot.ok { background: var(--green); } .dot.warn { background: var(--amber); } .dot.bad { background: var(--red); }
   .mini-btn { font-size: 12.5px; background: var(--bg); border: 1px solid var(--border2); border-radius: 8px; padding: 6px 11px; } .mini-btn:hover { background: var(--panel2); } .mini-btn:disabled { opacity: 0.4; cursor: default; }
 
+  /* sensitivity slider */
+  .sens-row { display: flex; align-items: center; gap: 10px; }
+  .sens-row input[type=range] { flex: 1; accent-color: var(--accent); }
+  .sens-row .mono { width: 40px; text-align: right; font-size: 12.5px; color: var(--muted); }
+  /* add-step box + edit popover */
+  .fbox.add { border-style: dashed; cursor: pointer; } .fbox.add .ic, .fbox.add .lab { color: var(--accent); }
+  .fbox.add:hover { background: var(--accent-soft); border-color: var(--accent); }
+  .fbox.skill.editable, .fbox.confirm.editable { cursor: pointer; }
+  .fbox.skill.editable:hover, .fbox.confirm.editable:hover { border-color: var(--accent); }
+  .ed-pop { position: fixed; z-index: 80; width: 264px; background: var(--bg); border: 1px solid var(--border2); border-radius: 12px;
+            box-shadow: 0 12px 40px rgba(20,40,80,0.18); padding: 12px; display: none; flex-direction: column; gap: 9px; }
+  .ed-pop.open { display: flex; }
+  .ed-pop .ed-h { font-size: 11px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  .ed-pop .ed-ta { width: 100%; min-height: 66px; resize: vertical; font: inherit; font-size: 13px; padding: 8px 9px; border: 1px solid var(--border2); border-radius: 8px; }
+  .ed-pop .ed-remove { color: var(--red); background: #fff; border: 1px solid var(--red); border-radius: 8px; padding: 7px; font-size: 13px; }
+  .ed-pop .ed-remove:hover { background: var(--red-soft); }
+  .ed-pop .ed-save { color: #fff; background: var(--accent); border: none; border-radius: 8px; padding: 8px; font-size: 13px; font-weight: 560; }
+  /* devices panel */
+  .dev-btn { flex-shrink: 0; font-size: 13px; color: var(--muted); background: var(--bg); border: 1px solid var(--border2); border-radius: 10px; padding: 10px 14px; }
+  .dev-btn:hover { color: var(--text); border-color: var(--accent); }
+  .dev-pop { position: absolute; right: 22px; bottom: 80px; width: 330px; background: var(--bg); border: 1px solid var(--border2); border-radius: 14px;
+             box-shadow: 0 14px 44px rgba(20,40,80,0.18); padding: 16px; display: none; flex-direction: column; gap: 14px; max-height: 74vh; overflow-y: auto; }
+  .dev-pop.open { display: flex; }
+  .dev-h { font-size: 11px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  .dev-stat { display: flex; align-items: center; gap: 9px; font-size: 13px; } .dev-stat .spacer { flex: 1; } .dev-stat .v { color: var(--muted); font-size: 12.5px; }
+  .dev-cams { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .dev-cam { position: relative; aspect-ratio: 4/3; border-radius: 9px; overflow: hidden; background: #0a0a0a; border: 1px solid var(--border2); }
+  .dev-cam img { width: 100%; height: 100%; object-fit: cover; display: block; visibility: hidden; } .dev-cam img.live { visibility: visible; }
+  .dev-cam .cap { position: absolute; bottom: 4px; left: 6px; font-size: 9px; color: #fff; text-shadow: 0 1px 2px #000; text-transform: uppercase; letter-spacing: 0.08em; }
+  .dev-cam .ns { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.5); font-size: 10px; } .dev-cam.live .ns { display: none; }
+  .dev-acts { display: flex; gap: 8px; } .dev-acts button { flex: 1; }
+
   .toast { position: fixed; left: 50%; bottom: 92px; transform: translateX(-50%) translateY(12px); background: var(--text); color: #fff; padding: 10px 17px;
            border-radius: 11px; font-size: 13.5px; opacity: 0; pointer-events: none; transition: all 200ms; z-index: 60; box-shadow: 0 8px 30px rgba(0,0,0,0.2); }
   .toast.show { opacity: 1; transform: translateX(-50%); } .toast.err { background: var(--red); }
@@ -189,10 +221,12 @@
           <select class="sel-in" id="sample"></select></div>
         <div class="opt"><div class="switch-row">
           <div><div style="font-weight:540">Confirm each step</div><div class="muted" style="font-size:12.5px">check with vision that each step finished before the next</div></div>
-          <label class="switch"><input type="checkbox" id="confirm" checked><span class="tr"></span></label></div></div>
+          <label class="switch"><input type="checkbox" id="confirm" checked><span class="tr"></span></label></div>
+          <div class="sens-row"><span class="muted" style="font-size:12.5px">Confidence needed</span><input type="range" id="sens" min="1" max="10" value="6"><span class="mono" id="sensVal">6/10</span></div></div>
         <div class="opt"><span class="opt-label">Policy server</span>
           <div class="serveline"><span class="dot" id="serveDot"></span><span id="serveTxt" class="muted">checking</span><span class="spacer"></span><button class="mini-btn" id="serveBtn">Start server</button></div></div>
       </div>
+      <div class="dev-pop" id="devPop"></div>
       <button class="estop" id="estopBtn" title="emergency stop">E-STOP</button>
       <div class="composer">
         <button class="ghost" id="optsBtn">Options</button>
@@ -201,15 +235,18 @@
         <button class="btn-arm" id="armBtn">Run on arm</button>
         <button class="btn-dark" id="runBtn">Run</button>
       </div>
+      <button class="dev-btn" id="devBtn">Devices</button>
     </div>
   </div>
 
   <div class="toast" id="toast"></div>
+  <div class="ed-pop" id="editPop"></div>
 
 <script>
 const $ = id => document.getElementById(id);
 const S = { cfg:null, skills:[], bases:[], base:'fft_hotswap', enabled:new Set(), samples:[], src:'sample',
-            lastSeq:0, nodeOrder:[], current:null, abilities:[], context:[], curBlock:{}, raw:{} };
+            lastSeq:0, nodeOrder:[], current:null, abilities:[], context:[], curBlock:{}, raw:{},
+            editSteps:[], editable:false, isAbility:false };
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let toastT; function toast(m,e){ const t=$('toast'); t.textContent=m; t.classList.toggle('err',!!e); t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'), e?5000:2400); }
 
@@ -221,6 +258,8 @@ const ICON = {
   done:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.6 2.6 5.4-6"/></svg>',
   skill:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.7 7.2 12 12l8.3-4.8M12 12v9.3"/></svg>',
   play:'<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"/></svg>',
+  load:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v10m0 0 4-4m-4 4-4-4"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>',
+  add:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
 };
 const nodeIcon = n => n.kind==='skill' ? ICON.skill : (ICON[n.kind]||ICON.plan);
 function fmtReasoning(raw){
@@ -260,6 +299,7 @@ function syncImages(){ const useImg=$('useImages').checked; $('srcSeg').style.di
 $('useImages').addEventListener('change', syncImages);
 [...$('srcSeg').children].forEach(b=>b.onclick=()=>{ S.src=b.dataset.src; [...$('srcSeg').children].forEach(x=>x.classList.toggle('on',x===b)); syncImages(); });
 $('optsBtn').onclick=()=>$('optsPanel').classList.toggle('open');
+$('sens').oninput=()=>{ $('sensVal').textContent=$('sens').value+'/10'; };
 
 const ta=$('task');
 function autogrow(){ ta.style.height='auto'; ta.style.height=Math.min(120,ta.scrollHeight)+'px'; }
@@ -271,20 +311,22 @@ async function submit(){ const text=ta.value.trim(); if(!text) return;
   if(document.body.classList.contains('active')){ S.context.push(text); try{ await fetch('/v1/agent/stop',{method:'POST'}); }catch(e){} }
   else { S.context=[text]; }
   ta.value=''; autogrow(); await startRun(buildTask()); }
-function runBody(extra){ return Object.assign({ plan_first:true, confirm:$('confirm').checked, use_images:$('useImages').checked,
-    camera_source:S.src, sample_episode:S.src==='sample'?($('sample').value||null):null }, extra); }
-async function startRun(task){ resetRun();
+function runBody(extra){ return Object.assign({ plan_first:true, confirm:$('confirm').checked, confirm_threshold:(+$('sens').value)/10,
+    use_images:$('useImages').checked, camera_source:S.src, sample_episode:S.src==='sample'?($('sample').value||null):null }, extra); }
+async function startRun(task){ S.isAbility=false; resetRun();
   try{ const r=await fetch('/v1/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(runBody({ task, base_model:S.base, skills:[...S.enabled], model:$('model').value }))});
     const d=await r.json(); if(!r.ok) throw new Error(d.error||('HTTP '+r.status));
   }catch(e){ toast('could not start: '+e.message,true); document.body.classList.remove('busy','active','ready'); } }
-async function runAbility(id){ S.context=[]; resetRun();
+async function runAbility(id){ S.context=[]; S.isAbility=true; resetRun();
   try{ const r=await fetch('/v1/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(runBody({ ability_id:id }))});
     const d=await r.json(); if(!r.ok) throw new Error(d.error||('HTTP '+r.status));
   }catch(e){ toast('could not start: '+e.message,true); document.body.classList.remove('busy','active','ready'); } }
 $('runBtn').onclick=submit;
 $('stopBtn').onclick=async()=>{ try{ await fetch('/v1/agent/stop',{method:'POST'}); }catch(e){} S.context=[]; toast('stopped'); };
-$('armBtn').onclick=async()=>{ try{ await fetch('/v1/agent/execute',{method:'POST'}); toast('running on the arm'); }catch(e){} };
+$('armBtn').onclick=async()=>{ closeEditor();
+  const steps=S.editSteps.map(s=>({key:s.key,object:s.object,label:s.label,prompt:s.prompt,repo:s.repo,confirm_prompt:s.confirm_prompt||''}));
+  try{ await fetch('/v1/agent/execute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({steps, confirm_threshold:(+$('sens').value)/10})}); toast('running on the arm'); }catch(e){} };
 $('newBtn').onclick=async()=>{ try{ await fetch('/v1/agent/stop',{method:'POST'}); }catch(e){}
   S.context=[]; S.current=null; document.body.classList.remove('active','busy','ready');
   $('flow').innerHTML=''; $('transcript').innerHTML='<div class="t-empty">The agent\'s reasoning and the frames it observes appear here.</div>';
@@ -302,8 +344,9 @@ function handle(ev){ if(ev.seq!=null){ if(ev.seq<=S.lastSeq) return; S.lastSeq=e
     case 'progress': onProgress(ev); break; case 'swap': onSwap(ev); break; case 'error': onError(ev); break; case 'done': onDone(ev); break; } }
 function onState(ev){ const active=!['idle','done','stopped','error'].includes(ev.phase);
   document.body.classList.toggle('busy',active); document.body.classList.toggle('ready',ev.phase==='ready');
+  if(ev.phase==='ready'){ S.editable=true; renderEditable(); } else if(ev.phase==='executing'){ S.editable=false; closeEditor(); }
   if(!active){ document.body.classList.remove('busy','ready'); } }
-function makeBox(n){ const el=document.createElement('div'); el.className='fbox '+n.kind; el.id='fn-'+n.id; el.dataset.status='pending';
+function makeBox(n){ const el=document.createElement('div'); el.className='fbox '+n.kind+(n.editable?' editable':''); el.id='fn-'+n.id; el.dataset.status='pending';
   el.innerHTML=`<span class="ic">${nodeIcon(n)}</span><span class="lab">${esc(n.title)}</span>`
     +(n.kind==='skill'?'<span class="fprog"><span></span></span>':'')+(n.kind==='confirm'?'<span class="fbadge"></span>':''); return el; }
 function renderFlow(ev){ document.body.classList.add('active'); const f=$('flow'); f.innerHTML='';
@@ -333,12 +376,13 @@ function onImage(ev){ clearEmpty(); const fig=document.createElement('figure'); 
   fig.innerHTML=`<img src="${ev.url}" alt=""><figcaption>${esc(ev.caption||'')}</figcaption>`; $('transcript').appendChild(fig); S.curBlock={}; trScroll(); }
 function onThinking(ev){ clearEmpty(); const ch=ev.channel;
   if(ev.reset || !S.curBlock[ch]){ const blk=document.createElement('div'); blk.className='t-block';
-    blk.innerHTML=`<div class="tlabel">${ch==='vision'?'Perception':'Reasoning'}</div><div class="ttext"></div>`;
+    blk.innerHTML=`<div class="tlabel">${{vision:'Perception',plan:'Reasoning',confirm:'Verifying'}[ch]||'Reasoning'}</div><div class="ttext"></div>`;
     $('transcript').appendChild(blk); S.curBlock[ch]=blk.querySelector('.ttext'); S.raw[ch]=''; }
   if(ev.delta){ S.raw[ch]=(S.raw[ch]||'')+ev.delta; S.curBlock[ch].innerHTML=fmtReasoning(S.raw[ch]); trScroll(); }
   if(ev.done) S.curBlock[ch]=null; }
 function onPlan(ev){ S.current={ task:(ev.task||S.context[0]||''), base_model:S.base, summary:ev.summary||'',
-    steps:(ev.steps||[]).map(s=>({key:s.key,object:s.object,label:s.label,emoji:s.emoji,prompt:s.prompt,repo:s.repo,rationale:s.rationale})) };
+    steps:(ev.steps||[]).map(s=>({key:s.key,object:s.object,label:s.label,emoji:s.emoji,prompt:s.prompt,repo:s.repo,rationale:s.rationale,confirm_prompt:s.confirm_prompt||''})) };
+  S.editSteps = S.current.steps.map(s=>({...s}));
   $('saveBtn').style.display = S.current.steps.length ? 'inline-block':'none'; }
 function onProgress(ev){ const el=$('fn-step-'+ev.index); if(!el) return; const bar=el.querySelector('.fprog span'); if(bar) bar.style.width=(ev.pct||0)+'%'; }
 function onSwap(ev){ const el=$('fn-step-'+ev.index); if(el) el.classList.add('swapped'); }
@@ -370,6 +414,72 @@ $('serveBtn').onclick=async()=>{ const act=$('serveBtn').dataset.act;
       const d=await r.json(); if(!r.ok&&r.status!==409) throw new Error(d.error||('HTTP '+r.status)); toast('server starting'); }
     else if(act==='stop'){ await fetch('/v1/serve/stop',{method:'POST'}); toast('server stopping'); } pollServe();
   }catch(e){ toast('serve: '+e.message,true); } };
+
+// ── editable plan ─────────────────────────────────────────────────────────
+function buildNodes(steps, editable){
+  const nodes=[{id:'trigger',kind:'trigger',title:'Task',detail:(S.context[0]||'').slice(0,60)}];
+  if(!S.isAbility){ nodes.push({id:'perceive',kind:'perceive',title:'Look',detail:'scan the table'}); nodes.push({id:'plan',kind:'plan',title:'Plan',detail:'break into steps'}); }
+  const usesSkills=baseSkillsEnabled(), conf=$('confirm').checked;
+  steps.forEach((s,i)=>{ const obj=s.object||s.key;
+    if(usesSkills) nodes.push({id:'load-'+i,kind:'load',title:'Load '+(s.label||obj)+' skill',detail:s.repo||''});
+    nodes.push({id:'step-'+i,kind:'skill',title:'Pick up '+obj,detail:'',editable});
+    if(conf) nodes.push({id:'confirm-'+i,kind:'confirm',title:'Confirm '+obj,detail:(s.confirm_prompt||('is the '+obj+' on the box?')),editable}); });
+  if(editable) nodes.push({id:'add',kind:'add',title:'Add step'});
+  nodes.push({id:'done',kind:'done',title:'Done'}); return nodes;
+}
+function renderEditable(){ if(!S.editSteps) return; renderFlow({nodes:buildNodes(S.editSteps,true)});
+  S.editSteps.forEach((s,i)=>{ const p=$('fn-step-'+i); if(p) p.onclick=(e)=>{ e.stopPropagation(); openEditor(i,'pick',p); };
+    const c=$('fn-confirm-'+i); if(c) c.onclick=(e)=>{ e.stopPropagation(); openEditor(i,'confirm',c); }; });
+  const a=$('fn-add'); if(a) a.onclick=(e)=>{ e.stopPropagation(); addStep(); }; }
+function openEditor(i,type,anchor){ const pop=$('editPop'); const r=anchor.getBoundingClientRect();
+  if(type==='pick'){ pop.innerHTML='<div class="ed-h">Edit step</div>'
+      +'<select id="edSkill" class="sel-in">'+S.skills.map(s=>`<option value="${s.key}"${s.key===S.editSteps[i].key?' selected':''}>${esc(s.label)}</option>`).join('')+'</select>'
+      +'<button class="ed-remove" id="edRemove">Remove step</button>';
+    setTimeout(()=>{ $('edSkill').onchange=(e)=>{ const sk=skillBy(e.target.value); S.editSteps[i]={...S.editSteps[i],key:sk.key,object:sk.object,label:sk.label,prompt:sk.prompt,repo:sk.repo}; renderEditable(); closeEditor(); };
+      $('edRemove').onclick=()=>{ S.editSteps.splice(i,1); renderEditable(); closeEditor(); }; },0);
+  } else { pop.innerHTML='<div class="ed-h">What to confirm</div>'
+      +'<textarea id="edCrit" class="ed-ta" placeholder="e.g. the hat is clearly resting on top of the box">'+esc(S.editSteps[i].confirm_prompt||'')+'</textarea>'
+      +'<button class="ed-save" id="edSave">Save</button>';
+    setTimeout(()=>{ $('edSave').onclick=()=>{ S.editSteps[i].confirm_prompt=$('edCrit').value.trim(); renderEditable(); closeEditor(); }; $('edCrit').focus(); },0); }
+  pop.classList.add('open'); const w=264, x=Math.max(10,Math.min(r.left, window.innerWidth-w-10));
+  pop.style.left=x+'px'; pop.style.top=(r.top-10)+'px'; pop.style.transform='translateY(-100%)'; }
+function closeEditor(){ $('editPop').classList.remove('open'); }
+function addStep(){ const sk=S.skills.find(x=>S.enabled.has(x.key))||S.skills[0]; if(!sk) return;
+  S.editSteps.push({key:sk.key,object:sk.object,label:sk.label,prompt:sk.prompt,repo:sk.repo,confirm_prompt:''}); renderEditable(); }
+document.addEventListener('click',e=>{ if(!$('editPop').contains(e.target) && !e.target.closest('.fbox')) closeEditor(); });
+
+// ── devices panel ─────────────────────────────────────────────────────────
+let devCamTimer=null;
+$('devBtn').onclick=()=>{ const p=$('devPop'); p.classList.toggle('open'); if(p.classList.contains('open')) refreshDevices(); else if(devCamTimer){ clearInterval(devCamTimer); devCamTimer=null; } };
+async function refreshDevices(){
+  const p=$('devPop'); let world={},hud={},serve={};
+  try{ world=await (await fetch('/v1/world',{cache:'no-store'})).json(); }catch(e){}
+  try{ hud=await (await fetch('/v1/hud',{cache:'no-store'})).json(); }catch(e){}
+  try{ serve=await (await fetch('/v1/serve/status',{cache:'no-store'})).json(); }catch(e){}
+  const cams=hud.cameras||[];
+  const dot=(ok,w)=>`<span class="dot ${ok?'ok':(w?'warn':'bad')}"></span>`;
+  const row=(ok,label,val,warn)=>`<div class="dev-stat">${dot(ok,warn)}<span>${esc(label)}</span><span class="spacer"></span><span class="v">${esc(val)}</span></div>`;
+  const robotName = world.backend==='xarm' ? (world.arm_ip||'UF850') : 'Simulator';
+  let html='<div class="dev-h">Connections</div>';
+  html+=row(true,'Daemon','online');
+  html+=row(world.backend!=null,'Robot',robotName,world.backend==='sim');
+  cams.forEach(c=> html+=row(!!c.alive,'Camera · '+c.name,c.alive?'connected':'no signal') );
+  if(!cams.length) html+=row(false,'Cameras','none detected',true);
+  html+=row(serve.bound===true,'Policy server',serve.running?(serve.phase||'starting'):'not running',serve.running&&!serve.bound);
+  html+=row(!!(S.cfg&&S.cfg.do_available),'DigitalOcean',(S.cfg&&S.cfg.do_available)?'connected':'no key');
+  html+='<div class="dev-h">Cameras</div><div class="dev-cams">'
+    +'<div class="dev-cam" id="dcBase"><img id="dcBaseImg"><span class="cap">base</span><span class="ns">no signal</span></div>'
+    +'<div class="dev-cam" id="dcWrist"><img id="dcWristImg"><span class="cap">wrist</span><span class="ns">no signal</span></div></div>';
+  html+='<div class="dev-acts"><button class="mini-btn" id="dcSwap">Switch cameras</button><button class="mini-btn" id="dcRefresh">Check again</button></div>';
+  p.innerHTML=html;
+  $('dcSwap').onclick=async()=>{ try{ await fetch('/v1/cameras/swap',{method:'POST'}); toast('cameras swapped'); }catch(e){} };
+  $('dcRefresh').onclick=refreshDevices;
+  if(devCamTimer) clearInterval(devCamTimer);
+  const tick=()=>{ if(!$('devPop').classList.contains('open')){ clearInterval(devCamTimer); devCamTimer=null; return; }
+    [['base','dcBase'],['wrist','dcWrist']].forEach(([n,id])=>{ const tile=$(id); if(!tile) return; const img=tile.querySelector('img'); const pr=new Image();
+      pr.onload=()=>{ img.src=pr.src; img.classList.add('live'); tile.classList.add('live'); }; pr.onerror=()=>{ img.classList.remove('live'); tile.classList.remove('live'); }; pr.src='/v1/cameras/'+n+'.jpg?t='+Date.now(); }); };
+  tick(); devCamTimer=setInterval(tick,250);
+}
 
 boot();
 </script>

@@ -158,10 +158,20 @@ class Orchestrator:
         self._execute_on_go = bool(cfg.get("execute", False))
         self._task = asyncio.create_task(self._guarded_run(cfg))
 
-    def continue_run(self) -> bool:
-        """Release the plan-then-wait gate so execution begins (Run on arm)."""
+    def continue_run(self, steps: list[dict[str, Any]] | None = None,
+                     confirm_threshold: float | None = None) -> bool:
+        """Release the plan-then-wait gate so execution begins (Run on arm).
+        Optionally replace the planned steps with the user-edited ones, and
+        override the confirmation sensitivity."""
         go = getattr(self, "_go", None)
         if go is not None and not go.is_set():
+            if steps:
+                self._steps = self._decorate(steps)
+            if confirm_threshold is not None:
+                try:
+                    self._confirm_threshold = max(0.0, min(1.0, float(confirm_threshold)))
+                except (TypeError, ValueError):
+                    pass
             self._execute_on_go = True
             go.set()
             return True
@@ -239,6 +249,9 @@ class Orchestrator:
                 raise RuntimeError("this ability has no steps")
             task = ab.get("task") or ab.get("name") or "ability"
             base = BASE_BY_KEY.get(ab.get("base_model")) or base
+            self._uses_skills = base.get("skills_enabled", True)
+            self._task = task
+            self._ability_mode = True
             self._set_state("starting", task=task, base=base["key"], ability=ab.get("name"),
                             message=f"running ability: {ab.get('name')}")
             self._emit("config", task=task, base=base, skills=steps,
@@ -247,8 +260,9 @@ class Orchestrator:
             self._emit_workflow(task, steps, ability=True)
             self._node("trigger", "done")
             self._emit("plan", steps=steps, summary=ab.get("summary") or "", ability=ab.get("name"))
+            self._steps = steps
             await self._await_go(len(steps))
-            await self._dispatch(steps, base, step_seconds, want_execute=self._execute_on_go)
+            await self._dispatch(self._steps, base, step_seconds, want_execute=self._execute_on_go)
             return
 
         # Fresh plan: perceive, plan, then execute.
@@ -258,6 +272,9 @@ class Orchestrator:
         enabled_keys = [k for k in (cfg.get("skills") or [s["key"] for s in SKILLS])
                         if k in SKILL_BY_KEY]
         enabled = [SKILL_BY_KEY[k] for k in enabled_keys] or SKILLS
+        self._uses_skills = base.get("skills_enabled", True)
+        self._task = task
+        self._ability_mode = False
 
         self._set_state("starting", task=task, base=base["key"],
                         skills=enabled_keys, message="warming up")
@@ -329,8 +346,9 @@ class Orchestrator:
         self._node("plan", "done")
         self._emit("plan", steps=steps, summary=summary)
 
+        self._steps = steps
         await self._await_go(len(steps))
-        await self._dispatch(steps, base, step_seconds, want_execute=self._execute_on_go)
+        await self._dispatch(self._steps, base, step_seconds, want_execute=self._execute_on_go)
 
     # -- workflow graph ------------------------------------------------------
 
@@ -361,14 +379,19 @@ class Orchestrator:
         if not ability:
             nodes.append({"id": "perceive", "kind": "perceive", "title": "Look", "detail": "scan the table"})
             nodes.append({"id": "plan", "kind": "plan", "title": "Plan", "detail": "break into steps"})
+        uses_skills = getattr(self, "_uses_skills", True)
+        confirm_on = getattr(self, "_confirm_enabled", True)
         for i, s in enumerate(steps or []):
-            nodes.append({"id": f"step-{i}", "kind": "skill",
-                          "title": s.get("label") or s.get("object") or s.get("key"),
-                          "emoji": s.get("emoji", ""), "skill": s.get("key"),
-                          "detail": s.get("repo", "")})
-            if getattr(self, "_confirm_enabled", True):
-                nodes.append({"id": f"confirm-{i}", "kind": "confirm", "title": "Confirm",
-                              "detail": f"is the {s.get('object') or 'object'} placed?"})
+            obj = s.get("object") or s.get("key")
+            if uses_skills:
+                nodes.append({"id": f"load-{i}", "kind": "load", "skill": s.get("key"),
+                              "title": f"Load {s.get('label') or obj} skill", "detail": s.get("repo", "")})
+            nodes.append({"id": f"step-{i}", "kind": "skill", "title": f"Pick up {obj}",
+                          "skill": s.get("key"), "detail": ""})
+            if confirm_on:
+                crit = s.get("confirm_prompt") or f"is the {obj} on the box?"
+                nodes.append({"id": f"confirm-{i}", "kind": "confirm",
+                              "title": f"Confirm {obj}", "detail": crit})
         nodes.append({"id": "done", "kind": "done", "title": "Done", "detail": ""})
         edges = [[nodes[k]["id"], nodes[k + 1]["id"]] for k in range(len(nodes) - 1)]
         self._emit("workflow", nodes=nodes, edges=edges, ability=bool(ability))
@@ -411,16 +434,27 @@ class Orchestrator:
     async def _execute(self, steps: list[dict[str, Any]], step_seconds: float, *, live: bool) -> None:
         total = len(steps)
         self._total = total
+        # Re-emit the graph so it matches the (possibly user-edited) steps, then
+        # re-assert the planning prefix as done.
+        self._emit_workflow(self._task, steps, ability=self._ability_mode)
+        self._node("trigger", "done")
+        if not self._ability_mode:
+            self._node("perceive", "done")
+            self._node("plan", "done")
         self._set_state("executing", mode="live" if live else "preview", total=total,
                         message="running the task" if live else "previewing the plan")
         per_step_max = max(60, int(step_seconds * POLICY_RATE_HZ) + 30)
         prev_key: str | None = None
         for i, st in enumerate(steps):
+            # load the per-object skill (adapter hot-swap) when the base uses skills
+            if self._uses_skills:
+                self._node(f"load-{i}", "active")
+                await self._announce_swap(i, prev_key, st)
+                self._node(f"load-{i}", "done")
+            prev_key = st["key"]
             self._node(f"step-{i}", "active")   # green border on the running node
             self._emit("step", index=i, total=total, key=st["key"], object=st["object"],
                        label=st["label"], emoji=st["emoji"], prompt=st["prompt"], status="active")
-            await self._announce_swap(i, prev_key, st)
-            prev_key = st["key"]
             await self._run_one_step(i, total, st, step_seconds, per_step_max, live=live)
             self._node(f"step-{i}", "done")
             self._emit("step", index=i, total=total, key=st["key"], status="done")
@@ -470,11 +504,17 @@ class Orchestrator:
             frame = await self._observe(frac, f"Checking: {step.get('object')}")
             if frame is None:
                 return True, None, "no camera, assumed complete"
+            self._emit("thinking", channel="confirm", delta="", reset=True)
             try:
                 res = await do_inference.confirm_action(
-                    self._session, frame, step, model=self._model)
+                    self._session, frame, step, model=self._model,
+                    criteria=step.get("confirm_prompt") or None,
+                    on_delta=lambda d: self._emit("thinking", channel="confirm", delta=d),
+                )
             except Exception as exc:  # noqa: BLE001
+                self._emit("thinking", channel="confirm", delta="", done=True)
                 return True, None, f"confirm skipped ({exc})"
+            self._emit("thinking", channel="confirm", delta="", done=True)
             if res.get("arm_blocking") and attempt == 0:
                 self._log(f"step {index + 1}: arm blocking the view, moving it aside and re-checking")
                 continue
