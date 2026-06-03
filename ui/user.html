@@ -221,6 +221,9 @@
         <div class="opt"><span class="opt-label">Skills</span><div class="skillrow" id="skills"></div><div class="hint" id="skillsHint" style="display:none"></div></div>
         <div class="opt"><span class="opt-label">Model</span><select class="sel-in" id="model"></select></div>
         <div class="opt"><div class="switch-row">
+          <div><div style="font-weight:540">Advanced mode</div><div class="muted" style="font-size:12.5px">edit the exact prompt sent to the policy for each step</div></div>
+          <label class="switch"><input type="checkbox" id="advanced"><span class="tr"></span></label></div></div>
+        <div class="opt"><div class="switch-row">
           <div><div style="font-weight:540">Use images</div><div class="muted" style="font-size:12.5px">look and confirm with vision, off is text only</div></div>
           <label class="switch"><input type="checkbox" id="useImages" checked><span class="tr"></span></label></div>
           <div class="src-seg" id="srcSeg"><button data-src="sample" class="on">Sample footage</button><button data-src="real">Real camera</button></div>
@@ -445,10 +448,14 @@ function renderEditable(){ if(!S.editSteps) return; renderFlow({nodes:buildNodes
 function insertStep(i){ const sk=S.skills.find(x=>S.enabled.has(x.key))||S.skills[0]; if(!sk) return;
   S.editSteps.splice(i,0,{key:sk.key,object:sk.object,label:sk.label,prompt:sk.prompt,repo:sk.repo,confirm_prompt:''}); renderEditable(); }
 function openEditor(i,type,anchor){ const pop=$('editPop'); const r=anchor.getBoundingClientRect();
-  if(type==='pick'){ pop.innerHTML='<div class="ed-h">Edit step</div>'
+  if(type==='pick'){ const adv=$('advanced').checked;
+    pop.innerHTML='<div class="ed-h">Skill</div>'
       +'<select id="edSkill" class="sel-in">'+S.skills.map(s=>`<option value="${s.key}"${s.key===S.editSteps[i].key?' selected':''}>${esc(s.label)}</option>`).join('')+'</select>'
+      +(adv?('<div class="ed-h" style="margin-top:2px">Policy prompt (LoRA + FFT)</div><textarea id="edPrompt" class="ed-ta">'+esc(S.editSteps[i].prompt||'')+'</textarea><button class="ed-save" id="edPSave">Save prompt</button>'):'')
       +'<button class="ed-remove" id="edRemove">Remove step</button>';
-    setTimeout(()=>{ $('edSkill').onchange=(e)=>{ const sk=skillBy(e.target.value); S.editSteps[i]={...S.editSteps[i],key:sk.key,object:sk.object,label:sk.label,prompt:sk.prompt,repo:sk.repo}; renderEditable(); closeEditor(); };
+    setTimeout(()=>{ $('edSkill').onchange=(e)=>{ const sk=skillBy(e.target.value); S.editSteps[i]={...S.editSteps[i],key:sk.key,object:sk.object,label:sk.label,prompt:sk.prompt,repo:sk.repo};
+        if(adv){ if($('edPrompt')) $('edPrompt').value=sk.prompt||''; renderEditable(); } else { renderEditable(); closeEditor(); } };
+      if(adv && $('edPSave')) $('edPSave').onclick=()=>{ S.editSteps[i].prompt=$('edPrompt').value.trim(); renderEditable(); closeEditor(); };
       $('edRemove').onclick=()=>{ S.editSteps.splice(i,1); renderEditable(); closeEditor(); }; },0);
   } else { pop.innerHTML='<div class="ed-h">What to confirm</div>'
       +'<textarea id="edCrit" class="ed-ta" placeholder="e.g. the hat is clearly resting on top of the box">'+esc(S.editSteps[i].confirm_prompt||'')+'</textarea>'
