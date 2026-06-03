@@ -152,7 +152,20 @@ class Orchestrator:
         if self.running:
             raise RuntimeError("an agent run is already in progress")
         self.bus.reset()
+        # Plan-then-wait gate: the run perceives + plans, then holds at "ready"
+        # until continue_run() is called (the page's "Run on arm" button).
+        self._go = asyncio.Event()
+        self._execute_on_go = bool(cfg.get("execute", False))
         self._task = asyncio.create_task(self._guarded_run(cfg))
+
+    def continue_run(self) -> bool:
+        """Release the plan-then-wait gate so execution begins (Run on arm)."""
+        go = getattr(self, "_go", None)
+        if go is not None and not go.is_set():
+            self._execute_on_go = True
+            go.set()
+            return True
+        return False
 
     async def stop(self) -> None:
         t = self._task
@@ -207,7 +220,10 @@ class Orchestrator:
         self._use_images = bool(cfg.get("use_images", True))
         self._sample_id = cfg.get("sample_episode") or None
         self._total = 1
-        want_execute = bool(cfg.get("execute", False))
+        # Plan-then-wait: after planning, hold until the user clicks Run on arm.
+        self._wait_for_arm = bool(cfg.get("plan_first", True))
+        # Whether to visually confirm each step with the vision model before moving on.
+        self._confirm_enabled = bool(cfg.get("confirm", True))
         step_seconds = max(0.5, float(cfg.get("step_seconds") or DEFAULT_STEP_SECONDS))
 
         # Ability re-run: skip vision + planning, replay the saved steps.
@@ -224,12 +240,13 @@ class Orchestrator:
             self._set_state("starting", task=task, base=base["key"], ability=ab.get("name"),
                             message=f"running ability: {ab.get('name')}")
             self._emit("config", task=task, base=base, skills=steps,
-                       model=self._model, execute=want_execute,
+                       model=self._model, execute=self._execute_on_go,
                        ability={"id": ab.get("id"), "name": ab.get("name")})
             self._emit_workflow(task, steps, ability=True)
             self._node("trigger", "done")
             self._emit("plan", steps=steps, summary=ab.get("summary") or "", ability=ab.get("name"))
-            await self._dispatch(steps, base, step_seconds, want_execute=want_execute)
+            await self._await_go(len(steps))
+            await self._dispatch(steps, base, step_seconds, want_execute=self._execute_on_go)
             return
 
         # Fresh plan: perceive, plan, then execute.
@@ -243,7 +260,7 @@ class Orchestrator:
         self._set_state("starting", task=task, base=base["key"],
                         skills=enabled_keys, message="warming up")
         self._emit("config", task=task, base=base, skills=enabled,
-                   model=self._model, execute=want_execute)
+                   model=self._model, execute=self._execute_on_go)
         # The graph skeleton shows immediately, even with no arm or camera.
         self._emit_workflow(task, None, ability=False)
         self._node("trigger", "done")
@@ -310,7 +327,8 @@ class Orchestrator:
         self._node("plan", "done")
         self._emit("plan", steps=steps, summary=summary)
 
-        await self._dispatch(steps, base, step_seconds, want_execute=want_execute)
+        await self._await_go(len(steps))
+        await self._dispatch(steps, base, step_seconds, want_execute=self._execute_on_go)
 
     # -- workflow graph ------------------------------------------------------
 
@@ -346,8 +364,9 @@ class Orchestrator:
                           "title": s.get("label") or s.get("object") or s.get("key"),
                           "emoji": s.get("emoji", ""), "skill": s.get("key"),
                           "detail": s.get("repo", "")})
-            nodes.append({"id": f"confirm-{i}", "kind": "confirm", "title": "Confirm",
-                          "detail": f"is the {s.get('object') or 'object'} placed?"})
+            if getattr(self, "_confirm_enabled", True):
+                nodes.append({"id": f"confirm-{i}", "kind": "confirm", "title": "Confirm",
+                              "detail": f"is the {s.get('object') or 'object'} placed?"})
         nodes.append({"id": "done", "kind": "done", "title": "Done", "detail": ""})
         edges = [[nodes[k]["id"], nodes[k + 1]["id"]] for k in range(len(nodes) - 1)]
         self._emit("workflow", nodes=nodes, edges=edges, ability=bool(ability))
@@ -361,6 +380,15 @@ class Orchestrator:
         return s if len(s) <= n else s[: n - 1] + "..."
 
     # -- execution -----------------------------------------------------------
+
+    async def _await_go(self, n_steps: int) -> None:
+        """Plan-then-wait gate: hold after planning until Run on arm is clicked."""
+        if not self._wait_for_arm:
+            return
+        self._set_state("ready", total=n_steps,
+                        message="plan ready, click Run on arm to execute")
+        self._emit("ready", total=n_steps)
+        await self._go.wait()
 
     async def _dispatch(self, steps: list[dict[str, Any]], base: dict[str, Any],
                         step_seconds: float, *, want_execute: bool) -> None:
@@ -395,7 +423,9 @@ class Orchestrator:
             self._node(f"step-{i}", "done")
             self._emit("step", index=i, total=total, key=st["key"], status="done")
 
-            # confirm with the camera, moving the arm out of the way first
+            # confirm with the camera (when enabled), moving the arm out of the way first
+            if not self._confirm_enabled:
+                continue
             self._node(f"confirm-{i}", "active")
             ok, conf, note = await self._confirm(st, i, live=live)
             if not ok and live:

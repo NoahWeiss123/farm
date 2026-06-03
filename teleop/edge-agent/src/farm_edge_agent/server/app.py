@@ -1507,6 +1507,14 @@ async def post_agent_stop(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def post_agent_execute(request: web.Request) -> web.Response:
+    """Release the plan-then-wait gate so execution starts (the page's Run on arm)."""
+    if not _is_local_origin(request):
+        return web.json_response({"error": "cross-origin requests are not allowed"}, status=403)
+    orch = request.app["orchestrator"]
+    return web.json_response({"ok": orch.continue_run()})
+
+
 async def get_agent_state(request: web.Request) -> web.Response:
     orch = request.app["orchestrator"]
     return web.json_response({"running": orch.running, "state": orch.state})
@@ -1673,6 +1681,7 @@ def build_app(*, backend: RobotBackend | None = None) -> web.Application:
         web.get("/v1/agent/samples", get_agent_samples),
         web.post("/v1/agent/run", post_agent_run),
         web.post("/v1/agent/stop", post_agent_stop),
+        web.post("/v1/agent/execute", post_agent_execute),
         web.get("/v1/agent/state", get_agent_state),
         web.get("/v1/agent/stream", stream_agent),
         web.get("/v1/abilities", get_abilities),
