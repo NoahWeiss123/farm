@@ -438,7 +438,7 @@ function buildNodes(steps, editable){
 function renderEditable(){ if(!S.editSteps) return; renderFlow({nodes:buildNodes(S.editSteps,true)});
   const usesSkills=baseSkillsEnabled(); const n=S.editSteps.length;
   S.editSteps.forEach((s,i)=>{
-    const l=$('fn-load-'+i); if(l) l.onclick=(e)=>{ e.stopPropagation(); openEditor(i,'pick',l); };
+    const l=$('fn-load-'+i); if(l) l.onclick=(e)=>{ e.stopPropagation(); openEditor(i,'load',l); };
     const p=$('fn-step-'+i); if(p) p.onclick=(e)=>{ e.stopPropagation(); openEditor(i,'pick',p); };
     const c=$('fn-confirm-'+i); if(c) c.onclick=(e)=>{ e.stopPropagation(); openEditor(i,'confirm',c); }; });
   for(let i=0;i<=n;i++){ const fid = i<n ? ((usesSkills?'load-':'step-')+i) : 'done'; const conn=$('cto-'+fid); if(!conn) continue;
@@ -448,7 +448,7 @@ function renderEditable(){ if(!S.editSteps) return; renderFlow({nodes:buildNodes
 function insertStep(i){ const sk=S.skills.find(x=>S.enabled.has(x.key))||S.skills[0]; if(!sk) return;
   S.editSteps.splice(i,0,{key:sk.key,object:sk.object,label:sk.label,prompt:sk.prompt,repo:sk.repo,confirm_prompt:''}); renderEditable(); }
 function openEditor(i,type,anchor){ const pop=$('editPop'); const r=anchor.getBoundingClientRect();
-  if(type==='pick'){ const adv=$('advanced').checked;
+  if(type!=='confirm'){ const adv=(type==='pick') && $('advanced').checked;
     pop.innerHTML='<div class="ed-h">Skill</div>'
       +'<select id="edSkill" class="sel-in">'+S.skills.map(s=>`<option value="${s.key}"${s.key===S.editSteps[i].key?' selected':''}>${esc(s.label)}</option>`).join('')+'</select>'
       +(adv?('<div class="ed-h" style="margin-top:2px">Policy prompt (LoRA + FFT)</div><textarea id="edPrompt" class="ed-ta">'+esc(S.editSteps[i].prompt||'')+'</textarea><button class="ed-save" id="edPSave">Save prompt</button>'):'')
