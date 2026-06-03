@@ -47,8 +47,8 @@
   /* active split */
   .work { display: none; height: 100%; }
   body.active .work { display: flex; }
-  .left { width: 50%; height: 100%; border-right: 1px solid var(--border); display: flex; flex-direction: column; min-width: 0; background: var(--app); }
-  .right { width: 50%; height: 100%; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+  .left { flex: 1; height: 100%; border-right: 1px solid var(--border); display: flex; flex-direction: column; min-width: 0; background: var(--app); }
+  .right { width: 400px; flex-shrink: 0; height: 100%; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
   .col-head { flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 12px 20px; border-bottom: 1px solid var(--border);
               font-size: 11px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
   .col-head .spacer { flex: 1; }
@@ -78,9 +78,8 @@
   .fbox .fprog { position: absolute; left: 9px; right: 9px; bottom: 4px; height: 3px; background: var(--border2); border-radius: 2px; overflow: hidden; display: none; }
   .fbox.skill[data-status="active"] .fprog { display: block; } .fbox .fprog span { display: block; height: 100%; width: 0%; background: var(--green); transition: width 300ms; }
 
-  /* robot view: bottom of the left (plan) column */
-  .robot { position: relative; flex-shrink: 0; height: 248px; border-top: 1px solid var(--border); overflow: hidden;
-           background: linear-gradient(180deg, #f4f7fc 0%, #e8eef6 100%); }
+  /* robot view: bottom of the left (plan) column, on the same background */
+  .robot { position: relative; flex-shrink: 0; height: 340px; overflow: hidden; background: transparent; }
   #robot3d { position: absolute; inset: 0; } #robot3d canvas { display: block; }
   .robot-lab { position: absolute; top: 12px; left: 18px; z-index: 2; font-size: 11px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); pointer-events: none; }
   .robot-msg { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; color: var(--faint); font-size: 13px; }
