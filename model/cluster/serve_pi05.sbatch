@@ -23,26 +23,44 @@ set -euo pipefail
 
 WORK="$HOME/farm-train"
 source "$WORK/.hf_env"            # HF_TOKEN — only needed if the HF fallback download runs
-CONFIG_NAME="pi05_farm_uf850"
+# Parameterized by env. DEFAULT = the overnight domain-robust FLAGSHIP
+# (GSE + heavy domain-randomization + prompt-aug). It's the best bet when the
+# deploy scene differs from the training room (the actual live-failure case):
+# it barely degrades under a room/lighting change where the full FT degrades ~2×
+# (see analysis/overnight/farm_pi05_domain_robustness.pdf).
+# To serve the ORIGINAL full fine-tune instead (tighter fit IN the training room):
+#   SERVE_CONFIG=pi05_farm_uf850 SERVE_REPO=NoahWeiss/farm_uf850_pi05 \
+#   SERVE_STEP=19999 SERVE_EXP='*' sbatch serve_pi05.sbatch
+#   SERVE_CONFIG  registered openpi config   SERVE_STEP   checkpoint step
+#   SERVE_REPO    HF repo for the fallback   SERVE_PROMPT default prompt
+CONFIG_NAME="${SERVE_CONFIG:-pi05_farm_uf850_gse}"
+REPO_ID="${SERVE_REPO:-NoahWeiss/farm_uf850_pi05_gse_robust}"
+STEP="${SERVE_STEP:-2999}"
+PROMPT="${SERVE_PROMPT:-Picking up the bottle and placing it on the box}"
 
-# ── Resolve the checkpoint to serve (final model = step 19999) ──────────
-# Preference order, so this works whether or not the training dir was kept:
-#   1) the local training output (no copy/download — it's right there)
-#   2) a previously-downloaded stable path
-#   3) download step-19999 from HF (public repo; the verified source of truth)
-LOCAL_CKPT=$(ls -d "$WORK"/openpi/checkpoints/pi05_farm_uf850/*/19999 2>/dev/null | head -1)
-STABLE_CKPT="$WORK/checkpoints/pi05_step19999/step-19999"
+# ── Resolve the checkpoint to serve (local training output → stable → HF) ──
+# Several exp dirs can share one config+step (the 3 overnight ablations all live
+# under pi05_farm_uf850_gse), so a bare */STEP glob is ambiguous. SERVE_EXP picks
+# the exp-dir (default *robust* = the flagship); SERVE_CKPT overrides outright.
+# For the full FT, pass SERVE_EXP='*'.
+EXP_GLOB="${SERVE_EXP:-*robust*}"
+if [[ -n "${SERVE_CKPT:-}" ]]; then
+  LOCAL_CKPT="$SERVE_CKPT"
+else
+  LOCAL_CKPT=$(ls -dt "$WORK"/openpi/checkpoints/${CONFIG_NAME}/${EXP_GLOB}/${STEP} 2>/dev/null | head -1)
+fi
+STABLE_CKPT="$WORK/checkpoints/${CONFIG_NAME}_step${STEP}/step-${STEP}"
 if [[ -n "$LOCAL_CKPT" && -d "$LOCAL_CKPT/params" ]]; then
   CKPT_DIR="$LOCAL_CKPT"
 elif [[ -d "$STABLE_CKPT/params" ]]; then
   CKPT_DIR="$STABLE_CKPT"
 else
-  echo ">>> no local checkpoint — downloading step-19999 from HF…"
-  HF_HUB_ENABLE_HF_TRANSFER=1 hf download NoahWeiss/farm_uf850_pi05 \
-      --include 'step-19999/*' --local-dir "$WORK/checkpoints/pi05_step19999"
+  echo ">>> no local checkpoint — downloading step-${STEP} from ${REPO_ID}…"
+  HF_HUB_ENABLE_HF_TRANSFER=1 hf download "$REPO_ID" \
+      --include "step-${STEP}/*" --local-dir "$WORK/checkpoints/${CONFIG_NAME}_step${STEP}"
   CKPT_DIR="$STABLE_CKPT"
 fi
-echo ">>> serving checkpoint: $CKPT_DIR"
+echo ">>> serving checkpoint: $CKPT_DIR  (config=$CONFIG_NAME)"
 
 # ── Launch the policy server inside the NGC container ───────────────────
 srun --container-image='nvcr.io#nvidia/pytorch:24.12-py3' \
@@ -65,7 +83,7 @@ uv sync --frozen
 echo '>>> serve_policy.py on :8000 (config=${CONFIG_NAME}, ckpt=${CKPT_DIR})'
 uv run python scripts/serve_policy.py \
     --port 8000 \
-    --default_prompt 'Picking up the bottle and placing it on the box' \
+    --default_prompt '${PROMPT}' \
     policy:checkpoint \
     --policy.config=${CONFIG_NAME} \
     --policy.dir='${CKPT_DIR}'

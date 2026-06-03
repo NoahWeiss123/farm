@@ -98,6 +98,30 @@ _STREAM_SAFETY_STEP_RAD = math.radians(50000.0) / _STREAM_HZ
 # clock drift.
 _STREAM_HISTORY_WINDOW_S = 0.5
 
+# ── Policy actuation interpolation ───────────────────────────────────────
+# A learned policy POSTs ABSOLUTE joint targets at the training timestep
+# (~30 Hz). The 250 Hz stream loop runs ~8× faster, so emitting each target
+# verbatim re-commands the SAME setpoint ~8 ticks in a row, then snaps to the
+# next — a 30 Hz staircase the operator sees as jumping. Instead we linearly
+# interpolate from the last commanded position toward the newest target across
+# the measured inter-target interval, emitting a fresh setpoint every 250 Hz
+# tick. The arm receives a smooth ≥60 Hz command stream yet still passes
+# through every waypoint the policy commanded — NO 1€ filter and NO PD chase
+# (those shaped the achieved-state training labels, so re-applying them
+# double-lags the arm; that was the bug we removed).
+_POLICY_TARGET_HZ = 30.0                 # nominal policy POST rate
+_POLICY_INTERP_NOMINAL_S = 1.0 / _POLICY_TARGET_HZ
+# Only fold an observed inter-arrival gap into the horizon EMA if it looks
+# like a steady cadence (not a chunk-boundary inference stall). Stalls would
+# inflate the horizon and leave the arm persistently lagging its waypoints.
+_POLICY_INTERP_MIN_S = 1.0 / 120.0       # ignore sub-8 ms bursts
+_POLICY_INTERP_EMA_MAX_S = 0.060         # gaps above this = stall, excluded
+_POLICY_INTERP_EMA_ALPHA = 0.3           # EMA weight on each fresh interval
+# Hard clamp on the horizon used by the lerp, so a pathological measurement
+# can never freeze the arm or make it lunge.
+_POLICY_INTERP_CLAMP_MIN_S = 1.0 / 120.0
+_POLICY_INTERP_CLAMP_MAX_S = 0.080
+
 # When render_t passes the newest buffered sample (Quest input briefly
 # stalled — network hiccup, frame drop, controller momentarily idle),
 # carry the last segment's velocity forward for up to this many seconds
@@ -267,6 +291,26 @@ class XArmBackend:
         # vs. policy-tuned (ω=25) PD gains. Keeps Quest's "ease-in"
         # feel while letting policy commands run at full speed.
         self._policy_drive_active = False
+        # Latest RAW absolute joint target from a policy (set by
+        # set_joint_target). When _policy_drive_active is True the 250 Hz stream
+        # loop LINEARLY INTERPOLATES from _policy_start toward this target across
+        # _policy_interval_s — NO 1€ filter, NO Catmull-Rom, NO PD chase — so the
+        # arm smoothly but faithfully reproduces the model's commanded
+        # trajectory. (Those filters already shaped the achieved-state training
+        # labels; re-applying them at inference double-lags the arm.)
+        self._policy_target: list[float] | None = None
+        # Interpolation state for the smooth policy path (see _stream_loop):
+        #   _policy_start      — commanded position when _policy_target landed
+        #                        (= the live _stream_cmd, so motion is C0 across
+        #                        waypoints)
+        #   _policy_target_t   — perf_counter when _policy_target landed
+        #   _policy_interval_s — EMA of the inter-arrival gap = the lerp horizon
+        #   _policy_last_arrival — perf_counter of the previous target (for the
+        #                          inter-arrival measurement)
+        self._policy_start: list[float] | None = None
+        self._policy_target_t: float | None = None
+        self._policy_interval_s: float = _POLICY_INTERP_NOMINAL_S
+        self._policy_last_arrival: float | None = None
         # Most recent gripper SDK position commanded (0..850 raw). The
         # policy path sends a gripper value per chunk action (≥30 Hz)
         # but the parallel gripper hardware takes ~500 ms to travel a
@@ -381,9 +425,22 @@ class XArmBackend:
     def drive_real_arm(self, value: bool) -> None:
         new_val = bool(value)
         if new_val == self._drive_real_arm:
+            # Same logical state — but if we're meant to be driving and the
+            # stream thread has died (a desync), re-assert servo mode rather than
+            # silently no-op. Otherwise the policy moves only the gripper while
+            # the joints sit frozen (the "stuck in digital mode" symptom).
+            if new_val and not self._stream_alive():
+                log.warning("xarm: drive_real_arm already on but stream is down; re-asserting servo mode")
+                self._set_streaming_mode(True)
             return
         self._drive_real_arm = new_val
         self._set_streaming_mode(new_val)
+
+    def _stream_alive(self) -> bool:
+        """True only when the 250 Hz servo-stream thread is actually running —
+        i.e. the real arm will follow joint targets, not just the gripper."""
+        t = self._stream_thread
+        return bool(self._streaming_active and t is not None and t.is_alive())
 
     def _set_streaming_mode(self, on: bool) -> None:
         """Switch the xArm controller between position mode (0) and servo
@@ -399,6 +456,9 @@ class XArmBackend:
         if api is None:
             return
         if on:
+            # Drop any stale stream thread first so re-asserting (desync repair)
+            # never spawns a second one. No-op when none is running.
+            self._stop_stream_thread()
             with self._lock:
                 try:
                     api.motion_enable(enable=True)
@@ -443,6 +503,17 @@ class XArmBackend:
             self._stream_cmd = list(cur_rad)
             self._stream_vel = [0.0] * 6
             self._joint_filter.reset(x0=list(cur_rad), t0=seed_t)
+            # Fresh drive starts in Quest-hold mode (no stale policy target);
+            # a policy POST flips _policy_drive_active on and supplies a target.
+            self._policy_drive_active = False
+            self._policy_target = None
+            self._policy_start = None
+            self._policy_target_t = None
+            self._policy_interval_s = _POLICY_INTERP_NOMINAL_S
+            self._policy_last_arrival = None
+        # Reset the gripper dedupe so a new policy run's FIRST gripper command
+        # is never swallowed by the previous run's last-commanded position.
+        self._last_gripper_sdk_pos = None
         self._stream_stop.clear()
         self._stream_paused.clear()
         self._stream_thread = threading.Thread(
@@ -472,78 +543,121 @@ class XArmBackend:
         next_tick = time.perf_counter()
         while not self._stream_stop.is_set():
             if not self._stream_paused.is_set():
-                render_t = time.perf_counter() - _STREAM_DELAY_S
-                with self._stream_target_lock:
-                    target = self._sample_history_locked(render_t)
-                    cmd = (
-                        list(self._stream_cmd)
-                        if self._stream_cmd is not None
-                        else None
-                    )
-                if (
-                    target is not None
-                    and cmd is not None
-                    and len(target) == 6
-                    and len(cmd) == 6
-                ):
-                    # Acceleration-limited critically-damped PD tracker.
-                    # Vel transitions across Quest-frame boundaries are
-                    # shaped by Kd damping + the hard accel clamp, so
-                    # the operator never feels the discontinuity. State:
-                    # _stream_vel holds the per-joint commanded vel
-                    # carried across cycles.
-                    #
-                    # Two PD configs: Quest-tuned (ω=15, slow ease-in)
-                    # and policy-tuned (ω=25, faster tracking). Picked
-                    # per tick based on which upstream last pushed.
-                    if self._policy_drive_active:
-                        kp = _STREAM_KP_POLICY
-                        kd = _STREAM_KD_POLICY
-                    else:
+                if self._policy_drive_active:
+                    # ── FAITHFUL + SMOOTH POLICY PATH ─────────────────────────
+                    # Linearly interpolate from _policy_start toward the latest
+                    # _policy_target across _policy_interval_s, emitting a fresh
+                    # setpoint every 250 Hz tick. This upsamples the policy's
+                    # ~30 Hz waypoints into smooth ≥60 Hz motion that still passes
+                    # through each waypoint exactly — NO 1€ filter, NO Catmull-Rom,
+                    # NO PD chase (re-applying the training-time smoothing would
+                    # double-lag the arm; that was the bug we removed).
+                    now = time.perf_counter()
+                    with self._stream_target_lock:
+                        tgt = (
+                            list(self._policy_target)
+                            if self._policy_target is not None
+                            else None
+                        )
+                        start = (
+                            list(self._policy_start)
+                            if self._policy_start is not None
+                            else None
+                        )
+                        t0 = self._policy_target_t
+                        horizon = self._policy_interval_s
+                    if tgt is not None and len(tgt) == 6:
+                        if start is not None and len(start) == 6 and t0 is not None:
+                            h = min(
+                                _POLICY_INTERP_CLAMP_MAX_S,
+                                max(_POLICY_INTERP_CLAMP_MIN_S, horizon),
+                            )
+                            alpha = (now - t0) / h
+                            if alpha < 0.0:
+                                alpha = 0.0
+                            elif alpha > 1.0:
+                                alpha = 1.0
+                            out = [
+                                start[i] + alpha * (tgt[i] - start[i])
+                                for i in range(6)
+                            ]
+                        else:
+                            out = tgt
+                        try:
+                            with self._lock:
+                                if (
+                                    not self._stream_paused.is_set()
+                                    and self._streaming_active
+                                ):
+                                    api.set_servo_angle_j(angles=out, is_radian=True)
+                        except Exception as exc:
+                            log.debug("policy interp set_servo_angle_j failed: %s", exc)
+                        with self._stream_target_lock:
+                            self._stream_cmd = out
+                            self._stream_vel = [0.0] * 6
+                else:
+                    # ── QUEST TELEOP PATH (unchanged) ─────────────────────────
+                    render_t = time.perf_counter() - _STREAM_DELAY_S
+                    with self._stream_target_lock:
+                        target = self._sample_history_locked(render_t)
+                        cmd = (
+                            list(self._stream_cmd)
+                            if self._stream_cmd is not None
+                            else None
+                        )
+                    if (
+                        target is not None
+                        and cmd is not None
+                        and len(target) == 6
+                        and len(cmd) == 6
+                    ):
+                        # Acceleration-limited critically-damped PD tracker.
+                        # Smooths jittery Quest hand input; _stream_vel carries
+                        # the per-joint commanded velocity across cycles.
                         kp = _STREAM_KP
                         kd = _STREAM_KD
-                    vel_state = (
-                        list(self._stream_vel)
-                        if self._stream_vel is not None
-                        else [0.0] * 6
-                    )
-                    new_cmd = [0.0] * 6
-                    new_vel = [0.0] * 6
-                    for i in range(6):
-                        err = target[i] - cmd[i]
-                        a = (
-                            kp * err
-                            - kd * vel_state[i]
+                        vel_state = (
+                            list(self._stream_vel)
+                            if self._stream_vel is not None
+                            else [0.0] * 6
                         )
-                        if a > _STREAM_MAX_ACCEL_RAD_S2:
-                            a = _STREAM_MAX_ACCEL_RAD_S2
-                        elif a < -_STREAM_MAX_ACCEL_RAD_S2:
-                            a = -_STREAM_MAX_ACCEL_RAD_S2
-                        v = vel_state[i] + a * _STREAM_PERIOD
-                        if v > _STREAM_MAX_VEL_RAD_S:
-                            v = _STREAM_MAX_VEL_RAD_S
-                        elif v < -_STREAM_MAX_VEL_RAD_S:
-                            v = -_STREAM_MAX_VEL_RAD_S
-                        new_vel[i] = v
-                        new_cmd[i] = cmd[i] + v * _STREAM_PERIOD
-                    try:
-                        # Serialize SDK access via _lock so we don't
-                        # interleave bytes with the poll loop's reads on
-                        # the same socket. Re-check paused under the lock
-                        # so a concurrent mode switch can't race.
-                        with self._lock:
-                            if (
-                                not self._stream_paused.is_set()
-                                and self._streaming_active
-                            ):
-                                api.set_servo_angle_j(
-                                    angles=new_cmd, is_radian=True
-                                )
-                    except Exception as exc:
-                        log.debug("stream set_servo_angle_j failed: %s", exc)
-                    with self._stream_target_lock:
-                        self._stream_cmd = new_cmd
-                        self._stream_vel = new_vel
+                        new_cmd = [0.0] * 6
+                        new_vel = [0.0] * 6
+                        for i in range(6):
+                            err = target[i] - cmd[i]
+                            a = (
+                                kp * err
+                                - kd * vel_state[i]
+                            )
+                            if a > _STREAM_MAX_ACCEL_RAD_S2:
+                                a = _STREAM_MAX_ACCEL_RAD_S2
+                            elif a < -_STREAM_MAX_ACCEL_RAD_S2:
+                                a = -_STREAM_MAX_ACCEL_RAD_S2
+                            v = vel_state[i] + a * _STREAM_PERIOD
+                            if v > _STREAM_MAX_VEL_RAD_S:
+                                v = _STREAM_MAX_VEL_RAD_S
+                            elif v < -_STREAM_MAX_VEL_RAD_S:
+                                v = -_STREAM_MAX_VEL_RAD_S
+                            new_vel[i] = v
+                            new_cmd[i] = cmd[i] + v * _STREAM_PERIOD
+                        try:
+                            # Serialize SDK access via _lock so we don't
+                            # interleave bytes with the poll loop's reads on
+                            # the same socket. Re-check paused under the lock
+                            # so a concurrent mode switch can't race.
+                            with self._lock:
+                                if (
+                                    not self._stream_paused.is_set()
+                                    and self._streaming_active
+                                ):
+                                    api.set_servo_angle_j(
+                                        angles=new_cmd, is_radian=True
+                                    )
+                        except Exception as exc:
+                            log.debug("stream set_servo_angle_j failed: %s", exc)
+                        with self._stream_target_lock:
+                            self._stream_cmd = new_cmd
+                            self._stream_vel = new_vel
             next_tick += _STREAM_PERIOD
             delay = next_tick - time.perf_counter()
             if delay > 0:
@@ -885,16 +999,39 @@ class XArmBackend:
                         log.debug("set_gripper_position(%s) failed: %s", sdk_pos, exc)
 
         if self._drive_real_arm and not self._estopped:
-            sample_t = time.perf_counter()
+            # FAITHFUL + SMOOTH policy actuation. Store the model's RAW absolute
+            # target plus the interpolation anchors the 250 Hz stream loop needs
+            # to lerp toward it. NO 1€ filter, NO Catmull-Rom, NO PD chase —
+            # those already shaped the achieved-state training labels (the
+            # recorder saves encoder reads and action[t]=state[t+1]), so
+            # re-filtering/re-chasing the prediction double-lags the arm below
+            # the demonstrated trajectory. Quest's set_ghost_target_pose keeps
+            # the full smoothing path unchanged.
+            now = time.perf_counter()
             with self._stream_target_lock:
-                # Policy path: same 1€ filter as Quest (handles the
-                # tiny numerical/chunk-boundary jitter) but the stream
-                # loop will use the faster policy-tuned PD so the arm
-                # actually tracks the policy's commanded velocity
-                # instead of being lowpass-smoothed.
+                # Anchor the lerp at where the arm is currently commanded so the
+                # motion is continuous across waypoints. _stream_cmd is seeded
+                # from live joints in _start_stream_thread, so it is always a
+                # valid current position (Quest hold, prior policy tick, or seed).
+                if self._stream_cmd is not None and len(self._stream_cmd) == 6:
+                    self._policy_start = list(self._stream_cmd)
+                else:
+                    self._policy_start = list(joints)
+                # Adapt the lerp horizon to the policy's actual cadence so it
+                # finishes right as the next target lands (no dwell, no lunge),
+                # but ignore chunk-boundary inference stalls so they don't bias
+                # the steady-state tracking.
+                if self._policy_last_arrival is not None:
+                    gap = now - self._policy_last_arrival
+                    if _POLICY_INTERP_MIN_S <= gap <= _POLICY_INTERP_EMA_MAX_S:
+                        self._policy_interval_s = (
+                            (1.0 - _POLICY_INTERP_EMA_ALPHA) * self._policy_interval_s
+                            + _POLICY_INTERP_EMA_ALPHA * gap
+                        )
+                self._policy_last_arrival = now
+                self._policy_target_t = now
+                self._policy_target = list(joints)
                 self._policy_drive_active = True
-                filtered = self._joint_filter(sample_t, joints)
-                self._stream_history.append((sample_t, list(filtered)))
         return {
             "target_joints": list(joints),
             "applied_gripper": applied_gripper,

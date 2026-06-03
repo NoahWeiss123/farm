@@ -13,7 +13,7 @@ namespace TeleopDataCollector
         // Default host IP is this Mac's LAN address; in-headset picker
         // (left A+B) overrides at runtime. Port 10000 = FARM ROS-TCP-Endpoint
         // bridge (farm-edge-agent/src/farm_edge_agent/ros_bridge/).
-        public const string DEFAULT_IP   = "10.31.47.89";
+        public const string DEFAULT_IP   = "10.27.101.151";
         public const int    DEFAULT_PORT = 10000;
 
         public static string Ip   { get; private set; } = DEFAULT_IP;

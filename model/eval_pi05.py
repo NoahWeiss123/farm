@@ -428,7 +428,8 @@ class WebSocketPolicy(Policy):
     JIT-compiles its sampling graph. After that, ~50–100 ms on H100.
     """
 
-    def __init__(self, url: str, *, connect_timeout: float = 10.0) -> None:
+    def __init__(self, url: str, *, connect_timeout: float = 10.0,
+                 connect_deadline_s: float = 45.0) -> None:
         try:
             import msgpack  # noqa: F401  (sanity)
             from websockets.sync.client import connect
@@ -441,6 +442,7 @@ class WebSocketPolicy(Policy):
         self._connect = connect
         self._url = url
         self._connect_timeout = connect_timeout
+        self._connect_deadline_s = connect_deadline_s
         self._ws = None
         # Bind packer/unpacker variants matching the openpi-client wire format.
         self._packer = _msgpack.Packer(default=_pack_ndarray)
@@ -452,12 +454,35 @@ class WebSocketPolicy(Policy):
         # The default permessage-deflate negotiation corrupts msgpack
         # payloads in some setups, and the default 1 MB max_size truncates
         # 224×224 RGB observations.
-        self._ws = self._connect(
-            self._url,
-            open_timeout=self._connect_timeout,
-            compression=None,
-            max_size=None,
-        )
+        #
+        # Retry on connection-refused / handshake-timeout for up to
+        # ``connect_deadline_s``: the serve runs behind a two-hop tunnel
+        # (login-pod socat + laptop kubectl port-forward) that can be a beat
+        # late coming up — or briefly drop — when the dashboard kicks off a run.
+        # Without this the client died instantly (exit 4) on a momentary blip,
+        # which looked like "Run does nothing / mode won't switch."
+        deadline = time.perf_counter() + max(0.0, self._connect_deadline_s)
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                self._ws = self._connect(
+                    self._url,
+                    open_timeout=self._connect_timeout,
+                    compression=None,
+                    max_size=None,
+                )
+                break
+            except (ConnectionRefusedError, TimeoutError, OSError) as exc:
+                if time.perf_counter() >= deadline:
+                    raise
+                print(
+                    f"[eval] policy ws {self._url} not up yet "
+                    f"(attempt {attempt}: {type(exc).__name__}); retrying — the "
+                    f"cluster tunnel may still be coming up…",
+                    file=sys.stderr, flush=True,
+                )
+                time.sleep(2.0)
         try:
             metadata_raw = self._ws.recv()
             if isinstance(metadata_raw, str):

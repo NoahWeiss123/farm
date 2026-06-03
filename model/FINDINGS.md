@@ -1,5 +1,16 @@
 # π0.5 FARM policy — performance diagnosis & action plan
 
+> **Update 2026-05-30** — Acted on the domain-shift diagnosis: trained
+> domain-randomization variants overnight (heavy image aug ± prompt-aug, on GSE)
+> in a controlled 2×2. Honest result: heavy visual aug is the most STABLE under
+> appearance shift (best on the realistic "room-change combo": ~1.3° vs the full
+> FT's 1.7°, flattest degradation) — but NOT a uniform win (the full FT's tight
+> clean fit wins on mild shifts + on occlusion/noise the aug didn't cover). Prompt
+> aug didn't help this visual metric. Flagship = `NoahWeiss/farm_uf850_pi05_gse_robust`
+> (step-2999); serve_pi05.sbatch now defaults to it. Full report, briefing, and the
+> inference/RTC runbook are in `analysis/overnight/`. The durable fix remains
+> in-room demos — domain randomization only narrows the gap.
+
 Audit done 2026-05-29 against the deployed full-FT `pi05_farm_uf850`
 (step-19999). Symptoms reported: ~30 % success on the **trained** bottle
 tasks, **complete failure** outside training, and **jittery** motion.

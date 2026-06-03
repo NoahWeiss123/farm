@@ -79,6 +79,7 @@
   .fbox[data-status="done"] { border-color: var(--green-line); background: var(--green-soft); } .fbox[data-status="done"] .ic { color: var(--green); }
   .fbox[data-status="failed"] { border-color: var(--red); background: var(--red-soft); border-style: solid; } .fbox[data-status="failed"] .ic, .fbox[data-status="failed"] .lab { color: var(--red); }
   .fbox .fbadge { font-size: 11.5px; font-weight: 600; color: var(--green); flex-shrink: 0; } .fbox.confirm[data-status="failed"] .fbadge { color: var(--red); }
+  .fbox.retried::after { content: "↻"; position: absolute; top: 5px; right: 7px; font-size: 11px; font-weight: 700; color: var(--amber); }
   .fbox .fprog { position: absolute; left: 9px; right: 9px; bottom: 4px; height: 3px; background: var(--border2); border-radius: 2px; overflow: hidden; display: none; }
   .fbox.skill[data-status="active"] .fprog { display: block; } .fbox .fprog span { display: block; height: 100%; width: 0%; background: var(--green); transition: width 300ms; }
 
@@ -94,6 +95,8 @@
   .t-block .ttext { font-size: 13.5px; line-height: 1.7; color: var(--muted); word-break: break-word; }
   .t-block .ttext strong { color: var(--text); font-weight: 640; }
   .t-empty { color: var(--faint); font-size: 13.5px; }
+  .t-retry { font-size: 12.5px; font-weight: 560; color: var(--amber); background: #fdf3e7;
+             border: 1px solid #f3dcbd; border-radius: 9px; padding: 7px 11px; margin: 2px 0; }
 
   /* composer bar */
   .bar { flex-shrink: 0; border-top: 1px solid var(--border); padding: 14px 22px 16px; position: relative; background: var(--bg); display: flex; align-items: center; gap: 12px; }
@@ -115,10 +118,14 @@
   .btn-stop:hover { background: var(--red-soft); }
   .btn-arm { display: none; font-size: 13.5px; font-weight: 560; color: #fff; background: var(--green); border: none; border-radius: 10px; padding: 9px 17px; }
   .btn-arm:hover { background: #0c8a4d; }
+  .btn-restart { display: none; font-size: 13.5px; font-weight: 540; color: var(--accent); background: #fff; border: 1px solid var(--accent); border-radius: 10px; padding: 8px 14px; }
+  .btn-restart:hover { background: var(--accent-soft); }
   .home-btn { flex-shrink: 0; font-size: 13px; font-weight: 540; color: var(--text); background: var(--bg); border: 1px solid var(--border2); border-radius: 11px; padding: 10px 15px; }
   .home-btn:hover { border-color: var(--accent); color: var(--accent); }
   body.busy .btn-stop { display: inline-flex; }
   body.ready .btn-arm { display: inline-flex; }
+  /* Restart shows once a run has a plan but isn't currently running (stopped/done). */
+  body.active.has-plan:not(.busy):not(.ready) .btn-restart { display: inline-flex; }
 
   /* options popover */
   .opts-pop { display: none; position: absolute; left: 22px; right: 22px; bottom: 80px; max-width: 820px; margin: 0 auto;
@@ -234,6 +241,9 @@
           <div><div style="font-weight:540">Confirm each step</div><div class="muted" style="font-size:12.5px">check with vision that each step finished before the next</div></div>
           <label class="switch"><input type="checkbox" id="confirm" checked><span class="tr"></span></label></div>
           <div class="sens-row"><span class="muted" style="font-size:12.5px">Confidence needed</span><input type="range" id="sens" min="1" max="10" value="6"><span class="mono" id="sensVal">6/10</span></div></div>
+        <div class="opt"><div class="switch-row">
+          <div><div style="font-weight:540">Retry on failure</div><div class="muted" style="font-size:12.5px">if a step fails its check, re-attempt it before moving on</div></div>
+          <label class="switch"><input type="checkbox" id="retry" checked><span class="tr"></span></label></div></div>
         <div class="opt"><span class="opt-label">Policy server</span>
           <div class="serveline"><span class="dot" id="serveDot"></span><span id="serveTxt" class="muted">checking</span><span class="spacer"></span><button class="mini-btn" id="serveBtn">Start server</button></div></div>
       </div>
@@ -244,6 +254,7 @@
         <button class="ghost" id="optsBtn">Options</button>
         <textarea id="task" rows="1" placeholder="Describe a task"></textarea>
         <button class="btn-stop" id="stopBtn">Stop</button>
+        <button class="btn-restart" id="restartBtn" title="restart this task from the beginning">Restart task</button>
         <button class="btn-arm" id="armBtn">Run on arm</button>
         <button class="btn-dark" id="runBtn">Run</button>
       </div>
@@ -312,6 +323,9 @@ $('useImages').addEventListener('change', syncImages);
 [...$('srcSeg').children].forEach(b=>b.onclick=()=>{ S.src=b.dataset.src; [...$('srcSeg').children].forEach(x=>x.classList.toggle('on',x===b)); syncImages(); });
 $('optsBtn').onclick=()=>$('optsPanel').classList.toggle('open');
 $('sens').oninput=()=>{ $('sensVal').textContent=$('sens').value+'/10'; };
+// Retry depends on the per-step check to detect failure, so dim it when Confirm is off.
+function syncConfirm(){ const on=$('confirm').checked; const r=$('retry'); r.disabled=!on; const o=r.closest('.opt'); if(o) o.style.opacity=on?'1':'.5'; }
+$('confirm').addEventListener('change', syncConfirm); syncConfirm();
 
 const ta=$('task');
 function autogrow(){ ta.style.height='auto'; ta.style.height=Math.min(120,ta.scrollHeight)+'px'; }
@@ -324,6 +338,7 @@ async function submit(){ const text=ta.value.trim(); if(!text) return;
   else { S.context=[text]; }
   ta.value=''; autogrow(); await startRun(buildTask()); }
 function runBody(extra){ return Object.assign({ plan_first:true, confirm:$('confirm').checked, confirm_threshold:(+$('sens').value)/10,
+    retry_on_failure:$('retry').checked,
     use_images:$('useImages').checked, camera_source:S.src, sample_episode:S.src==='sample'?($('sample').value||null):null }, extra); }
 async function startRun(task){ S.isAbility=false; resetRun();
   try{ const r=await fetch('/v1/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -338,9 +353,20 @@ $('runBtn').onclick=submit;
 $('stopBtn').onclick=async()=>{ try{ await fetch('/v1/agent/stop',{method:'POST'}); }catch(e){} S.context=[]; toast('stopped'); };
 $('armBtn').onclick=async()=>{ closeEditor();
   const steps=S.editSteps.map(s=>({key:s.key,object:s.object,label:s.label,prompt:s.prompt,repo:s.repo,confirm_prompt:s.confirm_prompt||''}));
-  try{ await fetch('/v1/agent/execute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({steps, confirm_threshold:(+$('sens').value)/10})}); toast('running on the arm'); }catch(e){} };
+  try{ await fetch('/v1/agent/execute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({steps, confirm_threshold:(+$('sens').value)/10, retry_on_failure:$('retry').checked})}); toast('running on the arm'); }catch(e){} };
+// Restart: re-run the SAME plan from the top (no re-planning, no new workflow).
+$('restartBtn').onclick=async()=>{ closeEditor();
+  const steps=(S.editSteps||[]).map(s=>({key:s.key,object:s.object,label:s.label,prompt:s.prompt,repo:s.repo,confirm_prompt:s.confirm_prompt||''}));
+  if(!steps.length){ toast('no plan to restart'); return; }
+  const task=(S.current&&S.current.task)||S.context[0]||'task';   // capture before resetRun nulls S.current
+  S.isAbility=false; resetRun();
+  try{ const r=await fetch('/v1/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(runBody({ task, replay_steps:steps,
+        base_model:S.base, skills:[...S.enabled], model:$('model').value, plan_first:false, execute:true }))});
+    const d=await r.json(); if(!r.ok) throw new Error(d.error||('HTTP '+r.status)); toast('restarting task');
+  }catch(e){ toast('restart failed: '+e.message,true); document.body.classList.remove('busy','active','ready'); } };
 $('newBtn').onclick=async()=>{ try{ await fetch('/v1/agent/stop',{method:'POST'}); }catch(e){}
-  S.context=[]; S.current=null; document.body.classList.remove('active','busy','ready');
+  S.context=[]; S.current=null; document.body.classList.remove('active','busy','ready','has-plan');
   $('flow').innerHTML=''; $('transcript').innerHTML='<div class="t-empty">The agent\'s reasoning and the frames it observes appear here.</div>';
   $('saveBtn').style.display='none'; ta.value=''; ta.placeholder='Describe a task'; autogrow(); ta.focus(); };
 $('estopBtn').onclick=async()=>{ try{ await Promise.all([fetch('/v1/teleop/estop',{method:'POST'}),fetch('/v1/agent/stop',{method:'POST'})]); }catch(e){} toast('emergency stop', true); };
@@ -354,11 +380,15 @@ function connectStream(){ const es=new EventSource('/v1/agent/stream'); es.onmes
 function handle(ev){ if(ev.seq!=null){ if(ev.seq<=S.lastSeq) return; S.lastSeq=ev.seq; }
   switch(ev.type){ case 'state': onState(ev); break; case 'workflow': renderFlow(ev); break; case 'node': onNode(ev); break;
     case 'image': onImage(ev); break; case 'thinking': onThinking(ev); break; case 'plan': onPlan(ev); break;
-    case 'progress': onProgress(ev); break; case 'swap': onSwap(ev); break; case 'error': onError(ev); break; case 'done': onDone(ev); break; } }
+    case 'progress': onProgress(ev); break; case 'swap': onSwap(ev); break; case 'retry': onRetry(ev); break; case 'drive': onDrive(ev); break; case 'error': onError(ev); break; case 'done': onDone(ev); break; } }
+function onDrive(ev){ toast(ev.real?'Real arm engaged':'Real arm released'); }
 function onState(ev){ const active=!['idle','done','stopped','error'].includes(ev.phase);
   document.body.classList.toggle('busy',active); document.body.classList.toggle('ready',ev.phase==='ready');
   if(ev.phase==='ready'){ S.editable=true; renderEditable(); } else if(ev.phase==='executing'){ S.editable=false; closeEditor(); }
-  if(!active){ document.body.classList.remove('busy','ready'); } }
+  if(!active){ document.body.classList.remove('busy','ready'); }
+  // A stop/error can interrupt a step mid-retry, leaving its box stuck 'active'.
+  // Settle any lingering active node so the plan doesn't keep glowing after the run halts.
+  if(ev.phase==='stopped'||ev.phase==='error'){ document.querySelectorAll('#flow .fbox[data-status="active"]').forEach(b=>b.dataset.status='pending'); } }
 function makeBox(n){ const el=document.createElement('div'); el.className='fbox '+n.kind+(n.editable?' editable':''); el.id='fn-'+n.id; el.dataset.status='pending';
   el.innerHTML=`<span class="ic">${nodeIcon(n)}</span><span class="lab">${esc(n.title)}</span>`
     +(n.kind==='skill'?'<span class="fprog"><span></span></span>':'')+(n.kind==='confirm'?'<span class="fbadge"></span>':''); return el; }
@@ -396,9 +426,13 @@ function onThinking(ev){ clearEmpty(); const ch=ev.channel;
 function onPlan(ev){ S.current={ task:(ev.task||S.context[0]||''), base_model:S.base, summary:ev.summary||'',
     steps:(ev.steps||[]).map(s=>({key:s.key,object:s.object,label:s.label,emoji:s.emoji,prompt:s.prompt,repo:s.repo,rationale:s.rationale,confirm_prompt:s.confirm_prompt||''})) };
   S.editSteps = S.current.steps.map(s=>({...s}));
+  document.body.classList.toggle('has-plan', S.current.steps.length>0);
   $('saveBtn').style.display = S.current.steps.length ? 'inline-block':'none'; }
 function onProgress(ev){ const el=$('fn-step-'+ev.index); if(!el) return; const bar=el.querySelector('.fprog span'); if(bar) bar.style.width=(ev.pct||0)+'%'; }
 function onSwap(ev){ const el=$('fn-step-'+ev.index); if(el) el.classList.add('swapped'); }
+function onRetry(ev){ clearEmpty(); const d=document.createElement('div'); d.className='t-retry';
+  d.textContent='Check failed, re-attempting '+(ev.object||'this step')+' (retry '+ev.attempt+' of '+ev.max+')';
+  $('transcript').appendChild(d); S.curBlock={}; const el=$('fn-step-'+ev.index); if(el) el.classList.add('retried'); trScroll(); }
 function onError(ev){ toast(ev.message||'something went wrong', true); document.body.classList.remove('busy','ready'); }
 function onDone(ev){ document.body.classList.remove('busy','ready'); ta.placeholder='Describe a task'; toast(ev.mode==='live'?'Task complete':'Preview complete'); }
 

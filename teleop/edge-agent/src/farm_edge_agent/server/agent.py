@@ -74,9 +74,13 @@ BASE_MODELS: list[dict[str, Any]] = [
 ]
 BASE_BY_KEY = {b["key"]: b for b in BASE_MODELS}
 
-DEFAULT_STEP_SECONDS = 14.0
+DEFAULT_STEP_SECONDS = 30.0
 POLICY_RATE_HZ = 30.0
 DEFAULT_CONFIRM_THRESHOLD = 0.6
+# Settle before each live policy step: let the previous step's serve websocket
+# fully tear down (across the tunnel) and the servo mode stabilize. Without it,
+# back-to-back runs collide on the serve and every other one produces no motion.
+PRE_STEP_SETTLE_S = 2.0
 
 
 # ── event bus ───────────────────────────────────────────────────────────────
@@ -135,6 +139,7 @@ class Orchestrator:
         self.app = app
         self.bus = AgentBus()
         self._task: asyncio.Task | None = None
+        self._task_text: str = ""   # the current task prompt (kept distinct from _task, the run handle)
         self._session: aiohttp.ClientSession | None = None
         self.state: dict[str, Any] = {"phase": "idle"}
         # base URL of our own daemon, so we can reuse the existing policy/serve
@@ -159,10 +164,11 @@ class Orchestrator:
         self._task = asyncio.create_task(self._guarded_run(cfg))
 
     def continue_run(self, steps: list[dict[str, Any]] | None = None,
-                     confirm_threshold: float | None = None) -> bool:
+                     confirm_threshold: float | None = None,
+                     retry_on_failure: bool | None = None) -> bool:
         """Release the plan-then-wait gate so execution begins (Run on arm).
         Optionally replace the planned steps with the user-edited ones, and
-        override the confirmation sensitivity."""
+        override the confirmation sensitivity and retry-on-failure toggle."""
         go = getattr(self, "_go", None)
         if go is not None and not go.is_set():
             if steps:
@@ -172,6 +178,8 @@ class Orchestrator:
                     self._confirm_threshold = max(0.0, min(1.0, float(confirm_threshold)))
                 except (TypeError, ValueError):
                     pass
+            if retry_on_failure is not None:
+                self._retry_on_failure = bool(retry_on_failure)
             self._execute_on_go = True
             go.set()
             return True
@@ -184,6 +192,7 @@ class Orchestrator:
             with contextlib.suppress(asyncio.CancelledError):
                 await t
         await self._stop_policy()
+        await self._set_real_arm(False)
         self._set_state("stopped", message="stopped by user")
 
     # -- emit helpers --------------------------------------------------------
@@ -219,6 +228,9 @@ class Orchestrator:
 
     async def _run(self, cfg: dict[str, Any]) -> None:
         base = BASE_BY_KEY.get(cfg.get("base_model")) or BASE_MODELS[0]
+        # Tracks whether we forced the xArm into real-drive (servo) mode so the
+        # finally/stop paths know to release it.
+        self._drove_real = False
         # One multimodal model does both the planning and the image recognition.
         self._model = (cfg.get("model") or cfg.get("thinking_model")
                        or do_inference.DEFAULT_THINKING_MODEL)
@@ -236,7 +248,35 @@ class Orchestrator:
         self._wait_for_arm = bool(cfg.get("plan_first", True))
         # Whether to visually confirm each step with the vision model before moving on.
         self._confirm_enabled = bool(cfg.get("confirm", True))
+        # Retry-on-failure: when a step's vision check fails, re-attempt the step
+        # (re-pick → re-confirm) until it passes or the attempt cap is hit, instead
+        # of advancing on a failed check. Toggleable from the page Options.
+        self._retry_on_failure = bool(cfg.get("retry_on_failure", True))
+        self._max_retries = max(0, min(5, int(cfg.get("max_retries") or 3)))
         step_seconds = max(0.5, float(cfg.get("step_seconds") or DEFAULT_STEP_SECONDS))
+
+        # Restart/replay: re-run an already-planned set of steps from the top
+        # WITHOUT re-perceiving or re-planning (the page's "Restart task"). The
+        # graph is rebuilt from the same steps, so no new workflow is created.
+        replay = cfg.get("replay_steps")
+        if replay:
+            steps = self._decorate(replay)
+            if not steps:
+                raise RuntimeError("no steps to restart")
+            task = str(cfg.get("task") or "").strip() or "task"
+            self._uses_skills = base.get("skills_enabled", True)
+            self._task_text = task
+            self._ability_mode = True   # graph = trigger -> steps -> done (no look/plan)
+            self._set_state("starting", task=task, base=base["key"], message="restarting task")
+            self._emit("config", task=task, base=base, skills=steps,
+                       model=self._model, execute=self._execute_on_go)
+            self._emit_workflow(task, steps, ability=True)
+            self._node("trigger", "done")
+            self._emit("plan", steps=steps, summary="Replaying the existing plan from the start.")
+            self._steps = steps
+            await self._await_go(len(steps))
+            await self._dispatch(self._steps, base, step_seconds, want_execute=self._execute_on_go)
+            return
 
         # Ability re-run: skip vision + planning, replay the saved steps.
         ability_id = cfg.get("ability_id")
@@ -250,7 +290,7 @@ class Orchestrator:
             task = ab.get("task") or ab.get("name") or "ability"
             base = BASE_BY_KEY.get(ab.get("base_model")) or base
             self._uses_skills = base.get("skills_enabled", True)
-            self._task = task
+            self._task_text = task
             self._ability_mode = True
             self._set_state("starting", task=task, base=base["key"], ability=ab.get("name"),
                             message=f"running ability: {ab.get('name')}")
@@ -273,7 +313,7 @@ class Orchestrator:
                         if k in SKILL_BY_KEY]
         enabled = [SKILL_BY_KEY[k] for k in enabled_keys] or SKILLS
         self._uses_skills = base.get("skills_enabled", True)
-        self._task = task
+        self._task_text = task
         self._ability_mode = False
 
         self._set_state("starting", task=task, base=base["key"],
@@ -425,7 +465,17 @@ class Orchestrator:
         if not live:
             self._log("execution off, plan only" if not want_execute
                       else "policy serve not running, previewing the plan")
-        await self._execute(steps, step_seconds, live=live)
+        # A live run must drive the PHYSICAL arm. The xArm backend boots
+        # digital-only (drive_real_arm=False) — the policy's joint targets would
+        # only move the ghost while the real joints stay put (gripper aside). Force
+        # real-drive (servo) mode for the run, and release it when the run ends.
+        if live:
+            await self._set_real_arm(True)
+        try:
+            await self._execute(steps, step_seconds, live=live)
+        finally:
+            if live:
+                await self._set_real_arm(False)
         mode = "live" if live else "preview"
         self._node("done", "done")
         self._set_state("done", placed=[s["key"] for s in steps], mode=mode)
@@ -436,7 +486,7 @@ class Orchestrator:
         self._total = total
         # Re-emit the graph so it matches the (possibly user-edited) steps, then
         # re-assert the planning prefix as done.
-        self._emit_workflow(self._task, steps, ability=self._ability_mode)
+        self._emit_workflow(self._task_text, steps, ability=self._ability_mode)
         self._node("trigger", "done")
         if not self._ability_mode:
             self._node("perceive", "done")
@@ -464,12 +514,30 @@ class Orchestrator:
                 continue
             self._node(f"confirm-{i}", "active")
             ok, conf, note = await self._confirm(st, i, live=live)
-            if not ok and live:
-                self._log(f"step {i + 1} not confirmed ({note}), retrying once")
+            # Smart retry: re-attempt the same step (re-pick → re-confirm) on a
+            # failed check instead of advancing, up to the retry cap. Only when
+            # live (a preview has nothing to re-drive) and the toggle is on.
+            max_attempts = 1 + (self._max_retries if self._retry_on_failure else 0)
+            attempt = 1
+            while not ok and live and attempt < max_attempts:
+                self._emit("retry", index=i, attempt=attempt, max=max_attempts - 1,
+                           object=st["object"], note=note)
+                self._log(f"step {i + 1} not confirmed ({note}); "
+                          f"retry {attempt}/{max_attempts - 1}")
+                # re-pick: same prompt → serve re-routes the same adapter, no swap
+                self._node(f"step-{i}", "active")
+                self._emit("step", index=i, total=total, key=st["key"], object=st["object"],
+                           label=st["label"], emoji=st["emoji"], prompt=st["prompt"],
+                           status="active", retry=attempt)
                 await self._run_one_step(i, total, st, step_seconds, per_step_max, live=live)
+                self._node(f"step-{i}", "done")
+                self._emit("step", index=i, total=total, key=st["key"], status="done")
+                self._node(f"confirm-{i}", "active")
                 ok, conf, note = await self._confirm(st, i, live=live)
-            self._node(f"confirm-{i}", "done" if ok else "failed", confidence=conf, note=note)
-            self._emit("confirm", index=i, ok=ok, confidence=conf, note=note)
+                attempt += 1
+            self._node(f"confirm-{i}", "done" if ok else "failed",
+                       confidence=conf, note=note, attempts=attempt)
+            self._emit("confirm", index=i, ok=ok, confidence=conf, note=note, attempts=attempt)
 
     async def _run_one_step(self, i: int, total: int, st: dict[str, Any],
                             step_seconds: float, per_step_max: int, *, live: bool) -> bool:
@@ -479,6 +547,17 @@ class Orchestrator:
         if not live:
             await self._run_step_window(i, total, step_seconds, live=False)
             return True
+        # Guarantee real servo mode before driving this step. Defensive against a
+        # task-level engage being skipped, or the mode getting dropped between
+        # steps (e.g. by a clear-view home) — otherwise the step would move only
+        # the gripper. The backend re-asserts a dead stream thread; this is a
+        # cheap no-op when already driving.
+        await self._set_real_arm(True)
+        # Settle before driving so back-to-back runs don't collide on the serve
+        # connection (the every-other-run "no motion" failure) and the servo mode
+        # has time to stabilize.
+        self._emit("progress", index=i, total=total, pct=0.0, note="getting ready", live=True)
+        await asyncio.sleep(PRE_STEP_SETTLE_S)
         self.app["policy_prompt"] = st["prompt"]
         if not await self._start_policy(per_step_max):
             self._log("could not start the policy run, previewing this step")
@@ -635,6 +714,28 @@ class Orchestrator:
                     pass
         except Exception as exc:  # noqa: BLE001
             log.warning("stop-policy POST failed: %s", exc)
+
+    async def _set_real_arm(self, on: bool) -> None:
+        """Force the xArm backend into (or out of) real-drive servo mode so the
+        policy's joint targets actually move the physical arm. Always delegates
+        to the backend setter (which re-asserts a dead stream thread), so a stale
+        drive flag can never leave a live step moving only the gripper. No-op on
+        the sim backend (which has no real arm to drive)."""
+        supervisor = self.app.get("supervisor")
+        backend = getattr(supervisor, "_backend", None) if supervisor else None
+        if backend is None or not hasattr(backend, "drive_real_arm"):
+            return
+        try:
+            await asyncio.to_thread(setattr, backend, "drive_real_arm", bool(on))
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"could not set real-arm mode to {on}: {exc}")
+            return
+        # Log/emit only on a real transition — this is called every step as a
+        # safety re-assert, so don't spam when already in the right state.
+        if getattr(self, "_drove_real", None) != bool(on):
+            self._drove_real = bool(on)
+            self._log(f"real arm {'engaged' if on else 'released'} (servo mode {'on' if on else 'off'})")
+            self._emit("drive", real=bool(on))
 
 
 def agent_config() -> dict[str, Any]:

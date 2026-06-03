@@ -15,6 +15,9 @@ policy._sample_actions (exactly what Policy.infer calls).
 Run on a GPU:
   srun --gres=gpu:1 --container-image=... uv run python unit_test.py
 """
+import argparse
+import glob
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -27,8 +30,21 @@ TASK = "Picking up the bottle and placing it on the box"
 
 
 def main():
-    cfg = _config.get_config("pi05_farm_uf850")
-    policy = policy_config.create_trained_policy(cfg, CKPT)
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--config", default="pi05_farm_uf850",
+                    help="registered openpi TrainConfig (e.g. pi05_farm_uf850_gse for the flagship)")
+    ap.add_argument("--checkpoint-dir", default=CKPT,
+                    help="checkpoint dir; accepts a glob, newest match wins")
+    args = ap.parse_args()
+    ckpt = args.checkpoint_dir
+    if any(c in ckpt for c in "*?["):
+        matches = sorted(glob.glob(ckpt))
+        if not matches:
+            raise SystemExit(f"no checkpoint matches {ckpt!r}")
+        ckpt = matches[-1]
+    print(f"loading config={args.config}  ckpt={ckpt}")
+    cfg = _config.get_config(args.config)
+    policy = policy_config.create_trained_policy(cfg, ckpt)
     model = policy._model
     H, D = int(model.action_horizon), int(model.action_dim)
     print(f"loaded pi05_farm_uf850 · action_horizon={H} action_dim={D}")

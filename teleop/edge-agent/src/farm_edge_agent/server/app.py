@@ -1509,8 +1509,9 @@ async def post_agent_stop(request: web.Request) -> web.Response:
 
 async def post_agent_execute(request: web.Request) -> web.Response:
     """Release the plan-then-wait gate so execution starts (the page's Run on arm).
-    Optional body ``{"steps": [...], "confirm_threshold": 0..1}`` runs the
-    user-edited plan and confirmation sensitivity."""
+    Optional body ``{"steps": [...], "confirm_threshold": 0..1,
+    "retry_on_failure": bool}`` runs the user-edited plan, confirmation
+    sensitivity, and whether to re-attempt a step on a failed check."""
     if not _is_local_origin(request):
         return web.json_response({"error": "cross-origin requests are not allowed"}, status=403)
     try:
@@ -1520,7 +1521,9 @@ async def post_agent_execute(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         body = {}
     orch = request.app["orchestrator"]
-    ok = orch.continue_run(steps=body.get("steps"), confirm_threshold=body.get("confirm_threshold"))
+    ok = orch.continue_run(steps=body.get("steps"),
+                           confirm_threshold=body.get("confirm_threshold"),
+                           retry_on_failure=body.get("retry_on_failure"))
     return web.json_response({"ok": ok})
 
 

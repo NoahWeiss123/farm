@@ -83,7 +83,9 @@ for pair in ${SKILL_REPOS}; do
   dir=\"\$base/step-\${STEP}\"
   if [[ ! -d \"\$dir/params\" ]]; then
     echo \">>> downloading \$repo step-\${STEP} → \$base\"
-    HF_HUB_ENABLE_HF_TRANSFER=1 hf download \"\$repo\" --include \"step-\${STEP}/*\" --local-dir \"\$base\"
+    # Use the openpi env's huggingface_hub directly — the NGC container ships no
+    # 'hf'/'huggingface-cli' on PATH, so call snapshot_download (version-robust).
+    uv run python -c \"from huggingface_hub import snapshot_download; snapshot_download(repo_id='\$repo', allow_patterns=['step-\${STEP}/*'], local_dir='\$base')\"
   fi
   if [[ ! -d \"\$dir/params\" ]]; then
     echo \"FATAL: no params for \$sk at \$dir after download\" >&2
