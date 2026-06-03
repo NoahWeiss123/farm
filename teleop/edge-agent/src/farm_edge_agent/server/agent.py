@@ -219,6 +219,8 @@ class Orchestrator:
         # there's no live camera). Off = no-image mode: plan from the task text.
         self._use_images = bool(cfg.get("use_images", True))
         self._sample_id = cfg.get("sample_episode") or None
+        # "sample" = recorded footage, "real" = the live camera.
+        self._camera_source = cfg.get("camera_source") or "sample"
         self._total = 1
         # Plan-then-wait: after planning, hold until the user clicks Run on arm.
         self._wait_for_arm = bool(cfg.get("plan_first", True))
@@ -533,6 +535,14 @@ class Orchestrator:
         return frame
 
     async def _capture_frame(self, frac: float = 0.0) -> bytes | None:
+        # Sample mode pulls from recorded footage; real mode uses the live camera.
+        if getattr(self, "_camera_source", "sample") == "sample":
+            if getattr(self, "_sample_id", None):
+                try:
+                    return await asyncio.to_thread(samples.frame_at, self._sample_id, frac)
+                except Exception:  # noqa: BLE001
+                    return None
+            return None
         supervisor = self.app.get("supervisor")
         backend = getattr(supervisor, "_backend", None) if supervisor else None
         fast = getattr(backend, "camera_jpeg", None)
@@ -543,12 +553,6 @@ class Orchestrator:
                     return b
             except Exception:  # noqa: BLE001
                 pass
-        # Fall back to recorded sample footage when there's no live camera.
-        if getattr(self, "_use_images", True) and getattr(self, "_sample_id", None):
-            try:
-                return await asyncio.to_thread(samples.frame_at, self._sample_id, frac)
-            except Exception:  # noqa: BLE001
-                return None
         return None
 
     async def _serve_status(self) -> dict[str, Any]:
