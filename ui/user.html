@@ -52,31 +52,27 @@
                border: 1px solid transparent; border-radius: 100px; padding: 4px 11px; font-weight: 560; }
   .save-pill:hover { border-color: var(--accent); }
 
-  /* vertical plan flow */
-  .flow { flex: 1; overflow-y: auto; padding: 22px 22px 30px; }
-  .fnode { display: grid; grid-template-columns: 30px 1fr; gap: 14px; padding-bottom: 16px; position: relative; }
-  .fnode:not(:last-child) .fg::after { content: ''; position: absolute; left: 14px; top: 30px; bottom: 2px; width: 2px; background: var(--border2); }
-  .fnode.lit:not(:last-child) .fg::after { background: var(--green-line); }
-  .fg { position: relative; }
-  .fcircle { width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--border2); background: var(--bg);
-             display: flex; align-items: center; justify-content: center; color: var(--muted); z-index: 1; position: relative;
-             transition: border-color 160ms, box-shadow 160ms, background 160ms, color 160ms; }
-  .fcircle svg { width: 16px; height: 16px; }
-  .fnode.confirm .fcircle { width: 24px; height: 24px; margin: 3px; border-style: dashed; }
-  .fnode[data-status="active"] .fcircle { border-color: var(--green); color: var(--green); box-shadow: 0 0 0 4px var(--green-soft); animation: glow 1.6s ease-in-out infinite; }
+  /* plan as connected rounded boxes that wind across the panel */
+  .flow { flex: 1; overflow-y: auto; padding: 22px; display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; row-gap: 14px; }
+  .fitem { display: flex; align-items: center; }
+  .fconn { width: 18px; height: 2px; background: var(--border2); border-radius: 2px; flex-shrink: 0; transition: background 220ms; }
+  .fconn.lit { background: var(--green-line); }
+  .fbox { position: relative; display: flex; align-items: center; gap: 9px; border: 1.5px solid var(--border2); border-radius: 12px;
+          background: var(--bg); padding: 10px 13px; max-width: 200px;
+          transition: border-color 160ms, box-shadow 160ms, background 160ms, color 160ms; }
+  .fbox .ic { display: inline-flex; flex-shrink: 0; color: var(--muted); } .fbox .ic svg { width: 20px; height: 20px; }
+  .fbox .lab { font-size: 13px; font-weight: 540; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .fbox.confirm { padding: 8px 11px; border-style: dashed; } .fbox.confirm .lab { font-size: 12px; color: var(--muted); }
+  .fbox[data-status="active"] { border-color: var(--green); box-shadow: 0 0 0 4px var(--green-soft); animation: glow 1.6s ease-in-out infinite; }
+  .fbox[data-status="active"] .ic, .fbox[data-status="active"] .lab { color: var(--green); }
   @keyframes glow { 0%,100% { box-shadow: 0 0 0 3px var(--green-soft); } 50% { box-shadow: 0 0 0 5px var(--green-soft); } }
-  .fnode[data-status="done"] .fcircle { border-color: var(--green-line); background: var(--green-soft); color: var(--green); }
-  .fnode[data-status="failed"] .fcircle { border-color: var(--red); background: var(--red-soft); color: var(--red); border-style: solid; }
-  .fbody { padding-top: 4px; min-width: 0; }
-  .fbody .ft { font-size: 14.5px; font-weight: 540; }
-  .fnode[data-status="active"] .fbody .ft { color: var(--green); }
-  .fbody .fd { font-size: 12px; color: var(--muted); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .fbody .fbadge { display: none; margin-top: 6px; font-size: 11.5px; font-weight: 600; padding: 2px 9px; border-radius: 100px; }
-  .fnode[data-status="done"].confirm .fbadge { display: inline-block; background: var(--green-soft); color: var(--green); }
-  .fnode[data-status="failed"].confirm .fbadge { display: inline-block; background: var(--red-soft); color: var(--red); }
-  .fprog { height: 3px; background: var(--border2); border-radius: 2px; margin-top: 8px; overflow: hidden; display: none; }
-  .fnode[data-status="active"].skill .fprog { display: block; }
-  .fprog span { display: block; height: 100%; width: 0%; background: var(--green); transition: width 300ms; }
+  .fbox[data-status="done"] { border-color: var(--green-line); background: var(--green-soft); } .fbox[data-status="done"] .ic { color: var(--green); }
+  .fbox[data-status="failed"] { border-color: var(--red); background: var(--red-soft); border-style: solid; }
+  .fbox[data-status="failed"] .ic, .fbox[data-status="failed"] .lab { color: var(--red); }
+  .fbox .fbadge { font-size: 11px; font-weight: 600; color: var(--green); flex-shrink: 0; } .fbox.confirm[data-status="failed"] .fbadge { color: var(--red); }
+  .fbox .fprog { position: absolute; left: 8px; right: 8px; bottom: 3px; height: 3px; background: var(--border2); border-radius: 2px; overflow: hidden; display: none; }
+  .fbox.skill[data-status="active"] .fprog { display: block; }
+  .fbox .fprog span { display: block; height: 100%; width: 0%; background: var(--green); transition: width 300ms; }
 
   /* thinking transcript */
   .transcript { flex: 1; overflow-y: auto; padding: 20px 22px 30px; display: flex; flex-direction: column; gap: 16px; }
@@ -308,21 +304,24 @@ function onState(ev){
 function renderFlow(ev){
   document.body.classList.add('active');
   const f=$('flow'); f.innerHTML=''; S.nodeOrder=ev.nodes.map(n=>n.id);
-  ev.nodes.forEach(n=>{
-    const el=document.createElement('div'); el.className='fnode '+n.kind; el.id='fn-'+n.id; el.dataset.status='pending';
-    el.innerHTML=`<div class="fg"><div class="fcircle">${nodeIcon(n)}</div></div>`
-      +`<div class="fbody"><div class="ft">${esc(n.title)}</div>`+(n.detail?`<div class="fd">${esc(n.detail)}</div>`:'')
-      +(n.kind==='skill'?'<div class="fprog"><span></span></div>':'')+(n.kind==='confirm'?'<div class="fbadge"></div>':'')+'</div>';
-    f.appendChild(el);
+  ev.nodes.forEach((n,i)=>{
+    const item=document.createElement('div'); item.className='fitem';
+    const conn = i>0 ? `<span class="fconn" id="fc-${i}"></span>` : '';
+    item.innerHTML = conn + `<div class="fbox ${n.kind}" id="fn-${n.id}" data-status="pending">`
+      + `<span class="ic">${nodeIcon(n)}</span><span class="lab">${esc(n.title)}</span>`
+      + (n.kind==='skill'?'<span class="fprog"><span></span></span>':'')
+      + (n.kind==='confirm'?'<span class="fbadge"></span>':'') + '</div>';
+    f.appendChild(item);
   });
 }
 function onNode(ev){
   const el=$('fn-'+ev.id); if(!el) return; el.dataset.status=ev.status;
-  if(ev.status!=='pending'){ el.classList.add('lit'); const idx=S.nodeOrder.indexOf(ev.id); if(idx>0){ const p=$('fn-'+S.nodeOrder[idx-1]); if(p) p.classList.add('lit'); } }
+  const idx=S.nodeOrder.indexOf(ev.id);
+  if(ev.status!=='pending' && idx>0){ const c=$('fc-'+idx); if(c) c.classList.add('lit'); }
   if(ev.status==='active') el.scrollIntoView({block:'nearest',behavior:'smooth'});
   if(ev.id.startsWith('confirm-') && (ev.status==='done'||ev.status==='failed')){
     const b=el.querySelector('.fbadge'); if(b){ const pct=ev.confidence!=null?Math.round(ev.confidence*100)+'%':(ev.status==='done'?'ok':'no');
-      b.textContent=(ev.status==='done'?'✓ ':'✗ ')+pct+(ev.note?'  '+ev.note:''); } }
+      b.textContent=(ev.status==='done'?'✓ ':'✗ ')+pct; el.title=ev.note||''; } }
 }
 function clearEmpty(){ const e=$('transcript').querySelector('.t-empty'); if(e) e.remove(); }
 function trScroll(){ const t=$('transcript'); t.scrollTop=t.scrollHeight; }
