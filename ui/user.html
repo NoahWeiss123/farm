@@ -67,12 +67,12 @@
   .fconn.h { width: 26px; height: 2px; }
   .fconn.v { position: absolute; top: 0; bottom: 0; width: 2px; }
   .fconn.lit { background: var(--green-line); }
-  .fbox { position: relative; width: 166px; display: flex; align-items: center; gap: 11px; border: 1.5px solid var(--border2); border-radius: 14px;
-          background: var(--bg); padding: 15px 16px; box-shadow: 0 1px 3px rgba(20,40,80,0.06);
+  .fbox { position: relative; width: 166px; min-height: 100px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+          border: 1.5px solid var(--border2); border-radius: 14px; background: var(--bg); padding: 18px 14px; box-shadow: 0 1px 3px rgba(20,40,80,0.06);
           transition: border-color 160ms, box-shadow 160ms, background 160ms, color 160ms; }
-  .fbox .ic { display: inline-flex; flex-shrink: 0; color: var(--muted); } .fbox .ic svg { width: 26px; height: 26px; }
-  .fbox .lab { font-size: 14.5px; font-weight: 560; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .fbox.confirm { padding: 11px 14px; border-style: dashed; } .fbox.confirm .ic svg { width: 20px; height: 20px; } .fbox.confirm .lab { font-size: 13px; color: var(--muted); }
+  .fbox .ic { display: inline-flex; flex-shrink: 0; color: var(--muted); } .fbox .ic svg { width: 28px; height: 28px; }
+  .fbox .lab { font-size: 14px; font-weight: 560; text-align: center; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .fbox.confirm { min-height: 82px; padding: 14px; border-style: dashed; } .fbox.confirm .ic svg { width: 22px; height: 22px; } .fbox.confirm .lab { font-size: 13px; color: var(--muted); }
   .fbox[data-status="active"] { border-color: var(--green); box-shadow: 0 0 0 4px var(--green-soft); animation: glow 1.6s ease-in-out infinite; }
   .fbox[data-status="active"] .ic, .fbox[data-status="active"] .lab { color: var(--green); }
   @keyframes glow { 0%,100% { box-shadow: 0 0 0 3px var(--green-soft); } 50% { box-shadow: 0 0 0 6px var(--green-soft); } }
@@ -83,9 +83,11 @@
   .fbox.skill[data-status="active"] .fprog { display: block; } .fbox .fprog span { display: block; height: 100%; width: 0%; background: var(--green); transition: width 300ms; }
 
   /* robot view: bottom of the left (plan) column, on the same background */
-  .robot { position: relative; flex-shrink: 0; height: 340px; overflow: hidden; background: transparent; }
+  .robot { position: relative; flex-shrink: 0; height: 400px; overflow: hidden; background: transparent; }
   #robot3d { position: absolute; inset: 0; } #robot3d canvas { display: block; }
-  .robot-lab { position: absolute; top: 12px; left: 18px; z-index: 2; font-size: 11px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); pointer-events: none; }
+  .estop { position: absolute; top: 14px; right: 16px; z-index: 3; background: var(--red); color: #fff; border: none; border-radius: 10px;
+           padding: 9px 18px; font-weight: 700; letter-spacing: 0.06em; box-shadow: 0 2px 10px rgba(217,45,32,0.35); }
+  .estop:hover { background: #bf2419; } .estop:active { transform: scale(0.97); }
   .robot-msg { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; color: var(--faint); font-size: 13px; }
   #robot3d.failed ~ .robot-msg { display: flex; }
   .transcript { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
@@ -166,7 +168,7 @@
         <div class="left">
           <div class="col-head"><button class="newtask" id="newBtn">&#43; New task</button><span class="spacer"></span><button class="save-pill" id="saveBtn" style="display:none">Save workflow</button></div>
           <div class="flow" id="flow"></div>
-          <div class="robot"><div id="robot3d"></div><span class="robot-lab">Robot</span><div class="robot-msg">3D view unavailable</div></div>
+          <div class="robot"><div id="robot3d"></div><button class="estop" id="estopBtn" title="emergency stop">E-STOP</button><div class="robot-msg">3D view unavailable</div></div>
         </div>
         <div class="right">
           <div class="col-head">Thinking</div>
@@ -286,6 +288,7 @@ $('newBtn').onclick=async()=>{ try{ await fetch('/v1/agent/stop',{method:'POST'}
   S.context=[]; S.current=null; document.body.classList.remove('active','busy','ready');
   $('flow').innerHTML=''; $('transcript').innerHTML='<div class="t-empty">The agent\'s reasoning and the frames it observes appear here.</div>';
   $('saveBtn').style.display='none'; ta.value=''; ta.placeholder='Describe a task'; autogrow(); ta.focus(); };
+$('estopBtn').onclick=async()=>{ try{ await Promise.all([fetch('/v1/teleop/estop',{method:'POST'}),fetch('/v1/agent/stop',{method:'POST'})]); }catch(e){} toast('emergency stop', true); };
 
 function resetRun(){ document.body.classList.add('active','busy'); document.body.classList.remove('ready');
   $('optsPanel').classList.remove('open'); S.current=null; S.nodeOrder=[]; S.curBlock={}; S.raw={};
@@ -379,19 +382,22 @@ import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 const mount = document.getElementById('robot3d');
 try {
   const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
-  renderer.setPixelRatio(devicePixelRatio); mount.appendChild(renderer.domElement);
+  renderer.setPixelRatio(devicePixelRatio); renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap; mount.appendChild(renderer.domElement);
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(46, 1.6, 0.01, 20); camera.position.set(1.25, 0.8, 1.25);
+  const camera = new THREE.PerspectiveCamera(46, 1.6, 0.01, 20); camera.position.set(0.95, 0.62, 0.95);
   const controls = new OrbitControls(camera, renderer.domElement);
-  controls.target.set(0.5, 0.28, 0.18); controls.enableDamping=true; controls.dampingFactor=0.08; controls.enablePan=false; controls.minDistance=0.7; controls.maxDistance=3.0;
-  scene.add(new THREE.AmbientLight(0xffffff, 0.85));
-  const sun = new THREE.DirectionalLight(0xffffff, 0.8); sun.position.set(3,5,4); scene.add(sun);
+  controls.target.set(0.42, 0.24, 0.14); controls.enableDamping=true; controls.dampingFactor=0.08; controls.enablePan=false; controls.minDistance=0.45; controls.maxDistance=3.0;
+  scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.9); sun.position.set(3,5,4); sun.castShadow=true;
+  sun.shadow.mapSize.set(1024,1024); sun.shadow.camera.near=0.5; sun.shadow.camera.far=14;
+  sun.shadow.camera.left=-2; sun.shadow.camera.right=2; sun.shadow.camera.top=2; sun.shadow.camera.bottom=-2; sun.shadow.bias=-0.0006; scene.add(sun);
   scene.add(new THREE.DirectionalLight(0xccddff, 0.3).translateZ(-3).translateY(2));
-  const grid = new THREE.GridHelper(8, 32, 0xcdd6e4, 0xdde5ef); grid.material.opacity=0.55; grid.material.transparent=true; grid.position.y=-0.001; scene.add(grid);
+  const grid = new THREE.GridHelper(8, 32, 0xc4d0e2, 0xd7e0ee); grid.material.opacity=0.5; grid.material.transparent=true; grid.position.y=-0.0011; scene.add(grid);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(8,8), new THREE.ShadowMaterial({ opacity:0.16 })); ground.rotation.x=-Math.PI/2; ground.position.y=-0.001; ground.receiveShadow=true; scene.add(ground);
   const rosFrame = new THREE.Group(); rosFrame.rotation.x = -Math.PI/2; scene.add(rosFrame);
   function resize(){ const w=mount.clientWidth||10, h=mount.clientHeight||10; renderer.setSize(w,h); camera.aspect=w/Math.max(1,h); camera.updateProjectionMatrix(); }
   new ResizeObserver(resize).observe(mount); resize();
-  const MAT = new THREE.MeshStandardMaterial({ color:0xdbe2ec, roughness:0.5, metalness:0.12 });
+  const MAT = new THREE.MeshStandardMaterial({ color:0x9fb4d8, roughness:0.45, metalness:0.22 });
   const v3 = (s,d='0 0 0') => (s||d).trim().split(/\s+/).map(Number);
   const applyOrigin = (o,el)=>{ const p=v3(el?.getAttribute('xyz')), r=v3(el?.getAttribute('rpy')); o.position.set(...p); o.setRotationFromEuler(new THREE.Euler(r[0],r[1],r[2],'ZYX')); };
   const BASE='/assets/urdf/uf850/'; let rotors=null, mimics={}, limits={};
@@ -404,7 +410,7 @@ try {
       const m=j.querySelector(':scope>mimic'); if(m) mims[nm]={source:m.getAttribute('joint'),mult:parseFloat(m.getAttribute('multiplier')??'1'),off:parseFloat(m.getAttribute('offset')??'0')}; }
     const G={}; for(const l of doc.querySelectorAll('link')){ const nm=l.getAttribute('name'); const g=new THREE.Group(); G[nm]=g;
       for(const vis of l.querySelectorAll('visual')){ const fn=vis.querySelector('mesh')?.getAttribute('filename'); if(!fn||!fn.toLowerCase().endsWith('.stl')) continue; const oe=vis.querySelector(':scope>origin');
-        stl.load(BASE+fn, geom=>{ geom.computeVertexNormals(); const mesh=new THREE.Mesh(geom,MAT.clone()); applyOrigin(mesh,oe); g.add(mesh); }, null, ()=>{}); } }
+        stl.load(BASE+fn, geom=>{ geom.computeVertexNormals(); const mesh=new THREE.Mesh(geom,MAT.clone()); mesh.castShadow=true; applyOrigin(mesh,oe); g.add(mesh); }, null, ()=>{}); } }
     const rot={}; for(const [nm,j] of Object.entries(jd)){ const pg=G[j.parent],cg=G[j.child]; if(!pg||!cg) continue; const og=new THREE.Group(); applyOrigin(og,j.o);
       if(j.type==='revolute'||j.type==='continuous'){ const rg=new THREE.Group(); const ax=v3(j.a?.getAttribute('xyz'),'0 0 1'); rot[nm]={g:rg,axis:new THREE.Vector3(...ax).normalize()}; og.add(rg); rg.add(cg); } else og.add(cg); pg.add(og); }
     const kids=new Set(Object.values(jd).map(j=>j.child)); const root=Object.keys(G).find(n=>!kids.has(n)); rosFrame.add(G[root]); return {rot,mims,lim};
