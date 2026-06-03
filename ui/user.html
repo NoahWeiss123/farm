@@ -78,14 +78,13 @@
   .fbox .fprog { position: absolute; left: 9px; right: 9px; bottom: 4px; height: 3px; background: var(--border2); border-radius: 2px; overflow: hidden; display: none; }
   .fbox.skill[data-status="active"] .fprog { display: block; } .fbox .fprog span { display: block; height: 100%; width: 0%; background: var(--green); transition: width 300ms; }
 
-  /* right column: robot view + thinking */
-  .robot { position: relative; height: 40%; min-height: 230px; border-bottom: 1px solid var(--border);
+  /* robot view: bottom of the left (plan) column */
+  .robot { position: relative; flex-shrink: 0; height: 248px; border-top: 1px solid var(--border); overflow: hidden;
            background: linear-gradient(180deg, #f4f7fc 0%, #e8eef6 100%); }
-  #robot3d { width: 100%; height: 100%; } #robot3d canvas { display: block; }
-  .robot-lab { position: absolute; top: 12px; left: 18px; font-size: 11px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); pointer-events: none; }
+  #robot3d { position: absolute; inset: 0; } #robot3d canvas { display: block; }
+  .robot-lab { position: absolute; top: 12px; left: 18px; z-index: 2; font-size: 11px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); pointer-events: none; }
   .robot-msg { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; color: var(--faint); font-size: 13px; }
   #robot3d.failed ~ .robot-msg { display: flex; }
-  .thinkwrap { flex: 1; display: flex; flex-direction: column; min-height: 0; }
   .transcript { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
   .t-img img { width: 100%; max-width: 340px; aspect-ratio: 4/3; object-fit: cover; border-radius: 12px; border: 1px solid var(--border2); display: block; background: #0a0a0a; }
   .t-img figcaption { font-size: 12px; color: var(--muted); margin-top: 6px; }
@@ -164,13 +163,11 @@
         <div class="left">
           <div class="col-head"><button class="newtask" id="newBtn">&#43; New task</button><span class="spacer"></span><button class="save-pill" id="saveBtn" style="display:none">Save workflow</button></div>
           <div class="flow" id="flow"></div>
+          <div class="robot"><div id="robot3d"></div><span class="robot-lab">Robot</span><div class="robot-msg">3D view unavailable</div></div>
         </div>
         <div class="right">
-          <div class="robot"><div id="robot3d"></div><span class="robot-lab">Robot</span><div class="robot-msg">3D view unavailable</div></div>
-          <div class="thinkwrap">
-            <div class="col-head">Thinking</div>
-            <div class="transcript" id="transcript"><div class="t-empty">The agent's reasoning and the frames it observes appear here.</div></div>
-          </div>
+          <div class="col-head">Thinking</div>
+          <div class="transcript" id="transcript"><div class="t-empty">The agent's reasoning and the frames it observes appear here.</div></div>
         </div>
       </div>
     </div>
@@ -375,7 +372,7 @@ try {
   scene.add(new THREE.DirectionalLight(0xccddff, 0.3).translateZ(-3).translateY(2));
   const grid = new THREE.GridHelper(8, 32, 0xcdd6e4, 0xdde5ef); grid.material.opacity=0.55; grid.material.transparent=true; grid.position.y=-0.001; scene.add(grid);
   const rosFrame = new THREE.Group(); rosFrame.rotation.x = -Math.PI/2; scene.add(rosFrame);
-  function resize(){ const w=mount.clientWidth||10, h=mount.clientHeight||10; renderer.setSize(w,h,false); camera.aspect=w/Math.max(1,h); camera.updateProjectionMatrix(); }
+  function resize(){ const w=mount.clientWidth||10, h=mount.clientHeight||10; renderer.setSize(w,h); camera.aspect=w/Math.max(1,h); camera.updateProjectionMatrix(); }
   new ResizeObserver(resize).observe(mount); resize();
   const MAT = new THREE.MeshStandardMaterial({ color:0xdbe2ec, roughness:0.5, metalness:0.12 });
   const v3 = (s,d='0 0 0') => (s||d).trim().split(/\s+/).map(Number);
