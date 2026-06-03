@@ -1469,6 +1469,12 @@ async def get_agent_config(_: web.Request) -> web.Response:
     return web.json_response(agent.agent_config())
 
 
+async def get_agent_samples(_: web.Request) -> web.Response:
+    """Recorded episodes the /user page can use as stand-in camera footage."""
+    from farm_edge_agent.server import samples
+    return web.json_response({"samples": await asyncio.to_thread(samples.list_samples)})
+
+
 async def post_agent_run(request: web.Request) -> web.Response:
     """Start an agent run. Body (all optional except task)::
 
@@ -1664,6 +1670,7 @@ def build_app(*, backend: RobotBackend | None = None) -> web.Application:
         web.get("/train", serve_train),
         web.get("/user", serve_user),
         web.get("/v1/agent/config", get_agent_config),
+        web.get("/v1/agent/samples", get_agent_samples),
         web.post("/v1/agent/run", post_agent_run),
         web.post("/v1/agent/stop", post_agent_stop),
         web.get("/v1/agent/state", get_agent_state),

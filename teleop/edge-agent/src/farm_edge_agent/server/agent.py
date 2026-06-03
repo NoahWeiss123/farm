@@ -24,6 +24,7 @@ the execution so the page is always alive; it labels the mode honestly.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import logging
 import time
@@ -32,7 +33,7 @@ from typing import Any
 
 import aiohttp
 
-from farm_edge_agent.server import abilities, do_inference
+from farm_edge_agent.server import abilities, do_inference, samples
 
 log = logging.getLogger("farm.agent")
 
@@ -195,9 +196,17 @@ class Orchestrator:
 
     async def _run(self, cfg: dict[str, Any]) -> None:
         base = BASE_BY_KEY.get(cfg.get("base_model")) or BASE_MODELS[0]
-        self._vision_model = cfg.get("vision_model") or do_inference.DEFAULT_VISION_MODEL
+        # One multimodal model does both the planning and the image recognition.
+        self._model = (cfg.get("model") or cfg.get("thinking_model")
+                       or do_inference.DEFAULT_THINKING_MODEL)
+        self._vision_model = self._model
         self._confirm_threshold = max(
             0.0, min(1.0, float(cfg.get("confirm_threshold") or DEFAULT_CONFIRM_THRESHOLD)))
+        # Images on = perceive + confirm from the camera (or sample footage when
+        # there's no live camera). Off = no-image mode: plan from the task text.
+        self._use_images = bool(cfg.get("use_images", True))
+        self._sample_id = cfg.get("sample_episode") or None
+        self._total = 1
         want_execute = bool(cfg.get("execute", False))
         step_seconds = max(0.5, float(cfg.get("step_seconds") or DEFAULT_STEP_SECONDS))
 
@@ -215,7 +224,7 @@ class Orchestrator:
             self._set_state("starting", task=task, base=base["key"], ability=ab.get("name"),
                             message=f"running ability: {ab.get('name')}")
             self._emit("config", task=task, base=base, skills=steps,
-                       vision_model=self._vision_model, execute=want_execute,
+                       model=self._model, execute=want_execute,
                        ability={"id": ab.get("id"), "name": ab.get("name")})
             self._emit_workflow(task, steps, ability=True)
             self._node("trigger", "done")
@@ -230,13 +239,11 @@ class Orchestrator:
         enabled_keys = [k for k in (cfg.get("skills") or [s["key"] for s in SKILLS])
                         if k in SKILL_BY_KEY]
         enabled = [SKILL_BY_KEY[k] for k in enabled_keys] or SKILLS
-        thinking_model = cfg.get("thinking_model") or do_inference.DEFAULT_THINKING_MODEL
 
         self._set_state("starting", task=task, base=base["key"],
                         skills=enabled_keys, message="warming up")
         self._emit("config", task=task, base=base, skills=enabled,
-                   thinking_model=thinking_model, vision_model=self._vision_model,
-                   execute=want_execute)
+                   model=self._model, execute=want_execute)
         # The graph skeleton shows immediately, even with no arm or camera.
         self._emit_workflow(task, None, ability=False)
         self._node("trigger", "done")
@@ -248,15 +255,17 @@ class Orchestrator:
         # perceive
         self._node("perceive", "active")
         self._set_state("capturing", message="looking at the workspace")
-        frame = await self._capture_frame()
+        frame = await self._observe(0.04, "Looking at the table") if self._use_images else None
         self._emit("camera", available=frame is not None,
-                   note="live base frame" if frame else "no camera, using selected skills")
+                   note=("live frame" if frame else
+                         ("no-image mode, planning from your description" if not self._use_images
+                          else "no camera or sample, using selected skills")))
         if frame is not None and do_ok:
             self._set_state("detecting", message="reading the scene")
             self._emit("thinking", channel="vision", delta="", reset=True)
             try:
                 det = await do_inference.detect_objects(
-                    self._session, frame, enabled, model=self._vision_model,
+                    self._session, frame, enabled, model=self._model,
                     on_delta=lambda d: self._emit("thinking", channel="vision", delta=d),
                 )
             except Exception as exc:  # noqa: BLE001
@@ -269,7 +278,9 @@ class Orchestrator:
         else:
             present_keys = enabled_keys
             self._emit("detect", present=present_keys, objects=[],
-                       summary="no camera, assuming the selected skills are present")
+                       summary=("No-image mode: taking your task at face value."
+                                if not self._use_images
+                                else "No camera or sample selected, using the selected skills."))
         present = [SKILL_BY_KEY[k] for k in present_keys if k in SKILL_BY_KEY] or enabled
         self._node("perceive", "done")
 
@@ -279,7 +290,7 @@ class Orchestrator:
         if do_ok:
             self._emit("thinking", channel="plan", delta="", reset=True)
             plan = await do_inference.plan_task(
-                self._session, task, present, enabled, model=thinking_model,
+                self._session, task, present, enabled, model=self._model,
                 on_delta=lambda d: self._emit("thinking", channel="plan", delta=d),
             )
             self._emit("thinking", channel="plan", delta="", done=True)
@@ -369,6 +380,7 @@ class Orchestrator:
 
     async def _execute(self, steps: list[dict[str, Any]], step_seconds: float, *, live: bool) -> None:
         total = len(steps)
+        self._total = total
         self._set_state("executing", mode="live" if live else "preview", total=total,
                         message="running the task" if live else "previewing the plan")
         per_step_max = max(60, int(step_seconds * POLICY_RATE_HZ) + 30)
@@ -416,16 +428,19 @@ class Orchestrator:
                        live: bool) -> tuple[bool, float | None, str]:
         """Move the arm clear, grab a base-cam frame, and ask the vision model
         whether the object actually landed. Returns (ok, confidence, note)."""
+        if not self._use_images:
+            return True, None, "no-image mode, marking complete"
         if not do_inference.available():
             return True, None, "no vision model, assumed complete"
+        frac = (index + 1) / max(1, self._total)
         for attempt in range(2):
             await self._clear_view(live=live)
-            frame = await self._capture_frame()
+            frame = await self._observe(frac, f"Checking: {step.get('object')}")
             if frame is None:
                 return True, None, "no camera, assumed complete"
             try:
                 res = await do_inference.confirm_action(
-                    self._session, frame, step, model=self._vision_model)
+                    self._session, frame, step, model=self._model)
             except Exception as exc:  # noqa: BLE001
                 return True, None, f"confirm skipped ({exc})"
             if res.get("arm_blocking") and attempt == 0:
@@ -479,16 +494,32 @@ class Orchestrator:
 
     # -- daemon self-calls ---------------------------------------------------
 
-    async def _capture_frame(self) -> bytes | None:
+    async def _observe(self, frac: float, caption: str) -> bytes | None:
+        """Capture a frame, push it to the page as an observed image, return it."""
+        frame = await self._capture_frame(frac)
+        if frame is not None:
+            url = "data:image/jpeg;base64," + base64.b64encode(frame).decode("ascii")
+            self._emit("image", url=url, caption=caption)
+        return frame
+
+    async def _capture_frame(self, frac: float = 0.0) -> bytes | None:
         supervisor = self.app.get("supervisor")
         backend = getattr(supervisor, "_backend", None) if supervisor else None
         fast = getattr(backend, "camera_jpeg", None)
-        if not callable(fast):
-            return None
-        try:
-            return await asyncio.to_thread(fast, "base")
-        except Exception:  # noqa: BLE001
-            return None
+        if callable(fast):
+            try:
+                b = await asyncio.to_thread(fast, "base")
+                if b:
+                    return b
+            except Exception:  # noqa: BLE001
+                pass
+        # Fall back to recorded sample footage when there's no live camera.
+        if getattr(self, "_use_images", True) and getattr(self, "_sample_id", None):
+            try:
+                return await asyncio.to_thread(samples.frame_at, self._sample_id, frac)
+            except Exception:  # noqa: BLE001
+                return None
+        return None
 
     async def _serve_status(self) -> dict[str, Any]:
         try:
@@ -538,13 +569,11 @@ def agent_config() -> dict[str, Any]:
         "skills": SKILLS,
         "base_models": BASE_MODELS,
         "do_available": do_inference.available(),
-        # OpenAI reasoning + vision (called directly with OPENAI_API_KEY); a few
-        # DigitalOcean open-weights models are kept at the end as fallbacks.
-        "thinking_models": ["gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "gpt-5-mini",
-                            "o4-mini", "llama-4-maverick"],
-        "vision_models": ["gpt-4o", "gpt-4o-mini", "gpt-5.4-mini", "gpt-4.1",
-                          "nemotron-nano-12b-v2-vl"],
-        "default_thinking_model": do_inference.DEFAULT_THINKING_MODEL,
-        "default_vision_model": do_inference.DEFAULT_VISION_MODEL,
+        # One multimodal model does both planning and image recognition. All are
+        # OpenAI (called directly with OPENAI_API_KEY); llama-4-maverick is a
+        # DigitalOcean open-weights fallback.
+        "models": ["gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "gpt-4o", "gpt-4o-mini",
+                   "gpt-4.1", "llama-4-maverick"],
+        "default_model": do_inference.DEFAULT_THINKING_MODEL,
         "abilities": abilities.list_abilities(),
     }

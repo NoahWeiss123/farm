@@ -42,8 +42,9 @@ BASE_URL = DO_BASE_URL  # back-compat alias
 # DigitalOcean. The DO subscription tier 403s the OpenAI/Anthropic slugs, but the
 # OpenAI key reaches them directly — so the consumer page defaults to real OpenAI
 # reasoning + vision. Both models are user-overridable from the /user page.
+# One multimodal model handles both planning and image recognition.
 DEFAULT_THINKING_MODEL = "gpt-5.4-mini"
-DEFAULT_VISION_MODEL = "gpt-4o"
+DEFAULT_VISION_MODEL = "gpt-5.4-mini"
 
 # Env var names that may hold the DO model-access key, most-specific first. The
 # bare ``DigitalOcean`` is what this repo's .env uses.
