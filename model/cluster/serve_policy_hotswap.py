@@ -248,6 +248,11 @@ def main() -> None:
     log.info(">>> preloading %d adapters: %s", len(adapters_spec), list(adapters_spec))
     adapters = {skill: load_adapter_leaves(d) for skill, d in adapters_spec.items()}
     swapper = HotSwapper(policy, adapters)
+    if not swapper.armed:
+        log.error("FATAL: LoRA hot-swap could not arm. Refusing to serve a degraded "
+                  "base-only policy (no per-object skill swapping). See the "
+                  "HOT-SWAP DISABLED warning above for the cause.")
+        sys.exit(2)
     default_skill = args.default_skill if args.default_skill in adapters else next(iter(adapters))
     swapper.ensure(default_skill)
 

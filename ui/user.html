@@ -115,6 +115,8 @@
   .btn-stop:hover { background: var(--red-soft); }
   .btn-arm { display: none; font-size: 13.5px; font-weight: 560; color: #fff; background: var(--green); border: none; border-radius: 10px; padding: 9px 17px; }
   .btn-arm:hover { background: #0c8a4d; }
+  .home-btn { flex-shrink: 0; font-size: 13px; font-weight: 540; color: var(--text); background: var(--bg); border: 1px solid var(--border2); border-radius: 11px; padding: 10px 15px; }
+  .home-btn:hover { border-color: var(--accent); color: var(--accent); }
   body.busy .btn-stop { display: inline-flex; }
   body.ready .btn-arm { display: inline-flex; }
 
@@ -237,6 +239,7 @@
       </div>
       <div class="dev-pop" id="devPop"></div>
       <button class="estop" id="estopBtn" title="emergency stop">E-STOP</button>
+      <button class="home-btn" id="homeBtn" title="reset the arm to its home pose">Reset to home</button>
       <div class="composer">
         <button class="ghost" id="optsBtn">Options</button>
         <textarea id="task" rows="1" placeholder="Describe a task"></textarea>
@@ -341,6 +344,7 @@ $('newBtn').onclick=async()=>{ try{ await fetch('/v1/agent/stop',{method:'POST'}
   $('flow').innerHTML=''; $('transcript').innerHTML='<div class="t-empty">The agent\'s reasoning and the frames it observes appear here.</div>';
   $('saveBtn').style.display='none'; ta.value=''; ta.placeholder='Describe a task'; autogrow(); ta.focus(); };
 $('estopBtn').onclick=async()=>{ try{ await Promise.all([fetch('/v1/teleop/estop',{method:'POST'}),fetch('/v1/agent/stop',{method:'POST'})]); }catch(e){} toast('emergency stop', true); };
+$('homeBtn').onclick=async()=>{ try{ const r=await fetch('/v1/teleop/home',{method:'POST'}); if(!r.ok) throw new Error('HTTP '+r.status); toast('resetting to home'); }catch(e){ toast('home failed: '+e.message, true); } };
 
 function resetRun(){ document.body.classList.add('active','busy'); document.body.classList.remove('ready');
   $('optsPanel').classList.remove('open'); S.current=null; S.nodeOrder=[]; S.curBlock={}; S.raw={};
