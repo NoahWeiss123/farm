@@ -25,7 +25,7 @@ set -euo pipefail
 
 WORK="$HOME/farm-train"
 CONFIG="${SERVE_CONFIG:-pi05_fftlora}"
-ADAPTER_STEP="${ADAPTER_STEP:-11999}"   # 3000/6000/9000/11999 are the saved steps
+ADAPTER_STEP="${ADAPTER_STEP:-9000}"    # step-9000 is the only checkpoint present in ALL four HF repos
 SKILLS="${SKILLS:-bottle bear duck hat}"
 HOTSWAP_PY="$WORK/serve_policy_hotswap.py"
 # skill -> HF repo (the per-task LoRAs trained off frozen FFT-56k)

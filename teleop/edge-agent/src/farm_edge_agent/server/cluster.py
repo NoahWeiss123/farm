@@ -54,8 +54,8 @@ SERVE_MODELS: dict[str, dict] = {
         # routes the incoming task prompt to a skill and hot-swaps just the
         # adapter leaves (no base reload, no recompile). Drives the /user page.
         "script": "serve_fftlora_hotswap.sbatch", "log": "serve",
-        "label": "FFT-56k + LoRA hot-swap (all skills)", "default_step": "55999",
-        "steps": ["55999"],
+        "label": "FFT-56k + LoRA hot-swap (all skills)", "default_step": "9000",
+        "steps": ["9000", "6000", "3000"],
         "job_name": "serve-fftlora-hotswap",
     },
     "lora_gse": {
