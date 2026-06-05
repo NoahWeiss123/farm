@@ -177,16 +177,39 @@ def fig_checkpoint(d, out):
     sel = json.load(open(os.path.join(d, "fft_sweep", "fft_base_selection.json")))
     ps = sel["per_step"]; steps = sorted(int(s) for s in ps)
     g = lambda k: [ps[str(s)].get(k) for s in steps]
-    fig, ax = plt.subplots(figsize=(9.5, 5.8))
-    ax.plot(steps, g("train_deg"), "o-", color=BASE_GRAY, lw=2, label="on training episodes (memorization)")
-    ax.plot(steps, g("held_clean_deg"), "o-", color="#16a34a", lw=2.2, label="on held-out episodes (generalization)")
-    ax.plot(steps, g("held_robust_deg"), "o-", color="#2563eb", lw=2, label="held-out, under disturbance")
-    ax.set_xlabel("training progress (steps)"); ax.set_ylabel("move-prediction error (degrees — lower is better)")
-    ax.set_title("Did training too long hurt?  No — it kept improving on held-out data")
-    ax.legend(framealpha=0.95)
-    caption(fig, "We worried the longest-trained model might 'over-memorize.' It didn't: held-out accuracy improves all the way\n"
-                 "to the end, so we use the final checkpoint as the base for the skills.")
-    fig.tight_layout(rect=(0,0.06,1,1)); fig.savefig(out, dpi=150, bbox_inches="tight"); plt.close(fig)
+    x = np.array(steps, dtype=float) / 1000.0
+    series = [
+        (g("train_deg"),       "#8b9097", "o", "train"),
+        (g("held_clean_deg"),  "#0f6d75", "s", "held-out"),
+        (g("held_robust_deg"), "#a4432f", "^", "held-out, shifted"),
+    ]
+    style = {
+        "font.family": "serif", "font.serif": ["Times New Roman", "DejaVu Serif"],
+        "mathtext.fontset": "dejavuserif",
+        "font.size": 11, "axes.labelsize": 12.5, "axes.titlesize": 13, "legend.fontsize": 10.5,
+        "axes.edgecolor": "#333333", "axes.linewidth": 0.9,
+        "axes.grid": True, "grid.color": "#dcdcdc", "grid.linewidth": 0.55,
+        "axes.spines.top": False, "axes.spines.right": False,
+        "xtick.direction": "in", "ytick.direction": "in",
+        "xtick.major.size": 4.0, "ytick.major.size": 4.0,
+        "xtick.minor.size": 2.2, "ytick.minor.size": 2.2,
+        "xtick.major.width": 0.9, "ytick.major.width": 0.9,
+    }
+    with plt.rc_context(style):
+        fig, ax = plt.subplots(figsize=(6.7, 4.4))
+        ax.set_axisbelow(True)
+        for y, c, mk, lab in series:
+            ax.plot(x, y, "-", color=c, lw=1.5, marker=mk, ms=5.0, mfc=c, mec=c,
+                    mew=0.8, label=lab, zorder=3)
+        ax.set_xlabel(r"Training steps  ($\times10^{3}$)")
+        ax.set_ylabel(r"Mean joint error  (degrees)")
+        ax.set_title("Error vs. training steps")
+        ax.minorticks_on(); ax.grid(which="minor", visible=False)
+        ax.set_ylim(0.8, 3.15); ax.margins(x=0.03)
+        leg = ax.legend(loc="upper right", frameon=True, framealpha=1.0,
+                        edgecolor="#bcbcbc", borderpad=0.7, handlelength=2.0, labelspacing=0.55)
+        leg.get_frame().set_linewidth(0.7)
+        fig.tight_layout(); fig.savefig(out, dpi=300, bbox_inches="tight"); plt.close(fig)
 
 
 def main():

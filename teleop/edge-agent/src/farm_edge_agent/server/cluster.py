@@ -40,7 +40,7 @@ SERVE_PORT = int(os.environ.get("FARM_SERVE_PORT", "8000"))
 # (4 h, whole-node-memory) serve queues for hours. A ~1.5 h / 96 G job slots into
 # a backfill gap and usually starts within minutes. Re-launch from the dashboard
 # to extend a session. Override via env if a node is wide open.
-SERVE_WALLTIME = os.environ.get("FARM_SERVE_WALLTIME", "01:30:00")
+SERVE_WALLTIME = os.environ.get("FARM_SERVE_WALLTIME", "06:00:00")
 SERVE_MEM = os.environ.get("FARM_SERVE_MEM", "96G")
 SERVE_MODELS: dict[str, dict] = {
     "fft": {

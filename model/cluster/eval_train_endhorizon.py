@@ -171,12 +171,23 @@ def main() -> None:
 
     H = args.horizon
     # Optional episode-index window (original dataset indexing), e.g. held-out bottle 100:299.
-    _ep_lo, _ep_hi = 0, 10**9
+    # One or more half-open windows: "lo:hi" or "lo:hi,lo:hi,..." (union).
+    # The union form lets a single eval cover per-task tails across all tasks
+    # (contiguous task blocks) in one policy load.
+    _ranges = []
     if args.ep_range:
-        _lo, _hi = args.ep_range.split(":", 1)
-        _ep_lo, _ep_hi = int(_lo), int(_hi)
+        for _part in args.ep_range.split(","):
+            _part = _part.strip()
+            if not _part:
+                continue
+            _lo, _hi = _part.split(":", 1)
+            _ranges.append((int(_lo), int(_hi)))
+    _ep_lo = min((r[0] for r in _ranges), default=0)
+    _ep_hi = max((r[1] for r in _ranges), default=10**9)
     def _in_range(e):
-        return _ep_lo <= e < _ep_hi
+        if not _ranges:
+            return True
+        return any(lo <= e < hi for (lo, hi) in _ranges)
     from openpi.policies import policy_config
     from openpi.training import config as _config
     from openpi_client import image_tools

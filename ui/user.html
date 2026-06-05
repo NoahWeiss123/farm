@@ -118,14 +118,13 @@
   .btn-stop:hover { background: var(--red-soft); }
   .btn-arm { display: none; font-size: 13.5px; font-weight: 560; color: #fff; background: var(--green); border: none; border-radius: 10px; padding: 9px 17px; }
   .btn-arm:hover { background: #0c8a4d; }
-  .btn-restart { display: none; font-size: 13.5px; font-weight: 540; color: var(--accent); background: #fff; border: 1px solid var(--accent); border-radius: 10px; padding: 8px 14px; }
-  .btn-restart:hover { background: var(--accent-soft); }
   .home-btn { flex-shrink: 0; font-size: 13px; font-weight: 540; color: var(--text); background: var(--bg); border: 1px solid var(--border2); border-radius: 11px; padding: 10px 15px; }
   .home-btn:hover { border-color: var(--accent); color: var(--accent); }
   body.busy .btn-stop { display: inline-flex; }
-  body.ready .btn-arm { display: inline-flex; }
-  /* Restart shows once a run has a plan but isn't currently running (stopped/done). */
-  body.active.has-plan:not(.busy):not(.ready) .btn-restart { display: inline-flex; }
+  /* "Run on arm" is the run/resume button: at the plan gate (ready) AND after a
+     stop/done with a plan, so it never vanishes mid-session. */
+  body.ready .btn-arm,
+  body.active.has-plan:not(.busy):not(.ready) .btn-arm { display: inline-flex; }
 
   /* options popover */
   .opts-pop { display: none; position: absolute; left: 22px; right: 22px; bottom: 80px; max-width: 820px; margin: 0 auto;
@@ -235,7 +234,7 @@
         <div class="opt"><div class="switch-row">
           <div><div style="font-weight:540">Use images</div><div class="muted" style="font-size:12.5px">look and confirm with vision, off is text only</div></div>
           <label class="switch"><input type="checkbox" id="useImages" checked><span class="tr"></span></label></div>
-          <div class="src-seg" id="srcSeg"><button data-src="sample" class="on">Sample footage</button><button data-src="real">Real camera</button></div>
+          <div class="src-seg" id="srcSeg"><button data-src="sample">Sample footage</button><button data-src="real" class="on">Real camera</button></div>
           <select class="sel-in" id="sample"></select></div>
         <div class="opt"><div class="switch-row">
           <div><div style="font-weight:540">Confirm each step</div><div class="muted" style="font-size:12.5px">check with vision that each step finished before the next</div></div>
@@ -254,8 +253,7 @@
         <button class="ghost" id="optsBtn">Options</button>
         <textarea id="task" rows="1" placeholder="Describe a task"></textarea>
         <button class="btn-stop" id="stopBtn">Stop</button>
-        <button class="btn-restart" id="restartBtn" title="restart this task from the beginning">Restart task</button>
-        <button class="btn-arm" id="armBtn">Run on arm</button>
+        <button class="btn-arm" id="armBtn" title="run this plan on the arm (also resumes after a stop)">Run on arm</button>
         <button class="btn-dark" id="runBtn">Run</button>
       </div>
       <button class="dev-btn" id="devBtn">Devices</button>
@@ -267,7 +265,7 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const S = { cfg:null, skills:[], bases:[], base:'fft_hotswap', enabled:new Set(), samples:[], src:'sample',
+const S = { cfg:null, skills:[], bases:[], base:'fft_hotswap', enabled:new Set(), samples:[], src:'real',
             lastSeq:0, nodeOrder:[], current:null, abilities:[], context:[], curBlock:{}, raw:{},
             editSteps:[], editable:false, isAbility:false };
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -352,19 +350,25 @@ async function runAbility(id){ S.context=[]; S.isAbility=true; resetRun();
 $('runBtn').onclick=submit;
 $('stopBtn').onclick=async()=>{ try{ await fetch('/v1/agent/stop',{method:'POST'}); }catch(e){} S.context=[]; toast('stopped'); };
 $('armBtn').onclick=async()=>{ closeEditor();
-  const steps=S.editSteps.map(s=>({key:s.key,object:s.object,label:s.label,prompt:s.prompt,repo:s.repo,confirm_prompt:s.confirm_prompt||''}));
-  try{ await fetch('/v1/agent/execute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({steps, confirm_threshold:(+$('sens').value)/10, retry_on_failure:$('retry').checked})}); toast('running on the arm'); }catch(e){} };
-// Restart: re-run the SAME plan from the top (no re-planning, no new workflow).
-$('restartBtn').onclick=async()=>{ closeEditor();
+  // At the plan gate, release it (execute the planned run, continuing the live
+  // graph). After a stop/done, re-run the same plan on the arm from the top —
+  // so "Run on arm" always works as the run/resume button and never disappears.
+  if(document.body.classList.contains('ready')){
+    const steps=(S.editSteps||[]).map(s=>({key:s.key,object:s.object,label:s.label,prompt:s.prompt,repo:s.repo,confirm_prompt:s.confirm_prompt||''}));
+    try{ await fetch('/v1/agent/execute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({steps, confirm_threshold:(+$('sens').value)/10, retry_on_failure:$('retry').checked})}); toast('running on the arm'); }catch(e){}
+  } else { runPlanOnArm(); }
+};
+// Re-run the SAME plan from the top on the arm (no re-planning, no new workflow).
+async function runPlanOnArm(){ closeEditor();
   const steps=(S.editSteps||[]).map(s=>({key:s.key,object:s.object,label:s.label,prompt:s.prompt,repo:s.repo,confirm_prompt:s.confirm_prompt||''}));
-  if(!steps.length){ toast('no plan to restart'); return; }
+  if(!steps.length){ toast('no plan to run'); return; }
   const task=(S.current&&S.current.task)||S.context[0]||'task';   // capture before resetRun nulls S.current
   S.isAbility=false; resetRun();
   try{ const r=await fetch('/v1/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(runBody({ task, replay_steps:steps,
         base_model:S.base, skills:[...S.enabled], model:$('model').value, plan_first:false, execute:true }))});
-    const d=await r.json(); if(!r.ok) throw new Error(d.error||('HTTP '+r.status)); toast('restarting task');
-  }catch(e){ toast('restart failed: '+e.message,true); document.body.classList.remove('busy','active','ready'); } };
+    const d=await r.json(); if(!r.ok) throw new Error(d.error||('HTTP '+r.status)); toast('running on the arm');
+  }catch(e){ toast('run failed: '+e.message,true); document.body.classList.remove('busy','active','ready'); } }
 $('newBtn').onclick=async()=>{ try{ await fetch('/v1/agent/stop',{method:'POST'}); }catch(e){}
   S.context=[]; S.current=null; document.body.classList.remove('active','busy','ready','has-plan');
   $('flow').innerHTML=''; $('transcript').innerHTML='<div class="t-empty">The agent\'s reasoning and the frames it observes appear here.</div>';
@@ -468,7 +472,7 @@ function buildNodes(steps, editable){
   if(!S.isAbility){ nodes.push({id:'perceive',kind:'perceive',title:'Look',detail:'scan the table'}); nodes.push({id:'plan',kind:'plan',title:'Plan',detail:'break into steps'}); }
   const usesSkills=baseSkillsEnabled(), conf=$('confirm').checked;
   steps.forEach((s,i)=>{ const obj=s.object||s.key;
-    if(usesSkills) nodes.push({id:'load-'+i,kind:'load',title:'Load '+(s.label||obj)+' skill',detail:s.repo||'',editable});
+    if(usesSkills) nodes.push({id:'load-'+i,kind:'load',title:(s.key==='base'?'Base model (no skill)':'Load '+(s.label||obj)+' skill'),detail:(s.key==='base'?'FFT-56k generalist':(s.repo||'')),editable});
     nodes.push({id:'step-'+i,kind:'skill',title:'Pick up '+obj,detail:'',editable});
     if(conf) nodes.push({id:'confirm-'+i,kind:'confirm',title:'Confirm '+obj,detail:(s.confirm_prompt||('is the '+obj+' on the box?')),editable}); });
   nodes.push({id:'done',kind:'done',title:'Done'}); return nodes;
@@ -488,11 +492,13 @@ function insertStep(i){ const sk=S.skills.find(x=>S.enabled.has(x.key))||S.skill
 function openEditor(i,type,anchor){ const pop=$('editPop'); const r=anchor.getBoundingClientRect();
   if(type!=='confirm'){ const adv=(type==='pick') && $('advanced').checked;
     pop.innerHTML='<div class="ed-h">Skill</div>'
-      +'<select id="edSkill" class="sel-in">'+S.skills.map(s=>`<option value="${s.key}"${s.key===S.editSteps[i].key?' selected':''}>${esc(s.label)}</option>`).join('')+'</select>'
+      +'<select id="edSkill" class="sel-in">'+S.skills.map(s=>`<option value="${s.key}"${s.key===S.editSteps[i].key?' selected':''}>${esc(s.label)}</option>`).join('')+`<option value="base"${S.editSteps[i].key==='base'?' selected':''}>Base model (no skill)</option>`+'</select>'
       +(adv?('<div class="ed-h" style="margin-top:2px">Policy prompt (LoRA + FFT)</div><textarea id="edPrompt" class="ed-ta">'+esc(S.editSteps[i].prompt||'')+'</textarea><button class="ed-save" id="edPSave">Save prompt</button>'):'')
       +'<button class="ed-remove" id="edRemove">Remove step</button>';
-    setTimeout(()=>{ $('edSkill').onchange=(e)=>{ const sk=skillBy(e.target.value); S.editSteps[i]={...S.editSteps[i],key:sk.key,object:sk.object,label:sk.label,prompt:sk.prompt,repo:sk.repo};
-        if(adv){ if($('edPrompt')) $('edPrompt').value=sk.prompt||''; renderEditable(); } else { renderEditable(); closeEditor(); } };
+    setTimeout(()=>{ $('edSkill').onchange=(e)=>{ const v=e.target.value;
+        if(v==='base'){ const obj=S.editSteps[i].object||'object'; S.editSteps[i]={...S.editSteps[i],key:'base',label:'Base model',repo:'',generalist:true,prompt:'Pick up the '+obj+' and place it on the box'}; }
+        else { const sk=skillBy(v); S.editSteps[i]={...S.editSteps[i],key:sk.key,object:sk.object,label:sk.label,prompt:sk.prompt,repo:sk.repo,generalist:false}; }
+        if(adv){ if($('edPrompt')) $('edPrompt').value=S.editSteps[i].prompt||''; renderEditable(); } else { renderEditable(); closeEditor(); } };
       if(adv && $('edPSave')) $('edPSave').onclick=()=>{ S.editSteps[i].prompt=$('edPrompt').value.trim(); renderEditable(); closeEditor(); };
       $('edRemove').onclick=()=>{ S.editSteps.splice(i,1); renderEditable(); closeEditor(); }; },0);
   } else { pop.innerHTML='<div class="ed-h">What to confirm</div>'

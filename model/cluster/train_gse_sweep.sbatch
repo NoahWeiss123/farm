@@ -48,7 +48,7 @@ source "$WORK/.hf_env"
 # silently train the wrong architecture into a mislabeled repo for 1-3 days.
 case "$EXP_TAG" in
   e2)  _want_ns=1 ;;  e4)  _want_ns=3 ;;   e8)  _want_ns=7 ;;
-  e16) _want_ns=15 ;; e32) _want_ns=31 ;;  e80) _want_ns=79 ;;
+  e16) _want_ns=15 ;; e32) _want_ns=31 ;;  e64) _want_ns=63 ;;  e80) _want_ns=79 ;;
   *)   _want_ns="" ;;
 esac
 if [[ -n "$_want_ns" && "$FARM_GSE_NUM_SPECIALIZED" != "$_want_ns" ]]; then

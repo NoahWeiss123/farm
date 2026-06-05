@@ -425,13 +425,23 @@ class XArmBackend:
     def drive_real_arm(self, value: bool) -> None:
         new_val = bool(value)
         if new_val == self._drive_real_arm:
-            # Same logical state — but if we're meant to be driving and the
-            # stream thread has died (a desync), re-assert servo mode rather than
-            # silently no-op. Otherwise the policy moves only the gripper while
-            # the joints sit frozen (the "stuck in digital mode" symptom).
-            if new_val and not self._stream_alive():
-                log.warning("xarm: drive_real_arm already on but stream is down; re-asserting servo mode")
-                self._set_streaming_mode(True)
+            # Same logical state — but if we're meant to be driving and the real
+            # servo path is actually down, re-assert rather than silently no-op.
+            # "Down" = the stream thread died, OR it's paused, OR the controller
+            # has fallen out of servo mode 1 (the post-home mode-0 latch). Keying
+            # off the REAL controller mode (not just thread liveness) lets the
+            # per-step _set_real_arm(True) recover a dead step; otherwise the
+            # policy moves only the gripper while the joints sit frozen.
+            if new_val:
+                api = getattr(self._driver, "_api", None)
+                real_mode = self._read_mode(api) if api is not None else None
+                if (not self._stream_alive()) or self._stream_paused.is_set() or (real_mode not in (1, None)):
+                    log.warning(
+                        "xarm: drive_real_arm on but servo path down "
+                        "(stream_alive=%s paused=%s mode=%s); re-asserting servo mode",
+                        self._stream_alive(), self._stream_paused.is_set(), real_mode,
+                    )
+                    self._set_streaming_mode(True)
             return
         self._drive_real_arm = new_val
         self._set_streaming_mode(new_val)
@@ -763,12 +773,37 @@ class XArmBackend:
         if api is None:
             return
         try:
-            api.motion_enable(enable=True)
-            api.set_mode(1)
-            api.set_state(0)
-            log.info("xarm: restored servo mode (1)")
-            # Re-seed the stream from live joints so it doesn't try to
-            # replay the pre-jog buffer the moment we unpause.
+            # The xArm only accepts a mode switch from a STOPPED state. If a prior
+            # position-mode move is still slewing, set_mode(1) is silently dropped
+            # and the arm stays in mode 0 — joints frozen, gripper still works
+            # (the every-other-step "only the claw moves" latch). Wait for the
+            # controller to settle, then switch and VERIFY, retrying until it
+            # actually reports mode 1.
+            self._wait_until_stopped(api, timeout=2.0)
+            switched = False
+            for attempt in range(4):
+                try:
+                    api.motion_enable(enable=True)
+                    api.set_mode(1)
+                    api.set_state(0)
+                except Exception as exc:
+                    log.warning("xarm: restore set_mode(1) attempt %d failed: %s", attempt + 1, exc)
+                    time.sleep(0.06)
+                    continue
+                mode = self._read_mode(api)
+                if mode is None or mode == 1:   # None = SDK can't report; trust the call
+                    switched = True
+                    break
+                log.warning("xarm: set_mode(1) did not take (mode=%s); settling + retrying", mode)
+                self._wait_until_stopped(api, timeout=1.0)
+                time.sleep(0.08)
+            if switched:
+                log.info("xarm: restored servo mode (1)")
+            else:
+                log.error("xarm: FAILED to restore servo mode after retries — joints will not drive")
+            # Re-seed the stream from live joints AND reset the policy-drive
+            # anchors, so the first post-restore tick doesn't replay the previous
+            # step's stale target through a clamped lerp.
             try:
                 cur_deg = self._driver.read_joint_state()
                 cur_rad = [math.radians(j) for j in cur_deg[:6]]
@@ -779,12 +814,47 @@ class XArmBackend:
                     self._stream_history.append((seed_t, list(cur_rad)))
                     self._stream_vel = [0.0] * 6
                     self._joint_filter.reset(x0=list(cur_rad), t0=seed_t)
+                    self._policy_drive_active = False
+                    self._policy_target = None
+                    self._policy_start = None
+                    self._policy_target_t = None
+                    self._policy_interval_s = _POLICY_INTERP_NOMINAL_S
+                    self._policy_last_arrival = None
             except Exception:
                 pass
-        except Exception as exc:
-            log.warning("xarm: restore servo mode failed: %s", exc)
         finally:
             self._stream_paused.clear()
+
+    def _wait_until_stopped(self, api: Any, *, timeout: float) -> None:
+        """Block (bounded) until the controller leaves the moving state, so a
+        mode switch will be honored. xArm get_state(): 1 = in-motion (SPORT);
+        anything else (2 READY / 3 PAUSE / 4 STOP) counts as settled."""
+        deadline = time.perf_counter() + max(0.0, timeout)
+        while time.perf_counter() < deadline:
+            try:
+                code, state = api.get_state()
+            except Exception:
+                return
+            if code != 0 or state != 1:
+                return
+            time.sleep(0.03)
+
+    @staticmethod
+    def _read_mode(api: Any) -> int | None:
+        """Best-effort read of the live controller mode (1 = servo-joint).
+        Returns None when the SDK build doesn't expose it (then we trust the
+        set_mode call instead of looping forever)."""
+        try:
+            getm = getattr(api, "get_mode", None)
+            if callable(getm):
+                r = getm()
+                if isinstance(r, (tuple, list)) and len(r) == 2:
+                    return int(r[1])
+                return int(r)
+            m = getattr(api, "mode", None)
+            return int(m) if m is not None else None
+        except Exception:
+            return None
 
     def get_joint_filter_params(self) -> dict[str, float]:
         """Read the current 1€ joint-filter params (min_cutoff Hz, beta)."""
@@ -1059,12 +1129,18 @@ class XArmBackend:
                 api = getattr(self._driver, "_api", None)
                 if api is None:
                     raise RuntimeError("xArm SDK not connected")
+                # wait=True: block until the position-mode slew finishes. The
+                # xArm only honors a mode switch from a STOPPED state, so the
+                # finally's _restore_servo_mode must not run while we're still
+                # slewing — otherwise set_mode(1) is silently dropped and the arm
+                # stays in mode 0 (joints frozen, only the gripper moves). This
+                # is the every-other-step "no motion" latch.
                 code = api.set_servo_angle(
                     angle=list(DEFAULT_HOME_JOINTS_850_DEG),
                     speed=HOMING_JOINT_SPEED_RAD_S,
                     mvacc=HOMING_JOINT_ACCEL_RAD_S2,
                     is_radian=False,
-                    wait=False,
+                    wait=True,
                 )
                 if code != 0:
                     raise RuntimeError(f"xArm home returned code {code}")

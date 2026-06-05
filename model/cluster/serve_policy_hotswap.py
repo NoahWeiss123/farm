@@ -61,6 +61,10 @@ import time
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("serve.hotswap")
 
+# Sentinel "skill" meaning NO adapter: zero the LoRA leaves so the bare FFT-56k
+# base (the generalist) runs, for objects no trained skill fits.
+BASE_SKILL = "__base__"
+
 # Prompt → skill routing. The trained task strings contain these tokens.
 SKILL_KEYWORDS = {
     "bottle": ("bottle",),
@@ -167,7 +171,17 @@ class HotSwapper:
                 self._skill_states[skill] = mapped
             self.armed = any(self._skill_states.values())
             if self.armed:
-                log.info(">>> hot-swap armed · %d adapted leaves · skills=%s",
+                # Synthetic "base" target: zero LoRA leaves => no adapter
+                # contribution => the bare FFT-56k base (generalist) for objects
+                # no trained skill fits.
+                try:
+                    self._skill_states[BASE_SKILL] = {
+                        p: jax.device_put(jax.numpy.zeros_like(self._flat[p].value))
+                        for p in lora_paths
+                    }
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("could not build base zero-adapter state: %s", exc)
+                log.info(">>> hot-swap armed · %d adapted leaves · skills=%s (+base)",
                          len(lora_paths), list(adapters))
             else:
                 log.warning("HOT-SWAP DISABLED — no adapter leaves mapped onto nnx state")
@@ -269,7 +283,9 @@ def main() -> None:
             prompt = obs.get("prompt") or obs.get("task") or ""
         if not prompt:
             prompt = args.default_prompt
-        swapper.ensure(route_skill(prompt, available, default_skill))
+        # A real prompt that matches no trained skill keyword routes to BASE_SKILL
+        # (zero adapter) — the generalist FFT-56k base handles the novel object.
+        swapper.ensure(route_skill(prompt, available, BASE_SKILL))
         return orig_infer(obs, **kw)
 
     policy.infer = infer  # type: ignore[method-assign]

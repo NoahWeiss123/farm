@@ -261,9 +261,12 @@ async def detect_objects(
         "a one-line summary.\n\n"
         "Then output a fenced ```json block with shape "
         '{"summary": "<one sentence>", "present": ["<key>", ...], '
-        '"objects": [{"key","object","present": true|false,"confidence": 0..1,"note": "<short>"}]}. '
-        "Only use keys from the known-objects list. Order 'present' by pick "
-        "convenience (nearest/least-occluded first)."
+        '"objects": [{"key","object","present": true|false,"confidence": 0..1,"note": "<short>"}], '
+        '"novel": ["<object name>", ...]}. '
+        "'present'/'objects' use ONLY keys from the known-objects list, ordered "
+        "by pick convenience (nearest/least-occluded first). 'novel' lists any "
+        "OTHER pick-up-able objects on the table that are NOT in the known list "
+        "(plain names, e.g. \"stapler\"); omit or empty if there are none."
     )
     user_content = [
         {"type": "text", "text": f"KNOWN OBJECTS:\n{catalogue}\n\nWhat is on the table?"},
@@ -282,9 +285,17 @@ async def detect_objects(
     # Fallback: if the model gave objects[] but no present[], derive it.
     if not present and objects:
         present = [o["key"] for o in objects if o.get("present")]
+    # Novel = on-table objects with no matching skill (drive the generalist base).
+    known_words = {c["object"].lower() for c in candidates}
+    novel = []
+    for n in (parsed.get("novel") or []):
+        s = str(n).strip()
+        if s and s.lower() not in known_words and s not in novel:
+            novel.append(s)
     return {
         "present": present,
         "objects": objects,
+        "novel": novel,
         "summary": (parsed.get("summary") or "").strip(),
         "raw": text,
     }
@@ -296,6 +307,7 @@ async def plan_task(
     present: list[dict[str, str]],
     skills: list[dict[str, str]],
     *,
+    novel: list[str] | None = None,
     model: str = DEFAULT_THINKING_MODEL,
     on_delta: Callable[[str], Any] | None = None,
 ) -> dict[str, Any]:
@@ -312,34 +324,46 @@ async def plan_task(
         for s in skills
     )
     present_lines = ", ".join(p["object"] for p in present) or "(none detected)"
+    novel_line = ", ".join(novel) if novel else ""
     sys_prompt = (
         "You are the planner for a UF850 robot arm that picks up tabletop "
         "objects and places them on a box. The arm runs a frozen base policy "
-        "(full fine-tune) and hot-swaps a small per-object LoRA 'skill' for each "
-        "pick. You break a high-level request into an ORDERED sequence of "
-        "single-object pick-and-place steps, one per object that should be "
-        "moved, each bound to exactly one available skill.\n\n"
-        "Rules:\n"
-        "- Only use skills from the AVAILABLE SKILLS list (match by object).\n"
-        "- One step per object instance to move. Order them sensibly "
-        "(least-occluded / topmost first to avoid disturbing others).\n"
-        "- Each step's 'prompt' MUST be the skill's exact policy_prompt.\n"
-        "- If the request can't be done with the available skills, still plan "
-        "the steps you can and note the gap.\n\n"
-        "Reason through this thoroughly and out loud before you answer: restate "
-        "the goal in your own words, list the objects that need to move, and work "
-        "through the best order and WHY, step by step, considering which objects "
-        "are most exposed or on top, what might get knocked over or occluded, and "
-        "reachability. Call out anything uncertain, and any object the request "
-        "mentions that you have no skill for. Write several sentences of real "
-        "reasoning, not a one-line summary.\n\n"
+        "(full fine-tune) and can either hot-swap a small per-object LoRA "
+        "'skill' for a pick, OR run the base policy with NO skill — a capable "
+        "generalist — for objects no skill fits. You break a high-level request "
+        "into an ORDERED sequence of single-object pick-and-place steps.\n\n"
+        "For EACH object to move, choose how to pick it:\n"
+        "  1. EXACT SKILL — if the object is one of the AVAILABLE SKILLS (match "
+        "by object), use it: set \"key\" to the skill key. Strongly preferred "
+        "whenever the object is that skill's object or an obvious variant.\n"
+        "  2. CLOSEST SKILL — if not exact but clearly similar to a skill (e.g. "
+        "a different style of bottle, or a plush animal vs the teddy bear), use "
+        "the CLOSEST skill and explain the substitution in the rationale.\n"
+        "  3. GENERALIST BASE — ONLY if the object is genuinely unlike any "
+        "skill, set \"key\" to \"base\" and \"object\" to the object's name. The "
+        "base is the full fine-tune with no skill adapter: capable but less "
+        "specialized. Use it only when no skill is a sensible fit — when in "
+        "doubt, pick the closest skill, NOT base.\n\n"
+        "Other rules:\n"
+        "- One step per object instance to move. Order sensibly (topmost / "
+        "least-occluded first to avoid disturbing others).\n"
+        "- For a skill step, 'prompt' MUST be that skill's exact policy_prompt. "
+        "For a base step you may omit 'prompt'.\n\n"
+        "Reason thoroughly and out loud before answering: restate the goal, list "
+        "the objects to move, and for EACH decide exact-skill vs closest-skill "
+        "vs base and WHY, plus the best order (what's on top / most exposed, "
+        "what could be knocked over, reachability). Be conservative about "
+        "'base' — prefer a real or closest skill. Write several sentences of "
+        "real reasoning, not a one-line summary.\n\n"
         "Then output a fenced ```json block: "
-        '{"summary": "<one sentence>", "steps": [{"key","object","prompt","rationale"}]}.'
+        '{"summary": "<one sentence>", "steps": [{"key","object","prompt","rationale"}]}. '
+        "Each step's 'key' is a skill key or the string \"base\"."
     )
     user_prompt = (
         f"REQUEST: {task}\n\n"
-        f"DETECTED ON TABLE: {present_lines}\n\n"
-        f"AVAILABLE SKILLS:\n{skill_lines}\n\n"
+        f"DETECTED ON TABLE (known objects): {present_lines}\n\n"
+        + (f"OTHER OBJECTS SEEN (no matching skill): {novel_line}\n\n" if novel_line else "")
+        + f"AVAILABLE SKILLS:\n{skill_lines}\n\n"
         "Produce the ordered plan."
     )
     text = await stream_chat(
@@ -352,7 +376,20 @@ async def plan_task(
     by_key = {s["key"]: s for s in skills}
     steps: list[dict[str, Any]] = []
     for raw_step in parsed.get("steps") or []:
-        key = raw_step.get("key")
+        key = (raw_step.get("key") or "").strip()
+        if key == "base":
+            # Generalist step: no skill adapter. Use the object the model named
+            # and a generic pick-and-place prompt (which matches no skill keyword,
+            # so the hot-swap serve routes it to the bare FFT-56k base).
+            obj = str(raw_step.get("object") or "object").strip() or "object"
+            steps.append({
+                "key": "base",
+                "object": obj,
+                "prompt": f"Pick up the {obj} and place it on the box",
+                "rationale": str(raw_step.get("rationale") or "").strip(),
+                "generalist": True,
+            })
+            continue
         skill = by_key.get(key)
         if skill is None:
             continue
@@ -361,6 +398,7 @@ async def plan_task(
             "object": skill["object"],
             "prompt": skill["prompt"],  # authoritative: the trained policy string
             "rationale": str(raw_step.get("rationale") or "").strip(),
+            "generalist": False,
         })
     return {
         "steps": steps,

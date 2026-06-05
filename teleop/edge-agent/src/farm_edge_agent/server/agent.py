@@ -74,7 +74,7 @@ BASE_MODELS: list[dict[str, Any]] = [
 ]
 BASE_BY_KEY = {b["key"]: b for b in BASE_MODELS}
 
-DEFAULT_STEP_SECONDS = 30.0
+DEFAULT_STEP_SECONDS = 21.0
 POLICY_RATE_HZ = 30.0
 DEFAULT_CONFIRM_THRESHOLD = 0.6
 # Settle before each live policy step: let the previous step's serve websocket
@@ -349,10 +349,12 @@ class Orchestrator:
                 det = {"present": enabled_keys, "objects": [], "summary": ""}
             self._emit("thinking", channel="vision", delta="", done=True)
             present_keys = det["present"] or enabled_keys
-            self._emit("detect", present=present_keys,
+            novel = det.get("novel") or []
+            self._emit("detect", present=present_keys, novel=novel,
                        objects=det.get("objects") or [], summary=det.get("summary") or "")
         else:
             present_keys = enabled_keys
+            novel = []
             self._emit("detect", present=present_keys, objects=[],
                        summary=("No-image mode: taking your task at face value."
                                 if not self._use_images
@@ -366,7 +368,7 @@ class Orchestrator:
         if do_ok:
             self._emit("thinking", channel="plan", delta="", reset=True)
             plan = await do_inference.plan_task(
-                self._session, task, present, enabled, model=self._model,
+                self._session, task, present, enabled, novel=novel, model=self._model,
                 on_delta=lambda d: self._emit("thinking", channel="plan", delta=d),
             )
             self._emit("thinking", channel="plan", delta="", done=True)
@@ -398,15 +400,21 @@ class Orchestrator:
         for st in steps or []:
             if not isinstance(st, dict) or "key" not in st:
                 continue
+            is_base = st["key"] == "base"
             meta = SKILL_BY_KEY.get(st["key"], {})
+            obj = st.get("object") or meta.get("object", st["key"])
+            # base steps run the bare FFT-56k (no adapter): a generic prompt that
+            # matches no skill keyword, so the serve routes it to the base.
+            base_prompt = f"Pick up the {obj} and place it on the box" if is_base else ""
             out.append({
                 **st,
-                "object": st.get("object") or meta.get("object", st["key"]),
-                "label": st.get("label") or meta.get("label", st["key"]),
+                "object": obj,
+                "label": st.get("label") or meta.get("label") or ("Base model" if is_base else st["key"]),
                 "emoji": st.get("emoji") or meta.get("emoji", ""),
-                "prompt": st.get("prompt") or meta.get("prompt", ""),
+                "prompt": st.get("prompt") or meta.get("prompt") or base_prompt,
                 "repo": st.get("repo") or meta.get("repo", ""),
                 "rationale": st.get("rationale", ""),
+                "generalist": bool(st.get("generalist", is_base)),
             })
         return out
 
@@ -423,9 +431,12 @@ class Orchestrator:
         confirm_on = getattr(self, "_confirm_enabled", True)
         for i, s in enumerate(steps or []):
             obj = s.get("object") or s.get("key")
+            is_base = s.get("key") == "base"
             if uses_skills:
+                load_title = "Base model (no skill)" if is_base else f"Load {s.get('label') or obj} skill"
+                load_detail = "FFT-56k generalist" if is_base else s.get("repo", "")
                 nodes.append({"id": f"load-{i}", "kind": "load", "skill": s.get("key"),
-                              "title": f"Load {s.get('label') or obj} skill", "detail": s.get("repo", "")})
+                              "title": load_title, "detail": load_detail})
             nodes.append({"id": f"step-{i}", "kind": "skill", "title": f"Pick up {obj}",
                           "skill": s.get("key"), "detail": ""})
             if confirm_on:
@@ -686,6 +697,8 @@ class Orchestrator:
             return {"bound": False, "note": f"serve status unavailable ({exc})"}
 
     async def _start_policy(self, max_steps: int) -> bool:
+        # Strict synchronous, no-skip executor — the proven loop. The continual
+        # "queue" loop regressed task quality on the arm, so we stay on sync.
         body = {"live": True, "rtc": True, "mode": "sync", "max_steps": max_steps}
         try:
             async with self._session.post(
