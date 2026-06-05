@@ -75,16 +75,11 @@ home*.png run_*.png running_*.png
 !farm-cloud/ui/public/**/*.png
 MUJOCO_LOG.TXT
 
-# regenerable eval artifacts at repo ROOT (the kept copies live in analysis/)
+# regenerable eval artifacts at repo ROOT
 /eval-*.json
 /cmp_*.png
 /gse_vs_full.pdf
-# but DO keep the curated analysis figures (override the global *.png ignore)
-!analysis/*.png
 
-# FFT-LoRA: raw adapter dumps (1GB; the models live on HuggingFace)
-analysis/fftLoRA_report/vectors/
-analysis/realdata_lora_gse/raw/
 .DS_Store
 **/.DS_Store
 
@@ -93,3 +88,18 @@ video_script.txt
 
 # saved consumer-agent workflows (user data)
 abilities/
+
+# Analysis workspace — eval JSON, figures, PDFs, reports (~1.2 GB). Kept
+# locally and in release tags, not on main.
+analysis/
+
+# Video pipeline — Remotion project (node_modules + renders) and exported clips
+remotion/
+videoclips/
+
+# Claude Code / AI-agent instructions + internal working notes (local only).
+# Bare CLAUDE.md also matches .claude/CLAUDE.md.
+CLAUDE.md
+model/FINDINGS.md
+model/HUGGINGFACE_UPLOAD.md
+model/cluster/DEPLOYMENT.md

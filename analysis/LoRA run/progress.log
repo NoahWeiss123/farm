@@ -1,76 +1,0 @@
-[2026-05-30T22:41:10Z] state=RUNNING|1:08|7:58:52|slinky-2 | ckpts=[] | <no step line yet>
-[2026-05-30T22:44:15Z] state=RUNNING|4:12|7:55:48|slinky-2 | ckpts=[] | <no step line yet>
-[2026-05-30T22:47:18Z] state=RUNNING|7:15|7:52:45|slinky-2 | ckpts=[] | <no step line yet>
-[2026-05-30T22:50:21Z] state=RUNNING|10:19|7:49:41|slinky-2 | ckpts=[] | <no step line yet>
-[2026-05-30T22:53:24Z] state=RUNNING|13:22|7:46:38|slinky-2 | ckpts=[] | <no step line yet>
-[2026-05-30T22:56:28Z] state=RUNNING|16:25|7:43:35|slinky-2 | ckpts=[] | 22:55:55.510 [I] Step 0: grad_norm=0.4305, loss=0.0939, param_norm=1803.8630                      (36600:train.py:268)
-[2026-05-30T22:59:31Z] state=RUNNING|19:28|7:40:32|slinky-2 | ckpts=[] | 22:58:00.513 [I] Step 100: grad_norm=0.2365, loss=0.0511, param_norm=1803.8638                    (36600:train.py:268)
-[2026-05-30T23:02:34Z] state=RUNNING|22:32|7:37:28|slinky-2 | ckpts=[] | 23:02:10.985 [I] Step 300: grad_norm=0.1225, loss=0.0165, param_norm=1803.8839                    (36600:train.py:268)
-[2026-05-30T23:05:38Z] state=RUNNING|25:36|7:34:24|slinky-2 | ckpts=[] | 23:04:16.620 [I] Step 400: grad_norm=0.0944, loss=0.0144, param_norm=1803.9121                    (36600:train.py:268)
-[2026-05-30T23:08:41Z] state=RUNNING|28:39|7:31:21|slinky-2 | ckpts=[] | 23:08:27.897 [I] Step 600: grad_norm=0.0899, loss=0.0126, param_norm=1804.0312                    (36600:train.py:268)
-[2026-05-30T23:11:45Z] state=RUNNING|31:42|7:28:18|slinky-2 | ckpts=[] | 23:10:33.537 [I] Step 700: grad_norm=0.2803, loss=0.0141, param_norm=1804.1089                    (36600:train.py:268)
-[2026-05-30T23:14:48Z] state=RUNNING|34:46|7:25:14|slinky-2 | ckpts=[] | 23:12:39.101 [I] Step 800: grad_norm=0.0947, loss=0.0110, param_norm=1804.1823                    (36600:train.py:268)
-[2026-05-30T23:17:52Z] state=RUNNING|37:49|7:22:11|slinky-2 | ckpts=[] | 23:17:04.846 [I] Step 1000: grad_norm=0.0651, loss=0.0088, param_norm=1804.3236                   (36600:train.py:268)
-[2026-05-30T23:20:55Z] state=RUNNING|40:53|7:19:07|slinky-2 | ckpts=[] | 23:19:10.367 [I] Step 1100: grad_norm=0.0598, loss=0.0087, param_norm=1804.3918                   (36600:train.py:268)
-[2026-05-30T23:23:59Z] state=RUNNING|43:57|7:16:03|slinky-2 | ckpts=[] | 23:23:21.504 [I] Step 1300: grad_norm=0.0537, loss=0.0078, param_norm=1804.5331                   (36600:train.py:268)
-[2026-05-30T23:27:02Z] state=RUNNING|47:00|7:13:00|slinky-2 | ckpts=[] | 23:25:27.045 [I] Step 1400: grad_norm=0.0551, loss=0.0076, param_norm=1804.6062                   (36600:train.py:268)
-[2026-05-30T23:30:06Z] state=RUNNING|50:04|7:09:56|slinky-2 | ckpts=[] | 23:29:37.999 [I] Step 1600: grad_norm=0.0599, loss=0.0071, param_norm=1804.7440                   (36600:train.py:268)
-[2026-05-30T23:33:09Z] state=RUNNING|53:07|7:06:53|slinky-2 | ckpts=[] | 23:31:55.981 [I] Step 1700: grad_norm=0.0625, loss=0.0075, param_norm=1804.8143                   (36600:train.py:268)
-[2026-05-30T23:36:13Z] state=RUNNING|56:10|7:03:50|slinky-2 | ckpts=[] | 23:36:06.450 [I] Step 1900: grad_norm=0.0528, loss=0.0067, param_norm=1804.9528                   (36600:train.py:268)
-[2026-05-30T23:39:16Z] state=RUNNING|59:14|7:00:46|slinky-2 | ckpts=[2000 ] | 23:38:11.886 [I] Step 2000: grad_norm=0.0489, loss=0.0061, param_norm=1805.0212                   (36600:train.py:268)
-[2026-05-30T23:42:20Z] state=RUNNING|1:02:18|6:57:42|slinky-2 | ckpts=[2000 ] | 23:40:20.850 [I] Step 2100: grad_norm=0.0504, loss=0.0062, param_norm=1805.0872                   (36600:train.py:268)
-[2026-05-30T23:45:23Z] state=RUNNING|1:05:21|6:54:39|slinky-2 | ckpts=[2000 ] | 23:44:31.327 [I] Step 2300: grad_norm=0.0470, loss=0.0057, param_norm=1805.2159                   (36600:train.py:268)
-[2026-05-30T23:48:27Z] state=RUNNING|1:08:25|6:51:35|slinky-2 | ckpts=[2000 ] | 23:46:36.547 [I] Step 2400: grad_norm=0.0455, loss=0.0056, param_norm=1805.2784                   (36600:train.py:268)
-[2026-05-30T23:51:30Z] state=RUNNING|1:11:28|6:48:32|slinky-2 | ckpts=[2000 ] | 23:51:01.141 [I] Step 2600: grad_norm=0.0480, loss=0.0058, param_norm=1805.4025                   (36600:train.py:268)
-[2026-05-30T23:54:34Z] state=RUNNING|1:14:32|6:45:28|slinky-2 | ckpts=[2000 ] | 23:53:06.961 [I] Step 2700: grad_norm=0.0480, loss=0.0055, param_norm=1805.4634                   (36600:train.py:268)
-[2026-05-30T23:57:38Z] state=RUNNING|1:17:35|6:42:25|slinky-2 | ckpts=[2000 ] | 23:57:17.745 [I] Step 2900: grad_norm=0.0500, loss=0.0055, param_norm=1805.5778                   (36600:train.py:268)
-[2026-05-31T00:01:19Z] state=RUNNING|1:21:16|6:38:44|slinky-2 | ckpts=[2000 ] | 23:59:23.154 [I] Step 3000: grad_norm=0.0430, loss=0.0050, param_norm=1805.6329                   (36600:train.py:268)
-[2026-05-31T00:04:22Z] state=RUNNING|1:24:19|6:35:41|slinky-2 | ckpts=[2000 ] | 00:03:34.140 [I] Step 3200: grad_norm=0.0456, loss=0.0052, param_norm=1805.7428                   (36600:train.py:268)
-[2026-05-31T00:07:25Z] state=RUNNING|1:27:23|6:32:37|slinky-2 | ckpts=[2000 ] | 00:05:49.809 [I] Step 3300: grad_norm=0.0425, loss=0.0046, param_norm=1805.7944                   (36600:train.py:268)
-[2026-05-31T00:10:29Z] state=RUNNING|1:30:27|6:29:33|slinky-2 | ckpts=[2000 ] | 00:09:59.495 [I] Step 3500: grad_norm=0.0438, loss=0.0048, param_norm=1805.8943                   (36600:train.py:268)
-[2026-05-31T00:13:33Z] state=RUNNING|1:33:31|6:26:29|slinky-2 | ckpts=[2000 ] | 00:12:04.336 [I] Step 3600: grad_norm=0.0417, loss=0.0046, param_norm=1805.9412                   (36600:train.py:268)
-[2026-05-31T00:16:36Z] state=RUNNING|1:36:34|6:23:26|slinky-2 | ckpts=[2000 ] | 00:16:13.918 [I] Step 3800: grad_norm=0.0426, loss=0.0045, param_norm=1806.0337                   (36600:train.py:268)
-[2026-05-31T00:19:40Z] state=RUNNING|1:39:37|6:20:23|slinky-2 | ckpts=[2000 ] | 00:18:18.697 [I] Step 3900: grad_norm=0.0395, loss=0.0040, param_norm=1806.0770                   (36600:train.py:268)
-[2026-05-31T00:22:43Z] state=RUNNING|1:42:41|6:17:19|slinky-2 | ckpts=[2000 4000 ] | 00:22:31.859 [I] Step 4100: grad_norm=0.0377, loss=0.0038, param_norm=1806.1588                   (36600:train.py:268)
-[2026-05-31T00:25:46Z] state=RUNNING|1:45:44|6:14:16|slinky-2 | ckpts=[2000 4000 ] | 00:24:50.189 [I] Step 4200: grad_norm=0.0389, loss=0.0040, param_norm=1806.1971                   (36600:train.py:268)
-[2026-05-31T00:28:50Z] state=RUNNING|1:48:47|6:11:13|slinky-2 | ckpts=[2000 4000 ] | 00:26:55.813 [I] Step 4300: grad_norm=0.0396, loss=0.0040, param_norm=1806.2338                   (36600:train.py:268)
-[2026-05-31T00:31:53Z] state=RUNNING|1:51:51|6:08:09|slinky-2 | ckpts=[2000 4000 ] | 00:31:06.654 [I] Step 4500: grad_norm=0.0379, loss=0.0037, param_norm=1806.3075                   (36600:train.py:268)
-[2026-05-31T00:34:57Z] state=RUNNING|1:54:58|6:05:02|slinky-2 | ckpts=[2000 4000 ] | 00:33:11.842 [I] Step 4600: grad_norm=0.0372, loss=0.0036, param_norm=1806.3396                   (36600:train.py:268)
-[2026-05-31T00:38:07Z] state=RUNNING|1:58:04|6:01:56|slinky-2 | ckpts=[2000 4000 ] | 00:37:22.719 [I] Step 4800: grad_norm=0.0372, loss=0.0035, param_norm=1806.4025                   (36600:train.py:268)
-[2026-05-31T00:41:10Z] state=RUNNING|2:01:08|5:58:52|slinky-2 | ckpts=[2000 4000 ] | 00:39:27.928 [I] Step 4900: grad_norm=0.0367, loss=0.0037, param_norm=1806.4309                   (36600:train.py:268)
-[2026-05-31T00:44:13Z] state=RUNNING|2:04:11|5:55:49|slinky-2 | ckpts=[2000 4000 ] | 00:43:47.603 [I] Step 5100: grad_norm=0.0334, loss=0.0030, param_norm=1806.4849                   (36600:train.py:268)
-[2026-05-31T00:47:17Z] state=RUNNING|2:07:14|5:52:46|slinky-2 | ckpts=[2000 4000 ] | 00:45:52.569 [I] Step 5200: grad_norm=0.0351, loss=0.0033, param_norm=1806.5100                   (36600:train.py:268)
-[2026-05-31T00:50:20Z] state=RUNNING|2:10:18|5:49:42|slinky-2 | ckpts=[2000 4000 ] | 00:50:02.697 [I] Step 5400: grad_norm=0.0354, loss=0.0032, param_norm=1806.5554                   (36600:train.py:268)
-[2026-05-31T00:53:24Z] state=RUNNING|2:13:22|5:46:38|slinky-2 | ckpts=[2000 4000 ] | 00:52:07.855 [I] Step 5500: grad_norm=0.0362, loss=0.0033, param_norm=1806.5775                   (36600:train.py:268)
-[2026-05-31T00:56:27Z] state=RUNNING|2:16:25|5:43:35|slinky-2 | ckpts=[2000 4000 ] | 00:56:18.595 [I] Step 5700: grad_norm=0.0336, loss=0.0029, param_norm=1806.6167                   (36600:train.py:268)
-[2026-05-31T00:59:30Z] state=RUNNING|2:19:28|5:40:32|slinky-2 | ckpts=[2000 4000 ] | 00:58:36.660 [I] Step 5800: grad_norm=0.0371, loss=0.0032, param_norm=1806.6348                   (36600:train.py:268)
-[2026-05-31T01:02:34Z] state=RUNNING|2:22:31|5:37:29|slinky-2 | ckpts=[2000 4000 ] | 01:00:41.769 [I] Step 5900: grad_norm=0.0355, loss=0.0030, param_norm=1806.6519                   (36600:train.py:268)
-[2026-05-31T01:05:37Z] state=RUNNING|2:25:34|5:34:26|slinky-2 | ckpts=[2000 4000 6000 ] | 01:04:55.749 [I] Step 6100: grad_norm=0.0352, loss=0.0029, param_norm=1806.6821                   (36600:train.py:268)
-[2026-05-31T01:08:40Z] state=RUNNING|2:28:37|5:31:23|slinky-2 | ckpts=[2000 4000 6000 ] | 01:07:00.874 [I] Step 6200: grad_norm=0.0333, loss=0.0027, param_norm=1806.6962                   (36600:train.py:268)
-[2026-05-31T01:11:43Z] state=RUNNING|2:31:40|5:28:20|slinky-2 | ckpts=[2000 4000 6000 ] | 01:11:11.684 [I] Step 6400: grad_norm=0.0319, loss=0.0027, param_norm=1806.7207                   (36600:train.py:268)
-[2026-05-31T01:14:46Z] state=RUNNING|2:34:43|5:25:17|slinky-2 | ckpts=[2000 4000 6000 ] | 01:13:17.359 [I] Step 6500: grad_norm=0.0330, loss=0.0026, param_norm=1806.7323                   (36600:train.py:268)
-[2026-05-31T01:17:49Z] state=RUNNING|2:37:46|5:22:14|slinky-2 | ckpts=[2000 4000 6000 ] | 01:17:37.806 [I] Step 6700: grad_norm=0.0306, loss=0.0023, param_norm=1806.7535                   (36600:train.py:268)
-[2026-05-31T01:20:51Z] state=RUNNING|2:40:49|5:19:11|slinky-2 | ckpts=[2000 4000 6000 ] | 01:19:42.615 [I] Step 6800: grad_norm=0.0314, loss=0.0024, param_norm=1806.7631                   (36600:train.py:268)
-[2026-05-31T01:23:54Z] state=RUNNING|2:43:52|5:16:08|slinky-2 | ckpts=[2000 4000 6000 ] | 01:23:52.202 [I] Step 7000: grad_norm=0.0307, loss=0.0024, param_norm=1806.7791                   (36600:train.py:268)
-[2026-05-31T01:26:57Z] state=RUNNING|2:46:55|5:13:05|slinky-2 | ckpts=[2000 4000 6000 ] | 01:25:56.981 [I] Step 7100: grad_norm=0.0324, loss=0.0025, param_norm=1806.7865                   (36600:train.py:268)
-[2026-05-31T01:30:01Z] state=RUNNING|2:49:58|5:10:02|slinky-2 | ckpts=[2000 4000 6000 ] | 01:28:01.810 [I] Step 7200: grad_norm=0.0319, loss=0.0024, param_norm=1806.7937                   (36600:train.py:268)
-[2026-05-31T01:33:04Z] state=RUNNING|2:53:01|5:06:59|slinky-2 | ckpts=[2000 4000 6000 ] | 01:32:11.534 [I] Step 7400: grad_norm=0.0282, loss=0.0021, param_norm=1806.8058                   (36600:train.py:268)
-[2026-05-31T01:36:07Z] state=RUNNING|2:56:04|5:03:56|slinky-2 | ckpts=[2000 4000 6000 ] | 01:34:27.973 [I] Step 7500: grad_norm=0.0297, loss=0.0023, param_norm=1806.8112                   (36600:train.py:268)
-[2026-05-31T01:39:10Z] state=RUNNING|2:59:07|5:00:53|slinky-2 | ckpts=[2000 4000 6000 ] | 01:38:38.363 [I] Step 7700: grad_norm=0.0283, loss=0.0021, param_norm=1806.8203                   (36600:train.py:268)
-[2026-05-31T01:42:13Z] state=RUNNING|3:02:10|4:57:50|slinky-2 | ckpts=[2000 4000 6000 ] | 01:40:43.944 [I] Step 7800: grad_norm=0.0267, loss=0.0019, param_norm=1806.8250                   (36600:train.py:268)
-[2026-05-31T01:45:16Z] state=RUNNING|3:05:13|4:54:47|slinky-2 | ckpts=[2000 4000 6000 8000 ] | 01:44:55.459 [I] Step 8000: grad_norm=0.0269, loss=0.0019, param_norm=1806.8317                   (36600:train.py:268)
-[2026-05-31T01:48:19Z] state=RUNNING|3:08:16|4:51:44|slinky-2 | ckpts=[2000 4000 6000 8000 ] | 01:47:04.546 [I] Step 8100: grad_norm=0.0293, loss=0.0019, param_norm=1806.8350                   (36600:train.py:268)
-[2026-05-31T01:51:22Z] state=RUNNING|3:11:19|4:48:41|slinky-2 | ckpts=[2000 4000 6000 8000 ] | 01:49:10.062 [I] Step 8200: grad_norm=0.0261, loss=0.0017, param_norm=1806.8384                   (36600:train.py:268)
-[2026-05-31T01:54:25Z] state=RUNNING|3:14:22|4:45:38|slinky-2 | ckpts=[2000 4000 6000 8000 ] | 01:53:35.343 [I] Step 8400: grad_norm=0.0267, loss=0.0018, param_norm=1806.8440                   (36600:train.py:268)
-[2026-05-31T01:57:28Z] state=RUNNING|3:17:25|4:42:35|slinky-2 | ckpts=[2000 4000 6000 8000 ] | 01:55:40.703 [I] Step 8500: grad_norm=0.0301, loss=0.0020, param_norm=1806.8462                   (36600:train.py:268)
-[2026-05-31T02:00:31Z] state=RUNNING|3:20:28|4:39:32|slinky-2 | ckpts=[2000 4000 6000 8000 ] | 01:59:51.033 [I] Step 8700: grad_norm=0.0289, loss=0.0019, param_norm=1806.8502                   (36600:train.py:268)
-[2026-05-31T02:03:34Z] state=RUNNING|3:23:32|4:36:28|slinky-2 | ckpts=[2000 4000 6000 8000 ] | 02:01:56.227 [I] Step 8800: grad_norm=0.0257, loss=0.0017, param_norm=1806.8522                   (36600:train.py:268)
-[2026-05-31T02:06:37Z] state=RUNNING|3:26:35|4:33:25|slinky-2 | ckpts=[2000 4000 6000 8000 ] | 02:06:06.583 [I] Step 9000: grad_norm=0.0277, loss=0.0019, param_norm=1806.8552                   (36600:train.py:268)
-[2026-05-31T02:09:41Z] state=RUNNING|3:29:38|4:30:22|slinky-2 | ckpts=[2000 4000 6000 8000 ] | 02:08:26.526 [I] Step 9100: grad_norm=0.0264, loss=0.0016, param_norm=1806.8568                   (36600:train.py:268)
-[2026-05-31T02:12:45Z] state=RUNNING|3:32:42|4:27:18|slinky-2 | ckpts=[2000 4000 6000 8000 ] | 02:12:36.586 [I] Step 9300: grad_norm=0.0259, loss=0.0017, param_norm=1806.8596                   (36600:train.py:268)
-[2026-05-31T02:15:48Z] state=RUNNING|3:35:45|4:24:15|slinky-2 | ckpts=[2000 4000 6000 8000 ] | 02:14:41.434 [I] Step 9400: grad_norm=0.0252, loss=0.0015, param_norm=1806.8612                   (36600:train.py:268)
-[2026-05-31T02:18:51Z] state=RUNNING|3:38:49|4:21:11|slinky-2 | ckpts=[2000 4000 6000 8000 ] | 02:16:46.545 [I] Step 9500: grad_norm=0.0263, loss=0.0016, param_norm=1806.8627                   (36600:train.py:268)
-[2026-05-31T02:21:54Z] state=RUNNING|3:41:52|4:18:08|slinky-2 | ckpts=[2000 4000 6000 8000 ] | 02:20:56.542 [I] Step 9700: grad_norm=0.0237, loss=0.0014, param_norm=1806.8650                   (36600:train.py:268)
-[2026-05-31T02:24:58Z] state=RUNNING|3:44:55|4:15:05|slinky-2 | ckpts=[2000 4000 6000 8000 ] | 02:23:01.640 [I] Step 9800: grad_norm=0.0264, loss=0.0016, param_norm=1806.8662                   (36600:train.py:268)
-[2026-05-31T02:28:01Z] state=<none> | ckpts=[2000 4000 6000 8000 9999 ] | Step 9900: grad_norm=0.0247, loss=0.0015, param_norm=1806.8672
-[2026-05-31T02:28:01Z] JOB 188 TERMINAL (COMPLETED) — GPU released
