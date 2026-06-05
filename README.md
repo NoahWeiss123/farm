@@ -80,15 +80,13 @@ gripper, and gave it sight through **two Intel RealSense cameras** (a base view 
 on **custom 3D-printed mounts**. A clean MuJoCo sim stands in when no hardware is attached, so the
 whole stack runs on a laptop.
 
-I also built and **open-sourced a Unity app for the Meta Quest 3** that lets you drive the arm,
-trigger recordings, and see its live status through passthrough. Controller poses stream to the
+I also **[open-sourced the VR teleop stack](https://github.com/NoahWeiss123/weiss-open-teleop)**: a Unity
+app for the Meta Quest 3 that lets you drive the arm, trigger recordings, and see its live status
+through passthrough. Controller poses stream to the
 daemon over a ROS-TCP bridge; the loop looks like this:
 
 ```
-   ┌─────────┐   teleop    ┌──────────────┐  export   ┌──────────┐  fine-tune  ┌──────────┐  serve   ┌──────────┐
-   │  Quest  │ ──────────▶ │  farm serve  │ ────────▶ │ LeRobot  │ ──────────▶ │   π0.5   │ ───────▶ │   arm    │
-   │   (VR)  │  ROS-TCP    │  (record)    │           │ dataset  │   H100s     │  + skills│   eval   │ (UF850)  │
-   └─────────┘             └──────────────┘           └──────────┘             └──────────┘          └──────────┘
+   Quest 3 (VR)  →  farm serve · record  →  LeRobot dataset  →  fine-tune π0.5 + skills  →  serve to UF850 arm
 ```
 
 The demonstrations become LeRobot datasets on the HuggingFace Hub:
@@ -131,8 +129,8 @@ the 424-episode, 4-task multiobject dataset.
 
 ### Layer 2: GSE experts
 
-The next layer is an additional fine-tune using **GSE** (Generalist-Specialist Experts), a method
-recently out of Tsinghua. It creates two kinds of internal expert at the same time: a **generalist**
+The next layer is an additional fine-tune using **GSE** (Generalized and Specialized Experts), a
+method recently out of Tsinghua. It creates two kinds of internal expert at the same time: a **generalist**
 that learns what's common across every task, and **specialists** that each get good at a narrow
 subset of motions. This pass tweaks only **~2.5% of the parameters**, making it highly efficient.
 The result is a model that's broadly competent while exercising high precision on the
@@ -304,17 +302,15 @@ episode-review + clip app for curating recordings. The Quest teleop bridge liste
    python model/export_lerobot.py --src datasets/dataset3 --out datasets/lerobot/farm_uf850_bottle
    python model/analyze_dataset.py        # audit alignment, smoothness, gripper, tasks
    ```
-3. **Fine-tune** π0.5 on the H100 cluster. Three interchangeable architectures, all comparable on
-   the same data + action contract:
+3. **Fine-tune** π0.5 with one of three interchangeable architectures:
 
-   | Config | Method | GPUs | Idea |
-   |---|---|---|---|
-   | `pi05_farm_uf850` | full fine-tune | 8 | max capacity; the FARM base layer |
-   | `pi05_farm_uf850_gse` | **GSE** | 1 | SVD spectral generalist + specialist experts (~2.5% params) |
-   | `pi05_farm_uf850_lora` | **LoRA** | 1 | rank-16 per-job skills that add onto the FFT-GSE base |
+   | Config | Method | Idea |
+   |---|---|---|
+   | `pi05_farm_uf850` | full fine-tune | max capacity; the FARM base layer |
+   | `pi05_farm_uf850_gse` | **GSE** | SVD spectral generalized + specialized experts (~2.5% params) |
+   | `pi05_farm_uf850_lora` | **LoRA** | rank-16 per-job skills that add onto the FFT-GSE base |
 
-   See **[`model/cluster/README.md`](model/cluster/README.md)** for the runbook and
-   **[`model/README.md`](model/README.md)** for how the three compare.
+   See **[`model/cluster/README.md`](model/cluster/README.md)** and **[`model/README.md`](model/README.md)** for the runbook and how the three compare.
 4. **Serve + evaluate**: a serve job runs the policy server (with hot-swappable skill adapters);
    `python model/eval_pi05.py` reads observations from `farm serve` and drives the arm.
 
@@ -363,15 +359,14 @@ topic schemas.
 
 ## AI assistance
 
-Parts of FARM's software were built with the help of AI coding tools, including Anthropic's
-**[Claude Code](https://claude.com/claude-code)**, which assisted with programming, refactoring,
-analysis/plotting tooling, and documentation. All research direction, experiment design, hardware
-work, training runs, and findings are my own.
+I used AI coding tools, mainly [Claude Code](https://claude.com/claude-code), to help write and
+refactor parts of the software and the analysis scripts. The research, experiments, and hardware
+work are my own.
 
 ## Acknowledgements
 
 - **[Physical Intelligence](https://www.physicalintelligence.company/)**: the π0.5 base policy and the [openpi](https://github.com/Physical-Intelligence/openpi) training stack.
-- **GSE (Generalist-Specialist Experts)**: the efficient expert fine-tuning method (Tsinghua).
+- **[VLA-GSE](https://arxiv.org/abs/2605.06175)** (Jiang et al., Tsinghua): the Generalized and Specialized Experts method behind Layer 2.
 - **[UFactory](https://www.ufactory.cc/)** (UF850), **Intel RealSense**, **Meta Quest 3**, **[LeRobot](https://github.com/huggingface/lerobot)**, and **[Remotion](https://www.remotion.dev/)** (the explainer animations these figures are stills from).
 
 ---
